@@ -80,7 +80,7 @@ def test_find_package_threads() -> None:
     assert ctx.variables["Threads_FOUND"] == "TRUE"
     assert ctx.variables["CMAKE_THREAD_LIBS_INIT"] == "-pthread"
     assert "Threads::Threads" in ctx.imported_targets
-    assert ctx.imported_targets["Threads::Threads"] == "-pthread"
+    assert ctx.imported_targets["Threads::Threads"].libs == "-pthread"
 
 
 def test_find_package_threads_link() -> None:
@@ -96,3 +96,17 @@ def test_find_package_threads_link() -> None:
     exe = ctx.get_executable("myapp")
     assert exe is not None
     assert "Threads::Threads" in exe.link_libraries
+
+
+@pytest.mark.skipif(not has_pkg_config_gtest(), reason="gtest not found via pkg-config")
+def test_find_package_gtest_imported_target() -> None:
+    """Test find_package(GTest) creates GTest::gtest imported target with cflags."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [Command(name="find_package", args=["GTest"], line=1)]
+    process_commands(commands, ctx)
+
+    assert "GTest::gtest" in ctx.imported_targets
+    target = ctx.imported_targets["GTest::gtest"]
+    # Should have libs (link flags)
+    assert target.libs
+    # cflags may or may not be set depending on pkg-config output

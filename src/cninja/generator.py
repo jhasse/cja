@@ -29,6 +29,13 @@ class Executable:
 
 
 @dataclass
+class ImportedTarget:
+    """An imported target (e.g., from find_package)."""
+    cflags: str = ""  # Compile flags (e.g., -I/path/to/include)
+    libs: str = ""    # Link flags (e.g., -lgtest -pthread)
+
+
+@dataclass
 class BuildContext:
     """Context for processing CMake commands."""
     source_dir: Path
@@ -37,7 +44,7 @@ class BuildContext:
     variables: dict[str, str] = field(default_factory=dict)
     libraries: list[Library] = field(default_factory=list)
     executables: list[Executable] = field(default_factory=list)
-    imported_targets: dict[str, str] = field(default_factory=dict)  # target -> link flags
+    imported_targets: dict[str, ImportedTarget] = field(default_factory=dict)
 
     def get_library(self, name: str) -> Library | None:
         for lib in self.libraries:
@@ -465,8 +472,16 @@ def process_commands(commands: list[Command], ctx: BuildContext) -> None:
                                     capture_output=True,
                                     text=True,
                                 )
-                                ctx.variables["GTEST_INCLUDE_DIRS"] = cflags_result.stdout.strip()
-                                ctx.variables["GTEST_LIBRARIES"] = libs_result.stdout.strip()
+                                gtest_cflags = cflags_result.stdout.strip()
+                                gtest_libs = libs_result.stdout.strip()
+                                ctx.variables["GTEST_INCLUDE_DIRS"] = gtest_cflags
+                                ctx.variables["GTEST_LIBRARIES"] = gtest_libs
+
+                                # Register GTest::gtest imported target
+                                ctx.imported_targets["GTest::gtest"] = ImportedTarget(
+                                    cflags=gtest_cflags,
+                                    libs=gtest_libs,
+                                )
 
                                 # Also try gtest_main
                                 main_result = subprocess.run(
@@ -475,9 +490,15 @@ def process_commands(commands: list[Command], ctx: BuildContext) -> None:
                                     text=True,
                                 )
                                 if main_result.returncode == 0:
-                                    ctx.variables["GTEST_MAIN_LIBRARIES"] = main_result.stdout.strip()
+                                    gtest_main_libs = main_result.stdout.strip()
+                                    ctx.variables["GTEST_MAIN_LIBRARIES"] = gtest_main_libs
                                     ctx.variables["GTEST_BOTH_LIBRARIES"] = (
-                                        libs_result.stdout.strip() + " " + main_result.stdout.strip()
+                                        gtest_libs + " " + gtest_main_libs
+                                    )
+                                    # Register GTest::gtest_main imported target
+                                    ctx.imported_targets["GTest::gtest_main"] = ImportedTarget(
+                                        cflags=gtest_cflags,
+                                        libs=gtest_main_libs,
                                     )
                         except FileNotFoundError:
                             pass  # pkg-config not available
@@ -496,7 +517,7 @@ def process_commands(commands: list[Command], ctx: BuildContext) -> None:
                         ctx.variables["CMAKE_THREAD_LIBS_INIT"] = "-pthread"
                         ctx.variables["CMAKE_USE_PTHREADS_INIT"] = "TRUE"
                         # Register the imported target
-                        ctx.imported_targets["Threads::Threads"] = "-pthread"
+                        ctx.imported_targets["Threads::Threads"] = ImportedTarget(libs="-pthread")
                     else:
                         # Unknown package
                         ctx.variables[f"{package_name}_FOUND"] = "FALSE"
@@ -559,7 +580,7 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
         # Compile rules
         n.rule(
             "cc",
-            command="$cc -MMD -MF $out.d -fdiagnostics-color -c $in -o $out",
+            command="$cc -MMD -MF $out.d -fdiagnostics-color $cflags -c $in -o $out",
             depfile="$out.d",
             description="CC $out",
         )
@@ -567,7 +588,7 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
 
         n.rule(
             "cxx",
-            command="$cxx -MMD -MF $out.d -fdiagnostics-color -c $in -o $out",
+            command="$cxx -MMD -MF $out.d -fdiagnostics-color $cflags -c $in -o $out",
             depfile="$out.d",
             description="CXX $out",
         )
@@ -634,6 +655,18 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
             objects: list[str] = []
             uses_cxx = False
 
+            # Collect cflags from imported targets
+            compile_flags: list[str] = []
+            for lib_name in exe.link_libraries:
+                if lib_name in ctx.imported_targets:
+                    imported = ctx.imported_targets[lib_name]
+                    if imported.cflags:
+                        compile_flags.append(imported.cflags)
+
+            compile_vars: dict[str, str] | None = None
+            if compile_flags:
+                compile_vars = {"cflags": " ".join(compile_flags)}
+
             for source in exe.sources:
                 obj_name = f"$builddir/{exe.name}_{Path(source).stem}.o"
                 objects.append(obj_name)
@@ -645,7 +678,7 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
                 else:
                     rule = "cc"
 
-                n.build(obj_name, rule, source)
+                n.build(obj_name, rule, source, variables=compile_vars)
 
             # Add linked libraries to inputs
             link_inputs = objects.copy()
@@ -659,7 +692,9 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
                     link_inputs.append(lib_outputs[lib_name])
                 elif lib_name in ctx.imported_targets:
                     # Imported target (e.g., Threads::Threads): add link flags
-                    link_flags.append(ctx.imported_targets[lib_name])
+                    imported = ctx.imported_targets[lib_name]
+                    if imported.libs:
+                        link_flags.append(imported.libs)
 
             # Link
             exe_name = f"$builddir/{exe.name}{exe_ext}"
