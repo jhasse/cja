@@ -68,6 +68,7 @@ class BuildContext:
     executables: list[Executable] = field(default_factory=list)
     imported_targets: dict[str, ImportedTarget] = field(default_factory=dict)
     compile_options: list[str] = field(default_factory=list)  # Global compile options
+    compile_definitions: list[str] = field(default_factory=list)  # Global compile definitions
     functions: dict[str, FunctionDef] = field(default_factory=dict)  # User-defined functions
     parent_scope_vars: dict[str, str] = field(default_factory=dict)  # For PARENT_SCOPE in functions
 
@@ -754,6 +755,12 @@ int main() {{
                     expanded = expand_variables(arg, ctx.variables)
                     ctx.compile_options.append(expanded)
 
+            case "add_compile_definitions":
+                # add_compile_definitions adds preprocessor definitions to all targets
+                for arg in args:
+                    expanded = expand_variables(arg, ctx.variables)
+                    ctx.compile_definitions.append(expanded)
+
             case "find_program":
                 if len(args) >= 2:
                     var_name = args[0]
@@ -1115,8 +1122,10 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
         for lib in ctx.libraries:
             objects: list[str] = []
 
-            # Collect compile flags from global options, compile features, and include dirs
+            # Collect compile flags from global options, compile definitions, compile features, and include dirs
             lib_compile_flags: list[str] = list(ctx.compile_options)
+            for definition in ctx.compile_definitions:
+                lib_compile_flags.append(f"-D{definition}")
             for feature in lib.compile_features:
                 flag = compile_feature_to_flag(feature)
                 if flag:
@@ -1158,8 +1167,10 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
             objects: list[str] = []
             uses_cxx = False
 
-            # Collect cflags from global options, compile features, include dirs, linked libraries, and imported targets
+            # Collect cflags from global options, compile definitions, compile features, include dirs, linked libraries, and imported targets
             compile_flags: list[str] = list(ctx.compile_options)
+            for definition in ctx.compile_definitions:
+                compile_flags.append(f"-D{definition}")
             for feature in exe.compile_features:
                 flag = compile_feature_to_flag(feature)
                 if flag:
