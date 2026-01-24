@@ -59,12 +59,177 @@ def expand_variables(value: str, variables: dict[str, str]) -> str:
     return re.sub(r'\$\{(\w+)\}', replace, value)
 
 
+def is_truthy(value: str) -> bool:
+    """Check if a CMake value is considered true."""
+    if not value:
+        return False
+    # CMake considers these values false
+    false_values = ("0", "OFF", "NO", "FALSE", "N", "IGNORE", "NOTFOUND", "")
+    upper = value.upper()
+    if upper in false_values or upper.endswith("-NOTFOUND"):
+        return False
+    return True
+
+
+def evaluate_condition(args: list[str], variables: dict[str, str]) -> bool:
+    """Evaluate a CMake if() condition."""
+    if not args:
+        return False
+
+    # Handle NOT
+    if args[0] == "NOT":
+        return not evaluate_condition(args[1:], variables)
+
+    # Handle DEFINED
+    if args[0] == "DEFINED" and len(args) >= 2:
+        return args[1] in variables
+
+    # Helper to get value (expand variable if it exists)
+    def get_value(s: str) -> str:
+        return variables.get(s, s)
+
+    # Handle binary operators
+    if len(args) >= 3:
+        left = args[0]
+        op = args[1]
+        right = args[2]
+
+        # Handle AND/OR with remaining args
+        if op == "AND":
+            return evaluate_condition([left], variables) and evaluate_condition(args[2:], variables)
+        if op == "OR":
+            return evaluate_condition([left], variables) or evaluate_condition(args[2:], variables)
+
+        # For comparisons, expand variables
+        left_val = get_value(left)
+        right_val = get_value(right)
+
+        # String comparisons
+        if op == "STREQUAL":
+            return left_val == right_val
+        if op == "STRLESS":
+            return left_val < right_val
+        if op == "STRGREATER":
+            return left_val > right_val
+        if op == "MATCHES":
+            return bool(re.search(right_val, left_val))
+
+        # Numeric comparisons
+        if op == "EQUAL":
+            try:
+                return int(left_val) == int(right_val)
+            except ValueError:
+                return False
+        if op == "LESS":
+            try:
+                return int(left_val) < int(right_val)
+            except ValueError:
+                return False
+        if op == "GREATER":
+            try:
+                return int(left_val) > int(right_val)
+            except ValueError:
+                return False
+
+    # Single value - check if variable is defined and truthy
+    if len(args) == 1:
+        var_name = args[0]
+        # First check if it's a variable reference
+        if var_name in variables:
+            return is_truthy(variables[var_name])
+        # Otherwise treat as literal (non-empty string is true, but special constants are false)
+        return is_truthy(var_name)
+
+    return False
+
+
+def find_matching_endif(commands: list[Command], start: int) -> int:
+    """Find the index of the endif() matching the if() at start."""
+    depth = 1
+    i = start + 1
+    while i < len(commands):
+        if commands[i].name == "if":
+            depth += 1
+        elif commands[i].name == "endif":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    raise SyntaxError(f"No matching endif() for if() at line {commands[start].line}")
+
+
+def find_else_or_elseif(commands: list[Command], start: int, end: int) -> list[tuple[str, int, list[str]]]:
+    """Find elseif/else blocks between if and endif, returns list of (type, index, args)."""
+    blocks: list[tuple[str, int, list[str]]] = []
+    depth = 0
+    i = start + 1
+    while i < end:
+        if commands[i].name == "if":
+            depth += 1
+        elif commands[i].name == "endif":
+            depth -= 1
+        elif depth == 0:
+            if commands[i].name == "elseif":
+                blocks.append(("elseif", i, commands[i].args))
+            elif commands[i].name == "else":
+                blocks.append(("else", i, []))
+        i += 1
+    return blocks
+
+
 def process_commands(commands: list[Command], ctx: BuildContext) -> None:
     """Process CMake commands and populate the build context."""
-    for cmd in commands:
+    i = 0
+    while i < len(commands):
+        cmd = commands[i]
         args = [expand_variables(arg, ctx.variables) for arg in cmd.args]
 
         match cmd.name:
+            case "if":
+                # Find matching endif
+                endif_idx = find_matching_endif(commands, i)
+                # Find elseif/else blocks
+                blocks = find_else_or_elseif(commands, i, endif_idx)
+
+                # Determine which block to execute
+                executed = False
+                block_start = i + 1
+
+                # Check the if condition
+                if_args = [expand_variables(arg, ctx.variables) for arg in cmd.args]
+                if evaluate_condition(if_args, ctx.variables):
+                    # Execute commands from if to first elseif/else or endif
+                    block_end = blocks[0][1] if blocks else endif_idx
+                    process_commands(commands[block_start:block_end], ctx)
+                    executed = True
+                else:
+                    # Check elseif/else blocks
+                    for j, (block_type, block_idx, block_args) in enumerate(blocks):
+                        if executed:
+                            break
+                        if block_type == "elseif":
+                            elseif_args = [expand_variables(arg, ctx.variables) for arg in block_args]
+                            if evaluate_condition(elseif_args, ctx.variables):
+                                # Execute this elseif block
+                                block_start = block_idx + 1
+                                block_end = blocks[j + 1][1] if j + 1 < len(blocks) else endif_idx
+                                process_commands(commands[block_start:block_end], ctx)
+                                executed = True
+                        elif block_type == "else":
+                            # Execute else block
+                            block_start = block_idx + 1
+                            process_commands(commands[block_start:endif_idx], ctx)
+                            executed = True
+
+                # Skip to after endif
+                i = endif_idx + 1
+                continue
+
+            case "endif" | "else" | "elseif":
+                # These should only be encountered when processing top-level commands
+                # and indicate mismatched if/endif
+                raise SyntaxError(f"Unexpected {cmd.name}() at line {cmd.line}")
+
             case "cmake_minimum_required":
                 pass  # Just acknowledge it
 
@@ -174,6 +339,8 @@ def process_commands(commands: list[Command], ctx: BuildContext) -> None:
 
             case _:
                 pass  # Ignore unknown commands for now
+
+        i += 1
 
 
 def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
