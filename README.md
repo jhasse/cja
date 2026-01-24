@@ -60,6 +60,26 @@ cninja build --release
 ninja -f build-release.ninja test
 ```
 
+## Run Subcommand
+
+cninja generates a "run" phony target which executes the first executable in your CMakeLists.txt.
+
+### `cninja run`
+
+Equivalent to calling:
+```sh
+cninja build
+ninja -f build.ninja run
+```
+
+### `cninja run --release`
+
+Equivalent to calling:
+```sh
+cninja build --release
+ninja -f build-release.ninja run
+```
+
 ## Supported CMake Commands
 
 ### Project Structure
@@ -135,4 +155,3 @@ ninja
 - Only supports Ninja generator (by design)
 - Limited find_package support (GTest, Threads via pkg-config)
 - No generator expressions
-- No install rules

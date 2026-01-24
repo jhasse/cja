@@ -223,3 +223,27 @@ def test_cli_make_directory(tmp_path: Path) -> None:
     assert result.returncode == 0
     assert dir_path.exists()
     assert dir_path.is_dir()
+
+
+def test_run_subcommand(tmp_path: Path) -> None:
+    """Test cninja run subcommand."""
+    source_dir = tmp_path
+    (source_dir / "main.c").write_text("int main() { return 42; }")
+    (source_dir / "CMakeLists.txt").write_text(
+        """
+cmake_minimum_required(VERSION 3.10)
+project(run_prj)
+add_executable(myexe main.c)
+"""
+    )
+
+    result = subprocess.run(
+        ["uv", "run", "cninja", "run"],
+        capture_output=True,
+        text=True,
+        cwd=source_dir,
+    )
+    # The return code should be 42 because it runs the executable
+    assert result.returncode == 42
+    assert "RUN" in result.stdout
+    assert "build/myexe" in result.stdout

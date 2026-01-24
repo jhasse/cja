@@ -59,6 +59,11 @@ def cmd_test(args: argparse.Namespace) -> int:
     return _run_ninja(args, target="test")
 
 
+def cmd_run(args: argparse.Namespace) -> int:
+    """Run the run target in Ninja."""
+    return _run_ninja(args, target="run")
+
+
 def cmd_command_mode(args: list[str]) -> int:
     """Run CMake-like command mode (-E)."""
     if not args:
@@ -171,6 +176,16 @@ def main() -> int:
         help="Run tests in release mode (CMAKE_BUILD_TYPE=Release)",
     )
 
+    # Run subcommand
+    run_parser = subparsers.add_parser(
+        "run", help="Configure, build and run the first executable"
+    )
+    run_parser.add_argument(
+        "--release",
+        action="store_true",
+        help="Run in release mode (CMAKE_BUILD_TYPE=Release)",
+    )
+
     args = parser.parse_args()
 
     if args.E:
@@ -180,6 +195,8 @@ def main() -> int:
         return cmd_build(args)
     elif args.command == "test":
         return cmd_test(args)
+    elif args.command == "run":
+        return cmd_run(args)
     else:
         # Default: configure only
         return cmd_configure(args)

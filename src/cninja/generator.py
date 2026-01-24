@@ -1974,6 +1974,20 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
             n.build("install", "phony", install_files)
             n.newline()
 
+        # Generate run runner
+        if ctx.executables:
+            n.rule(
+                "run_exe",
+                command="$in",
+                description="RUN $in",
+                pool="console",
+            )
+            n.newline()
+            first_exe_target = ctx.executables[0].name
+            if first_exe_target in exe_outputs:
+                n.build("run", "run_exe", exe_outputs[first_exe_target])
+                n.newline()
+
         # Default target
         if default_targets:
             n.default(default_targets)
