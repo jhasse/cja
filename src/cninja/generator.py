@@ -822,7 +822,9 @@ def process_commands(commands: list[Command], ctx: BuildContext, trace: bool = F
 
             case _:
                 if strict:
-                    raise RuntimeError(f"Unsupported command: {cmd.name}() at line {cmd.line}")
+                    error_label = colored("error:", "red", attrs=["bold"])
+                    print(f"CMakeLists.txt:{cmd.line}: {error_label} unsupported command: {cmd.name}()", file=sys.stderr)
+                    sys.exit(1)
                 # Ignore unknown commands by default
 
         i += 1
