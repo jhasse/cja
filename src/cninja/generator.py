@@ -393,6 +393,56 @@ def process_commands(commands: list[Command], ctx: BuildContext, trace: bool = F
                         # CTest sets BUILD_TESTING to ON by default
                         if "BUILD_TESTING" not in ctx.variables:
                             ctx.variables["BUILD_TESTING"] = "ON"
+                    # CheckIPOSupported is handled by check_ipo_supported command
+
+            case "check_ipo_supported":
+                # check_ipo_supported(RESULT <var> [OUTPUT <var>] [LANGUAGES <lang>...])
+                result_var = None
+                output_var = None
+
+                arg_idx = 0
+                while arg_idx < len(args):
+                    if args[arg_idx] == "RESULT" and arg_idx + 1 < len(args):
+                        result_var = args[arg_idx + 1]
+                        arg_idx += 2
+                    elif args[arg_idx] == "OUTPUT" and arg_idx + 1 < len(args):
+                        output_var = args[arg_idx + 1]
+                        arg_idx += 2
+                    elif args[arg_idx] == "LANGUAGES":
+                        # Skip languages, we just check C/C++
+                        arg_idx += 1
+                        while arg_idx < len(args) and args[arg_idx] not in ("RESULT", "OUTPUT"):
+                            arg_idx += 1
+                    else:
+                        arg_idx += 1
+
+                # Check if LTO is supported by trying to compile with -flto
+                supported = False
+                error_msg = ""
+                try:
+                    import tempfile
+                    with tempfile.NamedTemporaryFile(suffix=".c", delete=False) as f:
+                        f.write(b"int main() { return 0; }\n")
+                        temp_src = f.name
+                    temp_out = temp_src + ".out"
+                    result = subprocess.run(
+                        ["cc", "-flto", "-o", temp_out, temp_src],
+                        capture_output=True,
+                        text=True,
+                    )
+                    if result.returncode == 0:
+                        supported = True
+                        Path(temp_out).unlink(missing_ok=True)
+                    else:
+                        error_msg = result.stderr
+                    Path(temp_src).unlink(missing_ok=True)
+                except Exception as e:
+                    error_msg = str(e)
+
+                if result_var:
+                    ctx.variables[result_var] = "TRUE" if supported else "FALSE"
+                if output_var:
+                    ctx.variables[output_var] = error_msg
 
             case "add_library":
                 if len(args) >= 2:
