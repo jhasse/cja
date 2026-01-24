@@ -1606,9 +1606,16 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
 
             # Process multiple commands
             cmd_parts: list[str] = []
+            shell_operators = (">", ">>", "2>", "2>&1", "<", "|", "&", "&&", "||", ";")
             for command in custom_cmd["commands"]:  # type: ignore
                 if custom_cmd.get("verbatim"):  # type: ignore
-                    cmd_parts.append(shlex.join(str(c) for c in command))
+                    parts = []
+                    for arg in command:
+                        if arg in shell_operators:
+                            parts.append(str(arg))
+                        else:
+                            parts.append(shlex.quote(str(arg)))
+                    cmd_parts.append(" ".join(parts))
                 else:
                     cmd_parts.append(" ".join(str(c) for c in command))
 
