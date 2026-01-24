@@ -2,6 +2,7 @@
 
 import platform
 import re
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -109,6 +110,42 @@ def process_commands(commands: list[Command], ctx: BuildContext) -> None:
                     exe = ctx.get_executable(target_name)
                     if exe:
                         exe.link_libraries.extend(libs)
+
+            case "find_program":
+                if len(args) >= 2:
+                    var_name = args[0]
+                    # Parse arguments: find_program(VAR name1 [name2...] [NAMES name1...] [REQUIRED])
+                    names: list[str] = []
+                    required = False
+                    i = 1
+                    while i < len(args):
+                        arg = args[i]
+                        if arg == "REQUIRED":
+                            required = True
+                        elif arg == "NAMES":
+                            # Collect names until next keyword or end
+                            i += 1
+                            while i < len(args) and args[i] not in ("REQUIRED", "PATHS", "HINTS", "DOC"):
+                                names.append(args[i])
+                                i += 1
+                            continue
+                        elif arg not in ("PATHS", "HINTS", "DOC", "NO_CACHE"):
+                            names.append(arg)
+                        i += 1
+
+                    # Search for program
+                    found_path = None
+                    for name in names:
+                        found_path = shutil.which(name)
+                        if found_path:
+                            break
+
+                    if found_path:
+                        ctx.variables[var_name] = found_path
+                    else:
+                        ctx.variables[var_name] = f"{var_name}-NOTFOUND"
+                        if required:
+                            raise FileNotFoundError(f"Could not find program: {' or '.join(names)}")
 
             case _:
                 pass  # Ignore unknown commands for now
