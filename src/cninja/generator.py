@@ -16,7 +16,7 @@ class Library:
     """A library target."""
     name: str
     sources: list[str]
-    is_static: bool = True
+    lib_type: str = "STATIC"  # STATIC, SHARED, or OBJECT
 
 
 @dataclass
@@ -268,16 +268,16 @@ def process_commands(commands: list[Command], ctx: BuildContext) -> None:
             case "add_library":
                 if len(args) >= 2:
                     name = args[0]
-                    # Check for STATIC/SHARED keyword
+                    # Check for STATIC/SHARED/OBJECT keyword
                     sources = args[1:]
-                    is_static = True
-                    if sources and sources[0] in ("STATIC", "SHARED"):
-                        is_static = sources[0] == "STATIC"
+                    lib_type = "STATIC"
+                    if sources and sources[0] in ("STATIC", "SHARED", "OBJECT"):
+                        lib_type = sources[0]
                         sources = sources[1:]
                     ctx.libraries.append(Library(
                         name=name,
                         sources=sources,
-                        is_static=is_static,
+                        lib_type=lib_type,
                     ))
 
             case "add_executable":
@@ -426,8 +426,9 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
         )
         n.newline()
 
-        # Track library outputs for linking
+        # Track library outputs for linking (archive path for STATIC, object list for OBJECT)
         lib_outputs: dict[str, str] = {}
+        object_lib_objects: dict[str, list[str]] = {}
 
         # Generate build statements for libraries
         for lib in ctx.libraries:
@@ -445,8 +446,12 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
 
                 n.build(obj_name, rule, source)
 
-            # Create static library
-            if lib.is_static:
+            if lib.lib_type == "OBJECT":
+                # Object libraries don't produce an archive, just track objects
+                object_lib_objects[lib.name] = objects
+                n.newline()
+            elif lib.lib_type == "STATIC":
+                # Create static library archive
                 lib_name = f"$builddir/lib{lib.name}{lib_ext}"
                 n.build(lib_name, "ar", objects)
                 n.newline()
@@ -475,7 +480,11 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
             # Add linked libraries to inputs
             link_inputs = objects.copy()
             for lib_name in exe.link_libraries:
-                if lib_name in lib_outputs:
+                if lib_name in object_lib_objects:
+                    # Object library: add object files directly
+                    link_inputs.extend(object_lib_objects[lib_name])
+                elif lib_name in lib_outputs:
+                    # Static library: add archive
                     link_inputs.append(lib_outputs[lib_name])
 
             # Link

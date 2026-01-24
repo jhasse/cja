@@ -83,3 +83,44 @@ def test_libmath_example(tmp_path: Path) -> None:
     assert result.returncode == 0
     assert "3 + 4 = 7" in result.stdout
     assert "3 * 4 = 12" in result.stdout
+
+
+def test_objlib_example(tmp_path: Path) -> None:
+    """Test building the objlib example with OBJECT library."""
+    # Copy example to tmp_path since build.ninja is written in source dir
+    source_dir = tmp_path / "objlib"
+    shutil.copytree(EXAMPLES_DIR / "objlib", source_dir)
+
+    # Configure
+    configure(source_dir, "build")
+
+    # Check build.ninja was created in source directory
+    build_ninja = source_dir / "build.ninja"
+    assert build_ninja.exists()
+
+    # Verify no .a file is created for OBJECT library
+    content = build_ninja.read_text()
+    assert "libutils.a" not in content
+
+    # Build with ninja (run from source dir)
+    result = subprocess.run(
+        ["ninja"],
+        cwd=source_dir,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, f"ninja failed: {result.stderr}"
+
+    # Check executable was created in build dir (but no .a file)
+    build_dir = source_dir / "build"
+    assert (build_dir / "app").exists()
+    assert not (build_dir / "libutils.a").exists()
+
+    # Run the executable and check output
+    result = subprocess.run(
+        [str(build_dir / "app")],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    assert "Value: 42" in result.stdout

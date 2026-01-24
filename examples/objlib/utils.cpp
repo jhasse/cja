@@ -1,0 +1,5 @@
+#include "utils.hpp"
+
+int get_value() {
+    return 42;
+}
