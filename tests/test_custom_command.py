@@ -162,3 +162,34 @@ add_custom_command(
 
     # in.txt should be the first dependency
     assert "build $builddir/out.txt: custom_command in.txt extra.txt" in ninja_content
+
+
+def test_add_custom_command_working_dir_verbatim(tmp_path: Path) -> None:
+    """Test that WORKING_DIRECTORY and VERBATIM are correctly handled."""
+    from cninja.generator import configure
+
+    source_dir = tmp_path
+    cmake_content = """cmake_minimum_required(VERSION 3.10)
+project(WorkDirTest)
+
+add_custom_command(
+    OUTPUT out.txt
+    COMMAND echo "hello world"
+    WORKING_DIRECTORY scripts
+    VERBATIM
+)
+"""
+    (source_dir / "CMakeLists.txt").write_text(cmake_content)
+    (source_dir / "scripts").mkdir()
+
+    configure(source_dir, "build")
+
+    ninja_file = source_dir / "build.ninja"
+    ninja_content = ninja_file.read_text()
+
+    # The command should have 'cd scripts &&' and 'hello world' should be quoted if VERBATIM worked
+    # shlex.join(["echo", "hello world"]) -> 'echo "hello world"' or 'echo 'hello world''
+    assert (
+        "cmd = cd scripts && echo 'hello world'" in ninja_content
+        or 'cmd = cd scripts && echo "hello world"' in ninja_content
+    )

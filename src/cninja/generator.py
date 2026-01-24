@@ -2,6 +2,7 @@
 
 import platform
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -1049,17 +1050,27 @@ int main() {{
                     ctx.compile_definitions.append(expanded)
 
             case "add_custom_command":
-                # Minimal support: add_custom_command(OUTPUT ... COMMAND ... DEPENDS ... MAIN_DEPENDENCY ...)
+                # Minimal support: add_custom_command(OUTPUT ... COMMAND ... DEPENDS ... MAIN_DEPENDENCY ... WORKING_DIRECTORY ... VERBATIM)
                 outputs: list[str] = []
                 command: list[str] = []
                 depends: list[str] = []
                 main_dependency: str | None = None
+                working_directory: str | None = None
+                verbatim = False
                 arg_idx = 0
                 current_section = None
                 while arg_idx < len(args):
                     arg = args[arg_idx]
-                    if arg in ("OUTPUT", "COMMAND", "DEPENDS", "MAIN_DEPENDENCY"):
+                    if arg in (
+                        "OUTPUT",
+                        "COMMAND",
+                        "DEPENDS",
+                        "MAIN_DEPENDENCY",
+                        "WORKING_DIRECTORY",
+                    ):
                         current_section = arg
+                    elif arg == "VERBATIM":
+                        verbatim = True
                     else:
                         arg = expand_variables(arg, ctx.variables, strict, cmd.line)
                         if current_section == "OUTPUT":
@@ -1070,6 +1081,8 @@ int main() {{
                             depends.append(arg)
                         elif current_section == "MAIN_DEPENDENCY":
                             main_dependency = arg
+                        elif current_section == "WORKING_DIRECTORY":
+                            working_directory = arg
                     arg_idx += 1
 
                 if outputs and command:
@@ -1079,6 +1092,8 @@ int main() {{
                             "command": command,
                             "depends": depends,
                             "main_dependency": main_dependency,
+                            "working_directory": working_directory,
+                            "verbatim": verbatim,
                         }
                     )
 
@@ -1602,7 +1617,15 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
                     main_dep = f"$builddir/{main_dep}"
                 depends.insert(0, main_dep)
 
-            cmd_str = " ".join(str(c) for c in command)
+            if custom_cmd.get("verbatim"):  # type: ignore
+                cmd_str = shlex.join(str(c) for c in command)
+            else:
+                cmd_str = " ".join(str(c) for c in command)
+
+            working_dir = custom_cmd.get("working_directory")  # type: ignore
+            if working_dir:
+                cmd_str = f"cd {working_dir} && {cmd_str}"
+
             n.build(
                 outputs,
                 "custom_command",
