@@ -18,6 +18,7 @@ class Library:
     name: str
     sources: list[str]
     lib_type: str = "STATIC"  # STATIC, SHARED, or OBJECT
+    compile_features: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -26,6 +27,7 @@ class Executable:
     name: str
     sources: list[str]
     link_libraries: list[str] = field(default_factory=list)
+    compile_features: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -78,6 +80,20 @@ def is_truthy(value: str) -> bool:
     if upper in false_values or upper.endswith("-NOTFOUND"):
         return False
     return True
+
+
+def compile_feature_to_flag(feature: str) -> str | None:
+    """Translate a CMake compile feature to a compiler flag."""
+    # Map cxx_std_XX features to -std=c++XX flags
+    if feature.startswith("cxx_std_"):
+        std_version = feature[8:]  # Extract "11", "14", "17", "20", "23", etc.
+        return f"-std=c++{std_version}"
+    # Map c_std_XX features to -std=cXX flags
+    if feature.startswith("c_std_"):
+        std_version = feature[6:]
+        return f"-std=c{std_version}"
+    # Other features could be added here
+    return None
 
 
 def evaluate_condition(args: list[str], variables: dict[str, str]) -> bool:
@@ -410,6 +426,21 @@ def process_commands(commands: list[Command], ctx: BuildContext) -> None:
                         if exe:
                             exe.sources.extend(sources)
 
+            case "target_compile_features":
+                if len(args) >= 2:
+                    target_name = args[0]
+                    features = args[1:]
+                    # Skip visibility keywords
+                    features = [f for f in features if f not in ("PUBLIC", "PRIVATE", "INTERFACE")]
+                    # Add features to library or executable
+                    lib = ctx.get_library(target_name)
+                    if lib:
+                        lib.compile_features.extend(features)
+                    else:
+                        exe = ctx.get_executable(target_name)
+                        if exe:
+                            exe.compile_features.extend(features)
+
             case "find_program":
                 if len(args) >= 2:
                     var_name = args[0]
@@ -625,6 +656,17 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
         for lib in ctx.libraries:
             objects: list[str] = []
 
+            # Collect compile flags from compile features
+            lib_compile_flags: list[str] = []
+            for feature in lib.compile_features:
+                flag = compile_feature_to_flag(feature)
+                if flag:
+                    lib_compile_flags.append(flag)
+
+            lib_compile_vars: dict[str, str] | None = None
+            if lib_compile_flags:
+                lib_compile_vars = {"cflags": " ".join(lib_compile_flags)}
+
             for source in lib.sources:
                 obj_name = f"$builddir/{lib.name}_{Path(source).stem}.o"
                 objects.append(obj_name)
@@ -635,7 +677,7 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
                 else:
                     rule = "cc"
 
-                n.build(obj_name, rule, source)
+                n.build(obj_name, rule, source, variables=lib_compile_vars)
 
             if lib.lib_type == "OBJECT":
                 # Object libraries don't produce an archive, just track objects
@@ -655,8 +697,12 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
             objects: list[str] = []
             uses_cxx = False
 
-            # Collect cflags from imported targets
+            # Collect cflags from compile features and imported targets
             compile_flags: list[str] = []
+            for feature in exe.compile_features:
+                flag = compile_feature_to_flag(feature)
+                if flag:
+                    compile_flags.append(flag)
             for lib_name in exe.link_libraries:
                 if lib_name in ctx.imported_targets:
                     imported = ctx.imported_targets[lib_name]
