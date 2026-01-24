@@ -29,9 +29,9 @@ def test_add_custom_command_minimal() -> None:
 
     assert len(ctx.custom_commands) == 1
     custom = ctx.custom_commands[0]
-    assert custom["outputs"] == ["generated.txt"]
-    assert custom["commands"] == [["echo", "hello"]]
-    assert custom["depends"] == ["input.txt"]
+    assert custom.outputs == ["generated.txt"]
+    assert custom.commands == [["echo", "hello"]]
+    assert custom.depends == ["input.txt"]
 
 
 def test_add_custom_command_multiple_outputs() -> None:
@@ -60,9 +60,9 @@ def test_add_custom_command_multiple_outputs() -> None:
 
     assert len(ctx.custom_commands) == 1
     custom = ctx.custom_commands[0]
-    assert custom["outputs"] == ["out1.txt", "out2.txt"]
-    assert custom["commands"] == [["python", "-c", "print('hi')"]]
-    assert custom["depends"] == ["input1.txt", "input2.txt"]
+    assert custom.outputs == ["out1.txt", "out2.txt"]
+    assert custom.commands == [["python", "-c", "print('hi')"]]
+    assert custom.depends == ["input1.txt", "input2.txt"]
 
 
 def test_add_custom_command_integration() -> None:

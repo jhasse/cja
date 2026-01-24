@@ -95,6 +95,18 @@ class InstallTarget:
 
 
 @dataclass
+class CustomCommand:
+    """A custom build command."""
+
+    outputs: list[str]
+    commands: list[list[str]]
+    depends: list[str]
+    main_dependency: str | None = None
+    working_directory: str | None = None
+    verbatim: bool = False
+
+
+@dataclass
 class BuildContext:
     """Context for processing CMake commands."""
 
@@ -110,7 +122,7 @@ class BuildContext:
     compile_definitions: list[str] = field(
         default_factory=list
     )  # Global compile definitions
-    custom_commands: list[dict[str, object]] = field(
+    custom_commands: list[CustomCommand] = field(
         default_factory=list
     )  # Custom build commands
     functions: dict[str, FunctionDef] = field(
@@ -1112,14 +1124,14 @@ int main() {{
 
                 if outputs and command_list:
                     ctx.custom_commands.append(
-                        {
-                            "outputs": outputs,
-                            "commands": command_list,
-                            "depends": depends,
-                            "main_dependency": main_dependency,
-                            "working_directory": working_directory,
-                            "verbatim": verbatim,
-                        }
+                        CustomCommand(
+                            outputs=outputs,
+                            commands=command_list,
+                            depends=depends,
+                            main_dependency=main_dependency,
+                            working_directory=working_directory,
+                            verbatim=verbatim,
+                        )
                     )
 
             case "add_test":
@@ -1647,7 +1659,7 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
         # Generate custom commands
         for custom_cmd in ctx.custom_commands:
             outputs = []
-            for o in custom_cmd["outputs"]:  # type: ignore
+            for o in custom_cmd.outputs:
                 if not Path(o).is_absolute():
                     prefixed_o = f"$builddir/{o}"
                     outputs.append(prefixed_o)
@@ -1657,9 +1669,20 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
 
             # Process multiple commands
             cmd_parts: list[str] = []
-            shell_operators = (">", ">>", "2>", "2>&1", "<", "|", "&", "&&", "||", ";")
-            for command in custom_cmd["commands"]:  # type: ignore
-                if custom_cmd.get("verbatim"):  # type: ignore
+            shell_operators = (
+                ">",
+                ">>",
+                "2>",
+                "2>&1",
+                "<",
+                "|",
+                "&",
+                "&&",
+                "||",
+                ";",
+            )
+            for command in custom_cmd.commands:
+                if custom_cmd.verbatim:
                     parts = []
                     for arg in command:
                         if arg in shell_operators:
@@ -1676,9 +1699,9 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
                 f"$builddir/{d}"
                 if d in custom_command_outputs and not Path(d).is_absolute()
                 else d
-                for d in custom_cmd["depends"]  # type: ignore
+                for d in custom_cmd.depends
             ]
-            main_dep = custom_cmd.get("main_dependency")  # type: ignore
+            main_dep = custom_cmd.main_dependency
             if main_dep:
                 if (
                     main_dep in custom_command_outputs
@@ -1687,7 +1710,7 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
                     main_dep = f"$builddir/{main_dep}"
                 depends.insert(0, main_dep)
 
-            working_dir = custom_cmd.get("working_directory")  # type: ignore
+            working_dir = custom_cmd.working_directory
             if working_dir:
                 cmd_str = f"cd {working_dir} && {cmd_str}"
 
