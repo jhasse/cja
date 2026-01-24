@@ -458,6 +458,46 @@ def process_commands(commands: list[Command], ctx: BuildContext, trace: bool = F
                             value = args[2]
                         ctx.variables[var_name] = value
 
+            case "math":
+                # math(EXPR <variable> "<expression>" [OUTPUT_FORMAT <format>])
+                if len(args) >= 3 and args[0] == "EXPR":
+                    var_name = args[1]
+
+                    # Find if OUTPUT_FORMAT is present
+                    output_format = "DECIMAL"
+                    expr_args = args[2:]
+                    if "OUTPUT_FORMAT" in args:
+                        idx = args.index("OUTPUT_FORMAT")
+                        if idx + 1 < len(args):
+                            output_format = args[idx + 1]
+                        # Expression is everything between var_name and OUTPUT_FORMAT
+                        expr_args = args[2:idx]
+
+                    expr = " ".join(expr_args)
+
+                    # Convert C-style operators to Python if necessary
+                    # Integer division is // in Python.
+                    # CMake's / is integer division.
+                    expr = expr.replace("/", "//")
+                    # Handle bitwise NOT ~ which is the same in Python
+                    # Handle % which is the same
+                    # Handle <<, >>, &, |, ^ which are the same
+
+                    try:
+                        # Use a limited scope for eval
+                        # We need to allow basic math operations
+                        result = eval(expr, {"__builtins__": {}}, {})
+
+                        if output_format == "HEXADECIMAL":
+                            ctx.variables[var_name] = hex(int(result))
+                        else:
+                            ctx.variables[var_name] = str(int(result))
+                    except Exception as e:
+                        if strict:
+                            error_label = colored("error:", "red", attrs=["bold"])
+                            print(f"CMakeLists.txt:{cmd.line}: {error_label} math(EXPR) evaluation error: {e}", file=sys.stderr)
+                            sys.exit(1)
+
             case "include":
                 if args:
                     module_name = args[0]
