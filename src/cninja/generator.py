@@ -609,6 +609,90 @@ def process_commands(commands: list[Command], ctx: BuildContext) -> None:
                     else:
                         print(message)
 
+            case "execute_process":
+                # Parse execute_process arguments
+                commands_list: list[list[str]] = []
+                current_command: list[str] = []
+                working_directory: str | None = None
+                result_variable: str | None = None
+                output_variable: str | None = None
+                error_variable: str | None = None
+                output_strip = False
+                error_strip = False
+
+                arg_idx = 0
+                while arg_idx < len(args):
+                    arg = args[arg_idx]
+                    if arg == "COMMAND":
+                        if current_command:
+                            commands_list.append(current_command)
+                        current_command = []
+                    elif arg == "WORKING_DIRECTORY":
+                        arg_idx += 1
+                        if arg_idx < len(args):
+                            working_directory = expand_variables(args[arg_idx], ctx.variables)
+                    elif arg == "RESULT_VARIABLE":
+                        arg_idx += 1
+                        if arg_idx < len(args):
+                            result_variable = args[arg_idx]
+                    elif arg == "OUTPUT_VARIABLE":
+                        arg_idx += 1
+                        if arg_idx < len(args):
+                            output_variable = args[arg_idx]
+                    elif arg == "ERROR_VARIABLE":
+                        arg_idx += 1
+                        if arg_idx < len(args):
+                            error_variable = args[arg_idx]
+                    elif arg == "OUTPUT_STRIP_TRAILING_WHITESPACE":
+                        output_strip = True
+                    elif arg == "ERROR_STRIP_TRAILING_WHITESPACE":
+                        error_strip = True
+                    elif arg in ("INPUT_FILE", "OUTPUT_FILE", "ERROR_FILE",
+                                 "TIMEOUT", "COMMAND_ECHO", "OUTPUT_QUIET",
+                                 "ERROR_QUIET", "COMMAND_ERROR_IS_FATAL",
+                                 "ENCODING"):
+                        # Skip unsupported options and their values
+                        if arg not in ("OUTPUT_QUIET", "ERROR_QUIET"):
+                            arg_idx += 1
+                    else:
+                        # Part of current command
+                        current_command.append(expand_variables(arg, ctx.variables))
+                    arg_idx += 1
+
+                if current_command:
+                    commands_list.append(current_command)
+
+                # Execute the commands (piped together if multiple)
+                if commands_list:
+                    try:
+                        # For now, only support single command (no piping)
+                        cmd = commands_list[0]
+                        result = subprocess.run(
+                            cmd,
+                            capture_output=True,
+                            text=True,
+                            cwd=working_directory,
+                        )
+
+                        if result_variable:
+                            ctx.variables[result_variable] = str(result.returncode)
+
+                        if output_variable:
+                            output = result.stdout
+                            if output_strip:
+                                output = output.rstrip()
+                            ctx.variables[output_variable] = output
+
+                        if error_variable:
+                            error = result.stderr
+                            if error_strip:
+                                error = error.rstrip()
+                            ctx.variables[error_variable] = error
+
+                    except FileNotFoundError:
+                        if result_variable:
+                            ctx.variables[result_variable] = "1"
+
             case _:
                 pass  # Ignore unknown commands for now
 
