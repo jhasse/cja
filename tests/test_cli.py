@@ -208,3 +208,18 @@ add_test(NAME mytest COMMAND echo "Hello from test")
     assert result.returncode == 0
     assert "TEST mytest" in result.stdout
     assert "Hello from test" in result.stdout
+
+
+def test_cli_make_directory(tmp_path: Path) -> None:
+    """Test cninja -E make_directory command."""
+    dir_path = tmp_path / "new_dir" / "nested"
+    assert not dir_path.exists()
+
+    result = subprocess.run(
+        ["uv", "run", "cninja", "-E", "make_directory", str(dir_path)],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    assert dir_path.exists()
+    assert dir_path.is_dir()

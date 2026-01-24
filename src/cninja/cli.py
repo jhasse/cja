@@ -59,6 +59,23 @@ def cmd_test(args: argparse.Namespace) -> int:
     return _run_ninja(args, target="test")
 
 
+def cmd_command_mode(args: list[str]) -> int:
+    """Run CMake-like command mode (-E)."""
+    if not args:
+        return 1
+
+    cmd = args[0]
+    cmd_args = args[1:]
+
+    if cmd == "make_directory":
+        for directory in cmd_args:
+            Path(directory).mkdir(parents=True, exist_ok=True)
+        return 0
+    else:
+        print(f"Error: Unknown command -E {cmd}", file=sys.stderr)
+        return 1
+
+
 def _run_ninja(args: argparse.Namespace, target: str | None) -> int:
     """Internal helper to run ninja with configuration if needed."""
     source_dir = Path(".")
@@ -129,6 +146,13 @@ def main() -> int:
         help="Error on unsupported commands instead of ignoring them",
     )
 
+    parser.add_argument(
+        "-E",
+        nargs="+",
+        metavar="command",
+        help="CMake-like command mode (e.g., -E make_directory dir...)",
+    )
+
     # Build subcommand
     build_parser = subparsers.add_parser(
         "build", help="Configure and build the project"
@@ -148,6 +172,9 @@ def main() -> int:
     )
 
     args = parser.parse_args()
+
+    if args.E:
+        return cmd_command_mode(args.E)
 
     if args.command == "build":
         return cmd_build(args)
