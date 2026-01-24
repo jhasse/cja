@@ -389,12 +389,19 @@ def process_commands(commands: list[Command], ctx: BuildContext, trace: bool = F
             case "include":
                 if args:
                     module_name = args[0]
+                    known_modules = {
+                        "CTest",
+                        "CheckIPOSupported",
+                        "CheckCXXCompilerFlag",
+                        "CheckCCompilerFlag",
+                    }
                     if module_name == "CTest":
                         # CTest sets BUILD_TESTING to ON by default
                         if "BUILD_TESTING" not in ctx.variables:
                             ctx.variables["BUILD_TESTING"] = "ON"
-                    # CheckIPOSupported, CheckCXXCompilerFlag, CheckCCompilerFlag
-                    # are handled by their respective commands directly
+                    elif module_name not in known_modules:
+                        if strict:
+                            raise RuntimeError(f"Unknown module: {module_name} at line {cmd.line}")
 
             case "check_ipo_supported":
                 # check_ipo_supported(RESULT <var> [OUTPUT <var>] [LANGUAGES <lang>...])
