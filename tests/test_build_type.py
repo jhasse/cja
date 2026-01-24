@@ -96,8 +96,8 @@ def test_build_type_minsizerel(tmp_path: Path) -> None:
     assert "-DNDEBUG" in content
 
 
-def test_build_type_none(tmp_path: Path) -> None:
-    """Test no CMAKE_BUILD_TYPE doesn't add optimization flags."""
+def test_build_type_default_debug(tmp_path: Path) -> None:
+    """Test CMAKE_BUILD_TYPE defaults to Debug."""
     source_dir = tmp_path / "hello"
     shutil.copytree(EXAMPLES_DIR / "hello", source_dir)
 
@@ -105,9 +105,6 @@ def test_build_type_none(tmp_path: Path) -> None:
 
     build_ninja = source_dir / "build.ninja"
     content = build_ninja.read_text()
-    # Should not have optimization flags when no build type set
-    assert "-O0" not in content
-    assert "-O2" not in content
-    assert "-O3" not in content
-    assert "-Os" not in content
-    assert "-DNDEBUG" not in content
+    # Default should be Debug
+    assert "-g" in content
+    assert "-O0" in content

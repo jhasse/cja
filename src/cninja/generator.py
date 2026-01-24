@@ -626,7 +626,7 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
     lib_ext = ".lib" if platform.system() == "Windows" else ".a"
 
     # Determine build type flags
-    build_type = ctx.variables.get("CMAKE_BUILD_TYPE", "").upper()
+    build_type = ctx.variables.get("CMAKE_BUILD_TYPE", "Debug").upper()
     build_type_flags = ""
     if build_type == "DEBUG":
         build_type_flags = "-g -O0"
