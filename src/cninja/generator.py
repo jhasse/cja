@@ -22,6 +22,8 @@ class Library:
     lib_type: str = "STATIC"  # STATIC, SHARED, or OBJECT
     compile_features: list[str] = field(default_factory=list)  # PRIVATE features
     public_compile_features: list[str] = field(default_factory=list)  # PUBLIC features
+    include_directories: list[str] = field(default_factory=list)  # PRIVATE includes
+    public_include_directories: list[str] = field(default_factory=list)  # PUBLIC includes
 
 
 @dataclass
@@ -31,6 +33,7 @@ class Executable:
     sources: list[str]
     link_libraries: list[str] = field(default_factory=list)
     compile_features: list[str] = field(default_factory=list)
+    include_directories: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -395,6 +398,7 @@ def process_commands(commands: list[Command], ctx: BuildContext, trace: bool = F
                         "CheckIPOSupported",
                         "CheckCXXCompilerFlag",
                         "CheckCCompilerFlag",
+                        "CheckCXXSymbolExists",
                     }
                     if module_name == "CTest":
                         # CTest sets BUILD_TESTING to ON by default
@@ -518,6 +522,49 @@ def process_commands(commands: list[Command], ctx: BuildContext, trace: bool = F
 
                     ctx.variables[result_var] = "1" if supported else ""
 
+            case "check_cxx_symbol_exists":
+                # check_cxx_symbol_exists(<symbol> <files> <variable>)
+                if len(args) >= 3:
+                    symbol = args[0]
+                    # Files can be a semicolon-separated list or multiple args
+                    # The last arg is the variable name
+                    variable = args[-1]
+                    files = args[1:-1]
+                    # Handle semicolon-separated list
+                    if len(files) == 1 and ";" in files[0]:
+                        files = files[0].split(";")
+
+                    # Check if the symbol exists by compiling a test program
+                    found = False
+                    try:
+                        import tempfile
+                        # Generate includes
+                        includes = "\n".join(f'#include <{f}>' for f in files)
+                        # Create test program that uses the symbol
+                        test_code = f"""{includes}
+int main() {{
+    (void)({symbol});
+    return 0;
+}}
+"""
+                        with tempfile.NamedTemporaryFile(suffix=".cpp", delete=False, mode="w") as f:
+                            f.write(test_code)
+                            temp_src = f.name
+                        temp_out = temp_src.replace(".cpp", "")
+                        result = subprocess.run(
+                            ["c++", "-o", temp_out, temp_src],
+                            capture_output=True,
+                            text=True,
+                        )
+                        if result.returncode == 0:
+                            found = True
+                        Path(temp_out).unlink(missing_ok=True)
+                        Path(temp_src).unlink(missing_ok=True)
+                    except Exception:
+                        pass
+
+                    ctx.variables[variable] = "1" if found else ""
+
             case "add_library":
                 if len(args) >= 2:
                     name = args[0]
@@ -595,6 +642,44 @@ def process_commands(commands: list[Command], ctx: BuildContext, trace: bool = F
                             # Executables don't propagate, so all features go to compile_features
                             exe.compile_features.extend(public_features)
                             exe.compile_features.extend(private_features)
+
+            case "target_include_directories":
+                if len(args) >= 2:
+                    target_name = args[0]
+                    # Parse directories with visibility keywords
+                    public_dirs: list[str] = []
+                    private_dirs: list[str] = []
+                    visibility = "PUBLIC"  # Default visibility
+                    for arg in args[1:]:
+                        if arg in ("PUBLIC", "INTERFACE"):
+                            visibility = "PUBLIC"
+                        elif arg == "PRIVATE":
+                            visibility = "PRIVATE"
+                        elif arg == "SYSTEM":
+                            # SYSTEM keyword is accepted but we don't differentiate
+                            pass
+                        else:
+                            # Expand variables and resolve relative paths
+                            expanded = expand_variables(arg, ctx.variables)
+                            if not Path(expanded).is_absolute():
+                                expanded = str(ctx.source_dir / expanded)
+                            if visibility == "PUBLIC":
+                                public_dirs.append(expanded)
+                            else:
+                                private_dirs.append(expanded)
+                    # Add directories to library or executable
+                    lib = ctx.get_library(target_name)
+                    if lib:
+                        lib.include_directories.extend(private_dirs)
+                        lib.public_include_directories.extend(public_dirs)
+                        # Library also uses its own public includes
+                        lib.include_directories.extend(public_dirs)
+                    else:
+                        exe = ctx.get_executable(target_name)
+                        if exe:
+                            # Executables don't propagate, so all dirs go to include_directories
+                            exe.include_directories.extend(public_dirs)
+                            exe.include_directories.extend(private_dirs)
 
             case "add_compile_options":
                 # add_compile_options adds flags to all targets
@@ -921,12 +1006,14 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
         for lib in ctx.libraries:
             objects: list[str] = []
 
-            # Collect compile flags from global options and compile features
+            # Collect compile flags from global options, compile features, and include dirs
             lib_compile_flags: list[str] = list(ctx.compile_options)
             for feature in lib.compile_features:
                 flag = compile_feature_to_flag(feature)
                 if flag:
                     lib_compile_flags.append(flag)
+            for inc_dir in lib.include_directories:
+                lib_compile_flags.append(f"-I{inc_dir}")
 
             lib_compile_vars: dict[str, str] | None = None
             if lib_compile_flags:
@@ -962,12 +1049,14 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
             objects: list[str] = []
             uses_cxx = False
 
-            # Collect cflags from global options, compile features, linked libraries, and imported targets
+            # Collect cflags from global options, compile features, include dirs, linked libraries, and imported targets
             compile_flags: list[str] = list(ctx.compile_options)
             for feature in exe.compile_features:
                 flag = compile_feature_to_flag(feature)
                 if flag:
                     compile_flags.append(flag)
+            for inc_dir in exe.include_directories:
+                compile_flags.append(f"-I{inc_dir}")
             for lib_name in exe.link_libraries:
                 # Check for public compile features from linked libraries
                 linked_lib = ctx.get_library(lib_name)
@@ -976,6 +1065,11 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
                         flag = compile_feature_to_flag(feature)
                         if flag and flag not in compile_flags:
                             compile_flags.append(flag)
+                    # Check for public include directories from linked libraries
+                    for inc_dir in linked_lib.public_include_directories:
+                        inc_flag = f"-I{inc_dir}"
+                        if inc_flag not in compile_flags:
+                            compile_flags.append(inc_flag)
                 # Check for cflags from imported targets
                 if lib_name in ctx.imported_targets:
                     imported = ctx.imported_targets[lib_name]
