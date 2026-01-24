@@ -240,10 +240,30 @@ def process_commands(commands: list[Command], ctx: BuildContext) -> None:
                     ctx.variables["CMAKE_PROJECT_NAME"] = args[0]
 
             case "set":
-                if len(args) >= 2:
-                    ctx.variables[args[0]] = " ".join(args[1:])
-                elif len(args) == 1:
-                    ctx.variables[args[0]] = ""
+                if args:
+                    var_name = args[0]
+                    values = args[1:]
+
+                    # Filter out CACHE, PARENT_SCOPE, and related keywords
+                    filtered_values: list[str] = []
+                    skip_next = 0
+                    for idx, val in enumerate(values):
+                        if skip_next > 0:
+                            skip_next -= 1
+                            continue
+                        if val == "CACHE":
+                            # CACHE TYPE "docstring" [FORCE] - skip type and docstring
+                            skip_next = 2
+                            continue
+                        if val in ("PARENT_SCOPE", "FORCE"):
+                            continue
+                        filtered_values.append(val)
+
+                    if filtered_values:
+                        ctx.variables[var_name] = " ".join(filtered_values)
+                    else:
+                        # set(VAR) with no value unsets the variable
+                        ctx.variables.pop(var_name, None)
 
             case "add_library":
                 if len(args) >= 2:
