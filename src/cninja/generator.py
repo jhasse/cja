@@ -1049,15 +1049,16 @@ int main() {{
                     ctx.compile_definitions.append(expanded)
 
             case "add_custom_command":
-                # Minimal support: add_custom_command(OUTPUT ... COMMAND ... DEPENDS ...)
+                # Minimal support: add_custom_command(OUTPUT ... COMMAND ... DEPENDS ... MAIN_DEPENDENCY ...)
                 outputs: list[str] = []
                 command: list[str] = []
                 depends: list[str] = []
+                main_dependency: str | None = None
                 arg_idx = 0
                 current_section = None
                 while arg_idx < len(args):
                     arg = args[arg_idx]
-                    if arg in ("OUTPUT", "COMMAND", "DEPENDS"):
+                    if arg in ("OUTPUT", "COMMAND", "DEPENDS", "MAIN_DEPENDENCY"):
                         current_section = arg
                     else:
                         arg = expand_variables(arg, ctx.variables, strict, cmd.line)
@@ -1067,6 +1068,8 @@ int main() {{
                             command.append(arg)
                         elif current_section == "DEPENDS":
                             depends.append(arg)
+                        elif current_section == "MAIN_DEPENDENCY":
+                            main_dependency = arg
                     arg_idx += 1
 
                 if outputs and command:
@@ -1075,6 +1078,7 @@ int main() {{
                             "outputs": outputs,
                             "command": command,
                             "depends": depends,
+                            "main_dependency": main_dependency,
                         }
                     )
 
@@ -1589,6 +1593,15 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
                 else d
                 for d in custom_cmd["depends"]  # type: ignore
             ]
+            main_dep = custom_cmd.get("main_dependency")  # type: ignore
+            if main_dep:
+                if (
+                    main_dep in custom_command_outputs
+                    and not Path(main_dep).is_absolute()
+                ):
+                    main_dep = f"$builddir/{main_dep}"
+                depends.insert(0, main_dep)
+
             cmd_str = " ".join(str(c) for c in command)
             n.build(
                 outputs,

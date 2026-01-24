@@ -134,3 +134,31 @@ add_executable(myapp generated.cpp)
         "build $builddir/myapp_generated.o: cxx $builddir/generated.cpp"
         in ninja_content
     )
+
+
+def test_add_custom_command_main_dependency(tmp_path: Path) -> None:
+    """Test that MAIN_DEPENDENCY is correctly handled."""
+    from cninja.generator import configure
+
+    source_dir = tmp_path
+    cmake_content = """cmake_minimum_required(VERSION 3.10)
+project(MainDepTest)
+
+add_custom_command(
+    OUTPUT out.txt
+    COMMAND cat in.txt > out.txt
+    MAIN_DEPENDENCY in.txt
+    DEPENDS extra.txt
+)
+"""
+    (source_dir / "CMakeLists.txt").write_text(cmake_content)
+    (source_dir / "in.txt").write_text("in")
+    (source_dir / "extra.txt").write_text("extra")
+
+    configure(source_dir, "build")
+
+    ninja_file = source_dir / "build.ninja"
+    ninja_content = ninja_file.read_text()
+
+    # in.txt should be the first dependency
+    assert "build $builddir/out.txt: custom_command in.txt extra.txt" in ninja_content
