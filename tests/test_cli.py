@@ -67,7 +67,9 @@ def test_cli_multiple_d_flags(tmp_path: Path) -> None:
 
     result = subprocess.run(
         [
-            "uv", "run", "cninja",
+            "uv",
+            "run",
+            "cninja",
             "-DCMAKE_BUILD_TYPE=Release",
             "-DENABLE_TESTS=ON",
         ],
@@ -184,3 +186,25 @@ def test_build_subcommand_skips_configure_if_ninja_exists(tmp_path: Path) -> Non
     )
     assert result2.returncode == 0
     assert "Configured" not in result2.stdout
+
+
+def test_test_subcommand(tmp_path: Path) -> None:
+    """Test cninja test subcommand."""
+    source_dir = tmp_path
+    (source_dir / "CMakeLists.txt").write_text(
+        """
+cmake_minimum_required(VERSION 3.10)
+project(test_prj)
+add_test(NAME mytest COMMAND echo "Hello from test")
+"""
+    )
+
+    result = subprocess.run(
+        ["uv", "run", "cninja", "test"],
+        capture_output=True,
+        text=True,
+        cwd=source_dir,
+    )
+    assert result.returncode == 0
+    assert "TEST mytest" in result.stdout
+    assert "Hello from test" in result.stdout

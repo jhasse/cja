@@ -30,7 +30,13 @@ def cmd_configure(args: argparse.Namespace) -> int:
         variables[name] = value
 
     try:
-        configure(source_dir, build_dir, variables=variables if variables else None, trace=args.trace, strict=args.strict)
+        configure(
+            source_dir,
+            build_dir,
+            variables=variables if variables else None,
+            trace=args.trace,
+            strict=args.strict,
+        )
         return 0
     except FileNotFoundError as e:
         print(f"Error: {e}", file=sys.stderr)
@@ -45,6 +51,16 @@ def cmd_configure(args: argparse.Namespace) -> int:
 
 def cmd_build(args: argparse.Namespace) -> int:
     """Run the build command (configure if needed + ninja)."""
+    return _run_ninja(args, target=None)
+
+
+def cmd_test(args: argparse.Namespace) -> int:
+    """Run the test command (configure if needed + ninja test)."""
+    return _run_ninja(args, target="test")
+
+
+def _run_ninja(args: argparse.Namespace, target: str | None) -> int:
+    """Internal helper to run ninja with configuration if needed."""
     source_dir = Path(".")
 
     # Determine build directory and variables based on --release flag
@@ -70,6 +86,8 @@ def cmd_build(args: argparse.Namespace) -> int:
 
     # Run ninja
     ninja_cmd = ["ninja", "-f", str(ninja_file)]
+    if target:
+        ninja_cmd.append(target)
     result = subprocess.run(ninja_cmd)
     return result.returncode
 
@@ -78,17 +96,18 @@ def main() -> int:
     """Main entry point for cninja CLI."""
     parser = argparse.ArgumentParser(
         prog="cninja",
-        description="A CMake reimplementation in Python with Ninja generator"
+        description="A CMake reimplementation in Python with Ninja generator",
     )
 
     subparsers = parser.add_subparsers(dest="command")
 
     # Configure command (default behavior, also works without subcommand)
     parser.add_argument(
-        "-B", "--build-dir",
+        "-B",
+        "--build-dir",
         dest="build_dir",
         default="build",
-        help="Relative path for build directory (default: build)"
+        help="Relative path for build directory (default: build)",
     )
 
     parser.add_argument(
@@ -97,36 +116,43 @@ def main() -> int:
         action="append",
         default=[],
         metavar="VAR=VALUE",
-        help="Set a CMake variable (can be used multiple times)"
+        help="Set a CMake variable (can be used multiple times)",
     )
 
     parser.add_argument(
-        "--trace",
-        action="store_true",
-        help="Print each command as it's processed"
+        "--trace", action="store_true", help="Print each command as it's processed"
     )
 
     parser.add_argument(
         "--strict",
         action="store_true",
-        help="Error on unsupported commands instead of ignoring them"
+        help="Error on unsupported commands instead of ignoring them",
     )
 
     # Build subcommand
     build_parser = subparsers.add_parser(
-        "build",
-        help="Configure and build the project"
+        "build", help="Configure and build the project"
     )
     build_parser.add_argument(
         "--release",
         action="store_true",
-        help="Build in release mode (CMAKE_BUILD_TYPE=Release)"
+        help="Build in release mode (CMAKE_BUILD_TYPE=Release)",
+    )
+
+    # Test subcommand
+    test_parser = subparsers.add_parser("test", help="Configure and run tests")
+    test_parser.add_argument(
+        "--release",
+        action="store_true",
+        help="Run tests in release mode (CMAKE_BUILD_TYPE=Release)",
     )
 
     args = parser.parse_args()
 
     if args.command == "build":
         return cmd_build(args)
+    elif args.command == "test":
+        return cmd_test(args)
     else:
         # Default: configure only
         return cmd_configure(args)

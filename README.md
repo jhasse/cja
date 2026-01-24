@@ -42,6 +42,24 @@ cninja -Bbuild-release -DCMAKE_BUILD_TYPE=Release
 ninja -f build-release.ninja
 ```
 
+## Test Subcommand
+
+### `cninja test`
+
+Equivalent to calling:
+```sh
+cninja build
+ninja -f build.ninja test
+```
+
+### `cninja test --release`
+
+Equivalent to calling:
+```sh
+cninja build --release
+ninja -f build-release.ninja test
+```
+
 ## Supported CMake Commands
 
 ### Project Structure
@@ -61,17 +79,26 @@ ninja -f build-release.ninja
 - `foreach() / endforeach()` (with RANGE, IN LISTS, IN ITEMS)
 
 ### Target Properties
-- `target_link_libraries(target [PUBLIC|PRIVATE] libs...)`
-- `target_sources(target [PUBLIC|PRIVATE] sources...)`
-- `target_compile_features(target [PUBLIC|PRIVATE] features...)`
+- `target_link_libraries(target [PUBLIC|PRIVATE|INTERFACE] libs...)`
+- `target_sources(target [PUBLIC|PRIVATE|INTERFACE] sources...)`
+- `target_compile_features(target [PUBLIC|PRIVATE|INTERFACE] features...)`
+- `target_compile_definitions(target [PUBLIC|PRIVATE|INTERFACE] defs...)`
+- `target_include_directories(target [PUBLIC|PRIVATE|INTERFACE] [SYSTEM] dirs...)`
+- `set_source_files_properties(files... PROPERTIES prop value...)` (supports OBJECT_DEPENDS, INCLUDE_DIRECTORIES, COMPILE_DEFINITIONS)
 
 ### Finding Dependencies
 - `find_program(VAR name [NAMES ...] [REQUIRED])`
 - `find_package(name [REQUIRED])` - supports GTest and Threads via pkg-config
 
+### Testing
+- `add_test(NAME name COMMAND cmd args...)` or `add_test(name cmd args...)`
+- `include(CTest)` - adds a `test` target (or use `include(module)` for other modules)
+
 ### Other
-- `include(module)` - supports CTest
 - `message([STATUS|WARNING|FATAL_ERROR] "text")`
+- `add_compile_definitions(defs...)`
+- `add_compile_options(options...)`
+- `add_custom_command(OUTPUT ... COMMAND ... DEPENDS ...)`
 
 ## Build Types
 
