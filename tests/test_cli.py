@@ -117,3 +117,44 @@ def test_custom_build_dir_ninja_name(tmp_path: Path) -> None:
     # Should create build-release.ninja, not build.ninja
     assert (source_dir / "build-release.ninja").exists()
     assert not (source_dir / "build.ninja").exists()
+
+
+def test_build_subcommand(tmp_path: Path) -> None:
+    """Test cninja build subcommand."""
+    source_dir = tmp_path / "hello"
+    shutil.copytree(EXAMPLES_DIR / "hello", source_dir)
+
+    result = subprocess.run(
+        ["uv", "run", "cninja", "build"],
+        capture_output=True,
+        text=True,
+        cwd=source_dir,
+    )
+    assert result.returncode == 0
+
+    # Should have created build.ninja and built the executable
+    assert (source_dir / "build.ninja").exists()
+    assert (source_dir / "build" / "hello").exists()
+
+
+def test_build_subcommand_release(tmp_path: Path) -> None:
+    """Test cninja build --release subcommand."""
+    source_dir = tmp_path / "hello"
+    shutil.copytree(EXAMPLES_DIR / "hello", source_dir)
+
+    result = subprocess.run(
+        ["uv", "run", "cninja", "build", "--release"],
+        capture_output=True,
+        text=True,
+        cwd=source_dir,
+    )
+    assert result.returncode == 0
+
+    # Should have created build-release.ninja with Release flags
+    assert (source_dir / "build-release.ninja").exists()
+    content = (source_dir / "build-release.ninja").read_text()
+    assert "-O3" in content
+    assert "-DNDEBUG" in content
+
+    # Should have built the executable in build-release
+    assert (source_dir / "build-release" / "hello").exists()
