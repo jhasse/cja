@@ -33,6 +33,10 @@ class Library:
     public_include_directories: list[str] = field(
         default_factory=list
     )  # PUBLIC includes
+    compile_definitions: list[str] = field(default_factory=list)  # PRIVATE definitions
+    public_compile_definitions: list[str] = field(
+        default_factory=list
+    )  # PUBLIC definitions
 
 
 @dataclass
@@ -44,6 +48,7 @@ class Executable:
     link_libraries: list[str] = field(default_factory=list)
     compile_features: list[str] = field(default_factory=list)
     include_directories: list[str] = field(default_factory=list)
+    compile_definitions: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -309,6 +314,8 @@ def process_commands(
     strict: bool = False,
 ) -> None:
     """Process CMake commands and populate the build context."""
+    # Ensure CMAKE_COMMAND is always set
+    ctx.variables["CMAKE_COMMAND"] = "cninja"
     i = 0
     while i < len(commands):
         cmd = commands[i]
@@ -884,42 +891,47 @@ int main() {{
                     target_name = args[0]
                     # Parse features with visibility keywords
                     public_features: list[str] = []
-                    private_features: list[str] = []
+                    target_features: list[str] = []
                     visibility = "PUBLIC"  # Default visibility
                     for arg in args[1:]:
-                        if arg in ("PUBLIC", "INTERFACE"):
+                        if arg == "PUBLIC":
                             visibility = "PUBLIC"
+                        elif arg == "INTERFACE":
+                            visibility = "INTERFACE"
                         elif arg == "PRIVATE":
                             visibility = "PRIVATE"
                         else:
                             if visibility == "PUBLIC":
                                 public_features.append(arg)
+                                target_features.append(arg)
+                            elif visibility == "INTERFACE":
+                                public_features.append(arg)
                             else:
-                                private_features.append(arg)
+                                target_features.append(arg)
                     # Add features to library or executable
                     lib = ctx.get_library(target_name)
                     if lib:
-                        lib.compile_features.extend(private_features)
+                        lib.compile_features.extend(target_features)
                         lib.public_compile_features.extend(public_features)
-                        # Library also uses its own public features
-                        lib.compile_features.extend(public_features)
                     else:
                         exe = ctx.get_executable(target_name)
                         if exe:
                             # Executables don't propagate, so all features go to compile_features
+                            exe.compile_features.extend(target_features)
                             exe.compile_features.extend(public_features)
-                            exe.compile_features.extend(private_features)
 
             case "target_include_directories":
                 if len(args) >= 2:
                     target_name = args[0]
                     # Parse directories with visibility keywords
                     public_dirs: list[str] = []
-                    private_dirs: list[str] = []
+                    target_dirs: list[str] = []
                     visibility = "PUBLIC"  # Default visibility
                     for arg in args[1:]:
-                        if arg in ("PUBLIC", "INTERFACE"):
+                        if arg == "PUBLIC":
                             visibility = "PUBLIC"
+                        elif arg == "INTERFACE":
+                            visibility = "INTERFACE"
                         elif arg == "PRIVATE":
                             visibility = "PRIVATE"
                         elif arg == "SYSTEM":
@@ -934,21 +946,60 @@ int main() {{
                                 expanded = str(ctx.source_dir / expanded)
                             if visibility == "PUBLIC":
                                 public_dirs.append(expanded)
+                                target_dirs.append(expanded)
+                            elif visibility == "INTERFACE":
+                                public_dirs.append(expanded)
                             else:
-                                private_dirs.append(expanded)
+                                target_dirs.append(expanded)
                     # Add directories to library or executable
                     lib = ctx.get_library(target_name)
                     if lib:
-                        lib.include_directories.extend(private_dirs)
+                        lib.include_directories.extend(target_dirs)
                         lib.public_include_directories.extend(public_dirs)
-                        # Library also uses its own public includes
-                        lib.include_directories.extend(public_dirs)
                     else:
                         exe = ctx.get_executable(target_name)
                         if exe:
                             # Executables don't propagate, so all dirs go to include_directories
+                            exe.include_directories.extend(target_dirs)
                             exe.include_directories.extend(public_dirs)
-                            exe.include_directories.extend(private_dirs)
+
+            case "target_compile_definitions":
+                if len(args) >= 2:
+                    target_name = args[0]
+                    # Parse definitions with visibility keywords
+                    public_defs: list[str] = []
+                    target_defs: list[str] = []
+                    visibility = "PUBLIC"  # Default visibility
+                    for arg in args[1:]:
+                        if arg == "PUBLIC":
+                            visibility = "PUBLIC"
+                        elif arg == "INTERFACE":
+                            visibility = "INTERFACE"
+                        elif arg == "PRIVATE":
+                            visibility = "PRIVATE"
+                        else:
+                            # Expand variables
+                            expanded = expand_variables(
+                                arg, ctx.variables, strict, cmd.line
+                            )
+                            if visibility == "PUBLIC":
+                                public_defs.append(expanded)
+                                target_defs.append(expanded)
+                            elif visibility == "INTERFACE":
+                                public_defs.append(expanded)
+                            else:
+                                target_defs.append(expanded)
+                    # Add definitions to library or executable
+                    lib = ctx.get_library(target_name)
+                    if lib:
+                        lib.compile_definitions.extend(target_defs)
+                        lib.public_compile_definitions.extend(public_defs)
+                    else:
+                        exe = ctx.get_executable(target_name)
+                        if exe:
+                            # Executables don't propagate, so all defs go to compile_definitions
+                            exe.compile_definitions.extend(target_defs)
+                            exe.compile_definitions.extend(public_defs)
 
             case "add_compile_options":
                 # add_compile_options adds flags to all targets
@@ -1423,6 +1474,8 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
             lib_compile_flags: list[str] = list(ctx.compile_options)
             for definition in ctx.compile_definitions:
                 lib_compile_flags.append(f"-D{definition}")
+            for definition in lib.compile_definitions:
+                lib_compile_flags.append(f"-D{definition}")
             for feature in lib.compile_features:
                 flag = compile_feature_to_flag(feature)
                 if flag:
@@ -1468,6 +1521,8 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
             compile_flags: list[str] = list(ctx.compile_options)
             for definition in ctx.compile_definitions:
                 compile_flags.append(f"-D{definition}")
+            for definition in exe.compile_definitions:
+                compile_flags.append(f"-D{definition}")
             for feature in exe.compile_features:
                 flag = compile_feature_to_flag(feature)
                 if flag:
@@ -1487,6 +1542,11 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
                         inc_flag = f"-I{inc_dir}"
                         if inc_flag not in compile_flags:
                             compile_flags.append(inc_flag)
+                    # Check for public compile definitions from linked libraries
+                    for definition in linked_lib.public_compile_definitions:
+                        def_flag = f"-D{definition}"
+                        if def_flag not in compile_flags:
+                            compile_flags.append(def_flag)
                 # Check for cflags from imported targets
                 if lib_name in ctx.imported_targets:
                     imported = ctx.imported_targets[lib_name]
