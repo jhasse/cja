@@ -47,9 +47,10 @@ def test_cli_d_flag(tmp_path: Path) -> None:
     shutil.copytree(EXAMPLES_DIR / "hello", source_dir)
 
     result = subprocess.run(
-        ["uv", "run", "cninja", str(source_dir), "-DCMAKE_BUILD_TYPE=Debug"],
+        ["uv", "run", "cninja", "-DCMAKE_BUILD_TYPE=Debug"],
         capture_output=True,
         text=True,
+        cwd=source_dir,
     )
     assert result.returncode == 0
 
@@ -67,12 +68,12 @@ def test_cli_multiple_d_flags(tmp_path: Path) -> None:
     result = subprocess.run(
         [
             "uv", "run", "cninja",
-            str(source_dir),
             "-DCMAKE_BUILD_TYPE=Release",
             "-DENABLE_TESTS=ON",
         ],
         capture_output=True,
         text=True,
+        cwd=source_dir,
     )
     assert result.returncode == 0
 

@@ -25,24 +25,10 @@ def main() -> int:
     )
 
     parser.add_argument(
-        "source_dir",
-        nargs="?",
-        default=".",
-        help="Path to source directory containing CMakeLists.txt (default: current directory)"
-    )
-
-    parser.add_argument(
         "-B", "--build-dir",
         dest="build_dir",
         default="build",
         help="Relative path for build directory (default: build)"
-    )
-
-    parser.add_argument(
-        "-S", "--source-dir",
-        dest="source_dir_opt",
-        default=None,
-        help="Path to source directory (alternative to positional argument)"
     )
 
     parser.add_argument(
@@ -56,10 +42,8 @@ def main() -> int:
 
     args = parser.parse_args()
 
-    # Determine source directory
-    source_dir = Path(args.source_dir_opt or args.source_dir)
-
-    # Build directory is relative to source
+    # Always use current working directory as source
+    source_dir = Path(".")
     build_dir = args.build_dir
 
     # Parse -D arguments into variables dict
