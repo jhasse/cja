@@ -59,6 +59,7 @@ class FunctionDef:
 @dataclass
 class BuildContext:
     """Context for processing CMake commands."""
+
     source_dir: Path
     build_dir: Path
     project_name: str = ""
@@ -68,9 +69,18 @@ class BuildContext:
     executables: list[Executable] = field(default_factory=list)
     imported_targets: dict[str, ImportedTarget] = field(default_factory=dict)
     compile_options: list[str] = field(default_factory=list)  # Global compile options
-    compile_definitions: list[str] = field(default_factory=list)  # Global compile definitions
-    functions: dict[str, FunctionDef] = field(default_factory=dict)  # User-defined functions
-    parent_scope_vars: dict[str, str] = field(default_factory=dict)  # For PARENT_SCOPE in functions
+    compile_definitions: list[str] = field(
+        default_factory=list
+    )  # Global compile definitions
+    custom_commands: list[dict[str, object]] = field(
+        default_factory=list
+    )  # Custom build commands
+    functions: dict[str, FunctionDef] = field(
+        default_factory=dict
+    )  # User-defined functions
+    parent_scope_vars: dict[str, str] = field(
+        default_factory=dict
+    )  # For PARENT_SCOPE in functions
 
     def get_library(self, name: str) -> Library | None:
         for lib in self.libraries:
@@ -85,13 +95,31 @@ class BuildContext:
         return None
 
 
-def expand_variables(value: str, variables: dict[str, str]) -> str:
+def expand_variables(
+    value: str, variables: dict[str, str], strict: bool = False, line: int = 0
+) -> str:
     """Expand ${VAR} references in a string."""
+
     def replace(match: re.Match[str]) -> str:
         var_name = match.group(1)
+        if var_name not in variables:
+            warning_label = colored("warning:", "magenta", attrs=["bold"])
+            location = f"CMakeLists.txt:{line}: " if line > 0 else ""
+            print(
+                f"{location}{warning_label} undefined variable referenced: {var_name}",
+                file=sys.stderr,
+            )
+            if strict:
+                error_label = colored("error:", "red", attrs=["bold"])
+                print(
+                    f"{location}{error_label} undefined variable in strict mode: {var_name}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            return ""
         return variables.get(var_name, "")
 
-    return re.sub(r'\$\{(\w+)\}', replace, value)
+    return re.sub(r"\$\{(\w+)\}", replace, value)
 
 
 def is_truthy(value: str) -> bool:
@@ -145,9 +173,13 @@ def evaluate_condition(args: list[str], variables: dict[str, str]) -> bool:
 
         # Handle AND/OR with remaining args
         if op == "AND":
-            return evaluate_condition([left], variables) and evaluate_condition(args[2:], variables)
+            return evaluate_condition([left], variables) and evaluate_condition(
+                args[2:], variables
+            )
         if op == "OR":
-            return evaluate_condition([left], variables) or evaluate_condition(args[2:], variables)
+            return evaluate_condition([left], variables) or evaluate_condition(
+                args[2:], variables
+            )
 
         # For comparisons, expand variables
         left_val = get_value(left)
@@ -220,7 +252,9 @@ def find_matching_endforeach(commands: list[Command], start: int) -> int:
             if depth == 0:
                 return i
         i += 1
-    raise SyntaxError(f"No matching endforeach() for foreach() at line {commands[start].line}")
+    raise SyntaxError(
+        f"No matching endforeach() for foreach() at line {commands[start].line}"
+    )
 
 
 def find_matching_endfunction(commands: list[Command], start: int) -> int:
@@ -235,10 +269,14 @@ def find_matching_endfunction(commands: list[Command], start: int) -> int:
             if depth == 0:
                 return i
         i += 1
-    raise SyntaxError(f"No matching endfunction() for function() at line {commands[start].line}")
+    raise SyntaxError(
+        f"No matching endfunction() for function() at line {commands[start].line}"
+    )
 
 
-def find_else_or_elseif(commands: list[Command], start: int, end: int) -> list[tuple[str, int, list[str]]]:
+def find_else_or_elseif(
+    commands: list[Command], start: int, end: int
+) -> list[tuple[str, int, list[str]]]:
     """Find elseif/else blocks between if and endif, returns list of (type, index, args)."""
     blocks: list[tuple[str, int, list[str]]] = []
     depth = 0
@@ -257,12 +295,19 @@ def find_else_or_elseif(commands: list[Command], start: int, end: int) -> list[t
     return blocks
 
 
-def process_commands(commands: list[Command], ctx: BuildContext, trace: bool = False, strict: bool = False) -> None:
+def process_commands(
+    commands: list[Command],
+    ctx: BuildContext,
+    trace: bool = False,
+    strict: bool = False,
+) -> None:
     """Process CMake commands and populate the build context."""
     i = 0
     while i < len(commands):
         cmd = commands[i]
-        args = [expand_variables(arg, ctx.variables) for arg in cmd.args]
+        args = [
+            expand_variables(arg, ctx.variables, strict, cmd.line) for arg in cmd.args
+        ]
 
         if trace:
             args_str = " ".join(cmd.args) if cmd.args else ""
@@ -280,11 +325,16 @@ def process_commands(commands: list[Command], ctx: BuildContext, trace: bool = F
                 block_start = i + 1
 
                 # Check the if condition
-                if_args = [expand_variables(arg, ctx.variables) for arg in cmd.args]
+                if_args = [
+                    expand_variables(arg, ctx.variables, strict, cmd.line)
+                    for arg in cmd.args
+                ]
                 if evaluate_condition(if_args, ctx.variables):
                     # Execute commands from if to first elseif/else or endif
                     block_end = blocks[0][1] if blocks else endif_idx
-                    process_commands(commands[block_start:block_end], ctx, trace, strict)
+                    process_commands(
+                        commands[block_start:block_end], ctx, trace, strict
+                    )
                     executed = True
                 else:
                     # Check elseif/else blocks
@@ -292,17 +342,30 @@ def process_commands(commands: list[Command], ctx: BuildContext, trace: bool = F
                         if executed:
                             break
                         if block_type == "elseif":
-                            elseif_args = [expand_variables(arg, ctx.variables) for arg in block_args]
+                            elseif_args = [
+                                expand_variables(
+                                    arg, ctx.variables, strict, commands[block_idx].line
+                                )
+                                for arg in block_args
+                            ]
                             if evaluate_condition(elseif_args, ctx.variables):
                                 # Execute this elseif block
                                 block_start = block_idx + 1
-                                block_end = blocks[j + 1][1] if j + 1 < len(blocks) else endif_idx
-                                process_commands(commands[block_start:block_end], ctx, trace, strict)
+                                block_end = (
+                                    blocks[j + 1][1]
+                                    if j + 1 < len(blocks)
+                                    else endif_idx
+                                )
+                                process_commands(
+                                    commands[block_start:block_end], ctx, trace, strict
+                                )
                                 executed = True
                         elif block_type == "else":
                             # Execute else block
                             block_start = block_idx + 1
-                            process_commands(commands[block_start:endif_idx], ctx, trace, strict)
+                            process_commands(
+                                commands[block_start:endif_idx], ctx, trace, strict
+                            )
                             executed = True
 
                 # Skip to after endif
@@ -316,11 +379,13 @@ def process_commands(commands: list[Command], ctx: BuildContext, trace: bool = F
 
             case "foreach":
                 if not args:
-                    raise SyntaxError(f"foreach() requires at least a loop variable at line {cmd.line}")
+                    raise SyntaxError(
+                        f"foreach() requires at least a loop variable at line {cmd.line}"
+                    )
 
                 # Find matching endforeach
                 endforeach_idx = find_matching_endforeach(commands, i)
-                body = commands[i + 1:endforeach_idx]
+                body = commands[i + 1 : endforeach_idx]
 
                 loop_var = cmd.args[0]  # Use unexpanded for variable name
                 remaining = args[1:]  # Use expanded args for values
@@ -337,7 +402,11 @@ def process_commands(commands: list[Command], ctx: BuildContext, trace: bool = F
                         start, stop = int(range_args[0]), int(range_args[1])
                         items = [str(x) for x in range(start, stop + 1)]
                     elif len(range_args) >= 3:
-                        start, stop, step = int(range_args[0]), int(range_args[1]), int(range_args[2])
+                        start, stop, step = (
+                            int(range_args[0]),
+                            int(range_args[1]),
+                            int(range_args[2]),
+                        )
                         items = [str(x) for x in range(start, stop + 1, step)]
                 elif remaining and remaining[0] == "IN":
                     # foreach(var IN LISTS list1 ... | ITEMS item1 ...)
@@ -372,7 +441,7 @@ def process_commands(commands: list[Command], ctx: BuildContext, trace: bool = F
 
                 # Find matching endfunction
                 endfunction_idx = find_matching_endfunction(commands, i)
-                body = commands[i + 1:endfunction_idx]
+                body = commands[i + 1 : endfunction_idx]
 
                 func_name = cmd.args[0].lower()  # CMake functions are case-insensitive
                 func_params = cmd.args[1:]  # Parameter names
@@ -480,6 +549,7 @@ def process_commands(commands: list[Command], ctx: BuildContext, trace: bool = F
                     # Integer division is // in Python.
                     # CMake's / is integer division.
                     expr = expr.replace("/", "//")
+
                     # Normalize leading-zero integer literals (CMake treats as decimal)
                     # Avoid transforming hex literals like 0xFF
                     def _normalize_leading_zeros(match: re.Match[str]) -> str:
@@ -503,7 +573,10 @@ def process_commands(commands: list[Command], ctx: BuildContext, trace: bool = F
                     except Exception as e:
                         if strict:
                             error_label = colored("error:", "red", attrs=["bold"])
-                            print(f"CMakeLists.txt:{cmd.line}: {error_label} math(EXPR) evaluation error: {e}", file=sys.stderr)
+                            print(
+                                f"CMakeLists.txt:{cmd.line}: {error_label} math(EXPR) evaluation error: {e}",
+                                file=sys.stderr,
+                            )
                             sys.exit(1)
 
             case "include":
@@ -523,7 +596,10 @@ def process_commands(commands: list[Command], ctx: BuildContext, trace: bool = F
                     elif module_name not in known_modules:
                         if strict:
                             error_label = colored("error:", "red", attrs=["bold"])
-                            print(f"CMakeLists.txt:{cmd.line}: {error_label} unknown module: {module_name}", file=sys.stderr)
+                            print(
+                                f"CMakeLists.txt:{cmd.line}: {error_label} unknown module: {module_name}",
+                                file=sys.stderr,
+                            )
                             sys.exit(1)
 
             case "check_ipo_supported":
@@ -542,7 +618,10 @@ def process_commands(commands: list[Command], ctx: BuildContext, trace: bool = F
                     elif args[arg_idx] == "LANGUAGES":
                         # Skip languages, we just check C/C++
                         arg_idx += 1
-                        while arg_idx < len(args) and args[arg_idx] not in ("RESULT", "OUTPUT"):
+                        while arg_idx < len(args) and args[arg_idx] not in (
+                            "RESULT",
+                            "OUTPUT",
+                        ):
                             arg_idx += 1
                     else:
                         arg_idx += 1
@@ -552,6 +631,7 @@ def process_commands(commands: list[Command], ctx: BuildContext, trace: bool = F
                 error_msg = ""
                 try:
                     import tempfile
+
                     with tempfile.NamedTemporaryFile(suffix=".c", delete=False) as f:
                         f.write(b"int main() { return 0; }\n")
                         temp_src = f.name
@@ -585,7 +665,10 @@ def process_commands(commands: list[Command], ctx: BuildContext, trace: bool = F
                     supported = False
                     try:
                         import tempfile
-                        with tempfile.NamedTemporaryFile(suffix=".cpp", delete=False) as f:
+
+                        with tempfile.NamedTemporaryFile(
+                            suffix=".cpp", delete=False
+                        ) as f:
                             f.write(b"int main() { return 0; }\n")
                             temp_src = f.name
                         temp_out = temp_src + ".o"
@@ -598,7 +681,10 @@ def process_commands(commands: list[Command], ctx: BuildContext, trace: bool = F
                         if result.returncode == 0:
                             # Some compilers return 0 but warn about unknown flags
                             stderr_lower = result.stderr.lower()
-                            if "unknown" not in stderr_lower and "unrecognized" not in stderr_lower:
+                            if (
+                                "unknown" not in stderr_lower
+                                and "unrecognized" not in stderr_lower
+                            ):
                                 supported = True
                         Path(temp_out).unlink(missing_ok=True)
                         Path(temp_src).unlink(missing_ok=True)
@@ -617,7 +703,10 @@ def process_commands(commands: list[Command], ctx: BuildContext, trace: bool = F
                     supported = False
                     try:
                         import tempfile
-                        with tempfile.NamedTemporaryFile(suffix=".c", delete=False) as f:
+
+                        with tempfile.NamedTemporaryFile(
+                            suffix=".c", delete=False
+                        ) as f:
                             f.write(b"int main() { return 0; }\n")
                             temp_src = f.name
                         temp_out = temp_src + ".o"
@@ -629,7 +718,10 @@ def process_commands(commands: list[Command], ctx: BuildContext, trace: bool = F
                         # Check return code and that there are no warnings about unknown flags
                         if result.returncode == 0:
                             stderr_lower = result.stderr.lower()
-                            if "unknown" not in stderr_lower and "unrecognized" not in stderr_lower:
+                            if (
+                                "unknown" not in stderr_lower
+                                and "unrecognized" not in stderr_lower
+                            ):
                                 supported = True
                         Path(temp_out).unlink(missing_ok=True)
                         Path(temp_src).unlink(missing_ok=True)
@@ -654,8 +746,9 @@ def process_commands(commands: list[Command], ctx: BuildContext, trace: bool = F
                     found = False
                     try:
                         import tempfile
+
                         # Generate includes
-                        includes = "\n".join(f'#include <{f}>' for f in files)
+                        includes = "\n".join(f"#include <{f}>" for f in files)
                         # Create test program that uses the symbol
                         test_code = f"""{includes}
 int main() {{
@@ -663,7 +756,9 @@ int main() {{
     return 0;
 }}
 """
-                        with tempfile.NamedTemporaryFile(suffix=".cpp", delete=False, mode="w") as f:
+                        with tempfile.NamedTemporaryFile(
+                            suffix=".cpp", delete=False, mode="w"
+                        ) as f:
                             f.write(test_code)
                             temp_src = f.name
                         temp_out = temp_src.replace(".cpp", "")
@@ -690,25 +785,26 @@ int main() {{
                     if sources and sources[0] in ("STATIC", "SHARED", "OBJECT"):
                         lib_type = sources[0]
                         sources = sources[1:]
-                    ctx.libraries.append(Library(
-                        name=name,
-                        sources=sources,
-                        lib_type=lib_type,
-                    ))
+                    ctx.libraries.append(
+                        Library(
+                            name=name,
+                            sources=sources,
+                            lib_type=lib_type,
+                        )
+                    )
 
             case "add_executable":
                 if len(args) >= 2:
-                    ctx.executables.append(Executable(
-                        name=args[0],
-                        sources=args[1:]
-                    ))
+                    ctx.executables.append(Executable(name=args[0], sources=args[1:]))
 
             case "target_link_libraries":
                 if len(args) >= 2:
                     target_name = args[0]
                     libs = args[1:]
                     # Skip visibility keywords
-                    libs = [l for l in libs if l not in ("PUBLIC", "PRIVATE", "INTERFACE")]
+                    libs = [
+                        l for l in libs if l not in ("PUBLIC", "PRIVATE", "INTERFACE")
+                    ]
                     exe = ctx.get_executable(target_name)
                     if exe:
                         exe.link_libraries.extend(libs)
@@ -718,7 +814,11 @@ int main() {{
                     target_name = args[0]
                     sources = args[1:]
                     # Skip visibility keywords
-                    sources = [s for s in sources if s not in ("PUBLIC", "PRIVATE", "INTERFACE")]
+                    sources = [
+                        s
+                        for s in sources
+                        if s not in ("PUBLIC", "PRIVATE", "INTERFACE")
+                    ]
                     # Add sources to library or executable
                     lib = ctx.get_library(target_name)
                     if lib:
@@ -776,7 +876,9 @@ int main() {{
                             pass
                         else:
                             # Expand variables and resolve relative paths
-                            expanded = expand_variables(arg, ctx.variables)
+                            expanded = expand_variables(
+                                arg, ctx.variables, strict, cmd.line
+                            )
                             if not Path(expanded).is_absolute():
                                 expanded = str(ctx.source_dir / expanded)
                             if visibility == "PUBLIC":
@@ -800,14 +902,43 @@ int main() {{
             case "add_compile_options":
                 # add_compile_options adds flags to all targets
                 for arg in args:
-                    expanded = expand_variables(arg, ctx.variables)
+                    expanded = expand_variables(arg, ctx.variables, strict, cmd.line)
                     ctx.compile_options.append(expanded)
 
             case "add_compile_definitions":
                 # add_compile_definitions adds preprocessor definitions to all targets
                 for arg in args:
-                    expanded = expand_variables(arg, ctx.variables)
+                    expanded = expand_variables(arg, ctx.variables, strict, cmd.line)
                     ctx.compile_definitions.append(expanded)
+
+            case "add_custom_command":
+                # Minimal support: add_custom_command(OUTPUT ... COMMAND ... DEPENDS ...)
+                outputs: list[str] = []
+                command: list[str] = []
+                depends: list[str] = []
+                arg_idx = 0
+                current_section = None
+                while arg_idx < len(args):
+                    arg = args[arg_idx]
+                    if arg in ("OUTPUT", "COMMAND", "DEPENDS"):
+                        current_section = arg
+                    else:
+                        if current_section == "OUTPUT":
+                            outputs.append(arg)
+                        elif current_section == "COMMAND":
+                            command.append(arg)
+                        elif current_section == "DEPENDS":
+                            depends.append(arg)
+                    arg_idx += 1
+
+                if outputs and command:
+                    ctx.custom_commands.append(
+                        {
+                            "outputs": outputs,
+                            "command": command,
+                            "depends": depends,
+                        }
+                    )
 
             case "find_program":
                 if len(args) >= 2:
@@ -823,7 +954,12 @@ int main() {{
                         elif arg == "NAMES":
                             # Collect names until next keyword or end
                             arg_idx += 1
-                            while arg_idx < len(args) and args[arg_idx] not in ("REQUIRED", "PATHS", "HINTS", "DOC"):
+                            while arg_idx < len(args) and args[arg_idx] not in (
+                                "REQUIRED",
+                                "PATHS",
+                                "HINTS",
+                                "DOC",
+                            ):
                                 names.append(args[arg_idx])
                                 arg_idx += 1
                             continue
@@ -843,7 +979,9 @@ int main() {{
                     else:
                         ctx.variables[var_name] = f"{var_name}-NOTFOUND"
                         if required:
-                            raise FileNotFoundError(f"Could not find program: {' or '.join(names)}")
+                            raise FileNotFoundError(
+                                f"Could not find program: {' or '.join(names)}"
+                            )
 
             case "find_package":
                 if args:
@@ -890,14 +1028,18 @@ int main() {{
                                 )
                                 if main_result.returncode == 0:
                                     gtest_main_libs = main_result.stdout.strip()
-                                    ctx.variables["GTEST_MAIN_LIBRARIES"] = gtest_main_libs
+                                    ctx.variables["GTEST_MAIN_LIBRARIES"] = (
+                                        gtest_main_libs
+                                    )
                                     ctx.variables["GTEST_BOTH_LIBRARIES"] = (
                                         gtest_libs + " " + gtest_main_libs
                                     )
                                     # Register GTest::gtest_main imported target
-                                    ctx.imported_targets["GTest::gtest_main"] = ImportedTarget(
-                                        cflags=gtest_cflags,
-                                        libs=gtest_main_libs,
+                                    ctx.imported_targets["GTest::gtest_main"] = (
+                                        ImportedTarget(
+                                            cflags=gtest_cflags,
+                                            libs=gtest_main_libs,
+                                        )
                                     )
                         except FileNotFoundError:
                             pass  # pkg-config not available
@@ -916,17 +1058,28 @@ int main() {{
                         ctx.variables["CMAKE_THREAD_LIBS_INIT"] = "-pthread"
                         ctx.variables["CMAKE_USE_PTHREADS_INIT"] = "TRUE"
                         # Register the imported target
-                        ctx.imported_targets["Threads::Threads"] = ImportedTarget(libs="-pthread")
+                        ctx.imported_targets["Threads::Threads"] = ImportedTarget(
+                            libs="-pthread"
+                        )
                     else:
                         # Unknown package
                         ctx.variables[f"{package_name}_FOUND"] = "FALSE"
                         if required:
-                            raise FileNotFoundError(f"Could not find package: {package_name}")
+                            raise FileNotFoundError(
+                                f"Could not find package: {package_name}"
+                            )
 
             case "message":
                 if args:
                     # Check for mode keyword
-                    modes = ("STATUS", "WARNING", "AUTHOR_WARNING", "SEND_ERROR", "FATAL_ERROR", "DEPRECATION")
+                    modes = (
+                        "STATUS",
+                        "WARNING",
+                        "AUTHOR_WARNING",
+                        "SEND_ERROR",
+                        "FATAL_ERROR",
+                        "DEPRECATION",
+                    )
                     mode = ""
                     message_parts = args
                     if args[0] in modes:
@@ -937,14 +1090,23 @@ int main() {{
 
                     if mode == "FATAL_ERROR":
                         error_label = colored("error:", "red", attrs=["bold"])
-                        print(f"CMakeLists.txt:{cmd.line}: {error_label} {message}", file=sys.stderr)
+                        print(
+                            f"CMakeLists.txt:{cmd.line}: {error_label} {message}",
+                            file=sys.stderr,
+                        )
                         raise SystemExit(1)
                     elif mode == "SEND_ERROR":
                         error_label = colored("error:", "red", attrs=["bold"])
-                        print(f"CMakeLists.txt:{cmd.line}: {error_label} {message}", file=sys.stderr)
+                        print(
+                            f"CMakeLists.txt:{cmd.line}: {error_label} {message}",
+                            file=sys.stderr,
+                        )
                     elif mode in ("WARNING", "AUTHOR_WARNING", "DEPRECATION"):
                         warning_label = colored("warning:", "magenta", attrs=["bold"])
-                        print(f"CMakeLists.txt:{cmd.line}: {warning_label} {message}", file=sys.stderr)
+                        print(
+                            f"CMakeLists.txt:{cmd.line}: {warning_label} {message}",
+                            file=sys.stderr,
+                        )
                     elif mode == "STATUS":
                         print(f"{message}")
                     else:
@@ -971,7 +1133,9 @@ int main() {{
                     elif arg == "WORKING_DIRECTORY":
                         arg_idx += 1
                         if arg_idx < len(args):
-                            working_directory = expand_variables(args[arg_idx], ctx.variables)
+                            working_directory = expand_variables(
+                                args[arg_idx], ctx.variables, strict, cmd.line
+                            )
                     elif arg == "RESULT_VARIABLE":
                         arg_idx += 1
                         if arg_idx < len(args):
@@ -988,16 +1152,25 @@ int main() {{
                         output_strip = True
                     elif arg == "ERROR_STRIP_TRAILING_WHITESPACE":
                         error_strip = True
-                    elif arg in ("INPUT_FILE", "OUTPUT_FILE", "ERROR_FILE",
-                                 "TIMEOUT", "COMMAND_ECHO", "OUTPUT_QUIET",
-                                 "ERROR_QUIET", "COMMAND_ERROR_IS_FATAL",
-                                 "ENCODING"):
+                    elif arg in (
+                        "INPUT_FILE",
+                        "OUTPUT_FILE",
+                        "ERROR_FILE",
+                        "TIMEOUT",
+                        "COMMAND_ECHO",
+                        "OUTPUT_QUIET",
+                        "ERROR_QUIET",
+                        "COMMAND_ERROR_IS_FATAL",
+                        "ENCODING",
+                    ):
                         # Skip unsupported options and their values
                         if arg not in ("OUTPUT_QUIET", "ERROR_QUIET"):
                             arg_idx += 1
                     else:
                         # Part of current command
-                        current_command.append(expand_variables(arg, ctx.variables))
+                        current_command.append(
+                            expand_variables(arg, ctx.variables, strict, cmd.line)
+                        )
                     arg_idx += 1
 
                 if current_command:
@@ -1057,7 +1230,7 @@ int main() {{
                         else:
                             ctx.variables[param] = ""
                     # ARGN = arguments after named parameters
-                    extra_args = args[len(func_def.params):]
+                    extra_args = args[len(func_def.params) :]
                     ctx.variables["ARGN"] = ";".join(extra_args)
 
                     # Clear parent_scope_vars before calling
@@ -1079,7 +1252,10 @@ int main() {{
                     ctx.variables = saved_vars
                 elif strict:
                     error_label = colored("error:", "red", attrs=["bold"])
-                    print(f"CMakeLists.txt:{cmd.line}: {error_label} unsupported command: {cmd.name}()", file=sys.stderr)
+                    print(
+                        f"CMakeLists.txt:{cmd.line}: {error_label} unsupported command: {cmd.name}()",
+                        file=sys.stderr,
+                    )
                     sys.exit(1)
                 # Ignore unknown commands by default
 
@@ -1166,6 +1342,28 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
         lib_outputs: dict[str, str] = {}
         object_lib_objects: dict[str, list[str]] = {}
 
+        # Generate custom command rule
+        n.rule(
+            "custom_command",
+            command="$cmd",
+            description="CUSTOM $out",
+        )
+        n.newline()
+
+        # Generate custom commands
+        for custom_cmd in ctx.custom_commands:
+            outputs = custom_cmd["outputs"]  # type: ignore
+            command = custom_cmd["command"]  # type: ignore
+            depends = custom_cmd["depends"]  # type: ignore
+            cmd_str = " ".join(str(c) for c in command)
+            n.build(
+                outputs,  # type: ignore
+                "custom_command",
+                depends,  # type: ignore
+                variables={"cmd": cmd_str},
+            )
+            n.newline()
+
         # Generate build statements for libraries
         for lib in ctx.libraries:
             objects: list[str] = []
@@ -1190,7 +1388,7 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
                 objects.append(obj_name)
 
                 # Determine if C or C++
-                if source.endswith(('.cpp', '.cxx', '.cc', '.C')):
+                if source.endswith((".cpp", ".cxx", ".cc", ".C")):
                     rule = "cxx"
                 else:
                     rule = "cc"
@@ -1253,7 +1451,7 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
                 objects.append(obj_name)
 
                 # Determine if C or C++
-                if source.endswith(('.cpp', '.cxx', '.cc', '.C')):
+                if source.endswith((".cpp", ".cxx", ".cc", ".C")):
                     rule = "cxx"
                     uses_cxx = True
                 else:
@@ -1283,7 +1481,12 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
             variables: dict[str, str] = {}
             if link_flags:
                 variables["libs"] = " ".join(link_flags)
-            n.build(exe_name, link_rule, link_inputs, variables=variables if variables else None)
+            n.build(
+                exe_name,
+                link_rule,
+                link_inputs,
+                variables=variables if variables else None,
+            )
             n.newline()
 
             default_targets.append(exe_name)
