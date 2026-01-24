@@ -7,6 +7,16 @@ from pathlib import Path
 from .generator import configure
 
 
+def parse_define(value: str) -> tuple[str, str]:
+    """Parse a -D argument into (name, value) tuple."""
+    if "=" in value:
+        name, val = value.split("=", 1)
+        return (name, val)
+    else:
+        # -DFOO without value means FOO=ON
+        return (value, "ON")
+
+
 def main() -> int:
     """Main entry point for cninja CLI."""
     parser = argparse.ArgumentParser(
@@ -35,6 +45,15 @@ def main() -> int:
         help="Path to source directory (alternative to positional argument)"
     )
 
+    parser.add_argument(
+        "-D",
+        dest="defines",
+        action="append",
+        default=[],
+        metavar="VAR=VALUE",
+        help="Set a CMake variable (can be used multiple times)"
+    )
+
     args = parser.parse_args()
 
     # Determine source directory
@@ -43,11 +62,17 @@ def main() -> int:
     # Build directory is relative to source
     build_dir = args.build_dir
 
+    # Parse -D arguments into variables dict
+    variables: dict[str, str] = {}
+    for define in args.defines:
+        name, value = parse_define(define)
+        variables[name] = value
+
     print(f"-- Source directory: {source_dir.resolve()}")
     print(f"-- Build directory: {build_dir}")
 
     try:
-        configure(source_dir, build_dir)
+        configure(source_dir, build_dir, variables=variables if variables else None)
         return 0
     except FileNotFoundError as e:
         print(f"Error: {e}", file=sys.stderr)

@@ -45,6 +45,7 @@ class BuildContext:
     build_dir: Path
     project_name: str = ""
     variables: dict[str, str] = field(default_factory=dict)
+    cache_variables: set[str] = field(default_factory=set)  # Variables from -D flags
     libraries: list[Library] = field(default_factory=list)
     executables: list[Executable] = field(default_factory=list)
     imported_targets: dict[str, ImportedTarget] = field(default_factory=dict)
@@ -338,8 +339,9 @@ def process_commands(commands: list[Command], ctx: BuildContext) -> None:
                     var_name = args[0]
                     values = args[1:]
 
-                    # Filter out CACHE, PARENT_SCOPE, and related keywords
+                    # Filter out CACHE, PARENT_SCOPE, and track FORCE
                     filtered_values: list[str] = []
+                    has_force = False
                     skip_next = 0
                     for idx, val in enumerate(values):
                         if skip_next > 0:
@@ -349,11 +351,17 @@ def process_commands(commands: list[Command], ctx: BuildContext) -> None:
                             # CACHE TYPE "docstring" [FORCE] - skip type and docstring
                             skip_next = 2
                             continue
-                        if val in ("PARENT_SCOPE", "FORCE"):
+                        if val == "FORCE":
+                            has_force = True
+                            continue
+                        if val == "PARENT_SCOPE":
                             continue
                         filtered_values.append(val)
 
-                    if filtered_values:
+                    # Don't override cache variables unless FORCE is specified
+                    if var_name in ctx.cache_variables and not has_force:
+                        pass  # Skip, variable was set via -D flag
+                    elif filtered_values:
                         ctx.variables[var_name] = " ".join(filtered_values)
                     else:
                         # set(VAR) with no value unsets the variable
@@ -612,6 +620,18 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
     exe_ext = ".exe" if platform.system() == "Windows" else ""
     lib_ext = ".lib" if platform.system() == "Windows" else ".a"
 
+    # Determine build type flags
+    build_type = ctx.variables.get("CMAKE_BUILD_TYPE", "").upper()
+    build_type_flags = ""
+    if build_type == "DEBUG":
+        build_type_flags = "-g -O0"
+    elif build_type == "RELEASE":
+        build_type_flags = "-O3 -DNDEBUG"
+    elif build_type == "RELWITHDEBINFO":
+        build_type_flags = "-O2 -g -DNDEBUG"
+    elif build_type == "MINSIZEREL":
+        build_type_flags = "-Os -DNDEBUG"
+
     with open(output_path, "w") as f:
         n = Writer(f)
 
@@ -625,10 +645,11 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
         n.variable("ar", "ar")
         n.newline()
 
-        # Compile rules
+        # Compile rules - include build type flags
+        base_cflags = f"-fdiagnostics-color {build_type_flags}".strip()
         n.rule(
             "cc",
-            command="$cc -MMD -MF $out.d -fdiagnostics-color $cflags -c $in -o $out",
+            command=f"$cc -MMD -MF $out.d {base_cflags} $cflags -c $in -o $out",
             depfile="$out.d",
             description="CC $out",
         )
@@ -636,7 +657,7 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
 
         n.rule(
             "cxx",
-            command="$cxx -MMD -MF $out.d -fdiagnostics-color $cflags -c $in -o $out",
+            command=f"$cxx -MMD -MF $out.d {base_cflags} $cflags -c $in -o $out",
             depfile="$out.d",
             description="CXX $out",
         )
@@ -783,12 +804,17 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
             n.default(default_targets)
 
 
-def configure(source_dir: Path, build_dir: str) -> None:
+def configure(
+    source_dir: Path,
+    build_dir: str,
+    variables: dict[str, str] | None = None,
+) -> None:
     """Configure a CMake project and generate build.ninja.
 
     Args:
         source_dir: Path to source directory containing CMakeLists.txt
         build_dir: Relative path for build directory (e.g., "build")
+        variables: Optional dict of variables to set (e.g., from -D flags)
     """
     source_dir = source_dir.resolve()
     cmake_file = source_dir / "CMakeLists.txt"
@@ -803,6 +829,12 @@ def configure(source_dir: Path, build_dir: str) -> None:
         source_dir=source_dir,
         build_dir=source_dir / build_dir,
     )
+
+    # Set variables from command line (-D flags) first
+    # These are cache variables that won't be overridden by set()
+    if variables:
+        ctx.variables.update(variables)
+        ctx.cache_variables.update(variables.keys())
 
     # Set up standard CMake variables
     ctx.variables["CMAKE_SOURCE_DIR"] = str(ctx.source_dir)
