@@ -44,7 +44,7 @@ def cmd_configure(args: argparse.Namespace) -> int:
 
 
 def cmd_build(args: argparse.Namespace) -> int:
-    """Run the build command (configure + ninja)."""
+    """Run the build command (configure if needed + ninja)."""
     source_dir = Path(".")
 
     # Determine build directory and variables based on --release flag
@@ -55,24 +55,24 @@ def cmd_build(args: argparse.Namespace) -> int:
         build_dir = "build"
         variables = {}
 
-    print(f"-- Source directory: {source_dir.resolve()}")
-    print(f"-- Build directory: {build_dir}")
+    ninja_file = Path(f"{build_dir}.ninja")
 
-    # Configure
-    try:
-        configure(source_dir, build_dir, variables=variables if variables else None)
-    except FileNotFoundError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
-    except SyntaxError as e:
-        print(f"Parse error: {e}", file=sys.stderr)
-        return 1
+    # Only configure if ninja file doesn't exist
+    if not ninja_file.exists():
+        print(f"-- Source directory: {source_dir.resolve()}")
+        print(f"-- Build directory: {build_dir}")
+
+        try:
+            configure(source_dir, build_dir, variables=variables if variables else None)
+        except FileNotFoundError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+        except SyntaxError as e:
+            print(f"Parse error: {e}", file=sys.stderr)
+            return 1
 
     # Run ninja
-    ninja_file = f"{build_dir}.ninja"
-    ninja_cmd = ["ninja", "-f", ninja_file]
-    print(f"-- Running: {' '.join(ninja_cmd)}")
-
+    ninja_cmd = ["ninja", "-f", str(ninja_file)]
     result = subprocess.run(ninja_cmd)
     return result.returncode
 

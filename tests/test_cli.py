@@ -158,3 +158,29 @@ def test_build_subcommand_release(tmp_path: Path) -> None:
 
     # Should have built the executable in build-release
     assert (source_dir / "build-release" / "hello").exists()
+
+
+def test_build_subcommand_skips_configure_if_ninja_exists(tmp_path: Path) -> None:
+    """Test cninja build skips configure if ninja file already exists."""
+    source_dir = tmp_path / "hello"
+    shutil.copytree(EXAMPLES_DIR / "hello", source_dir)
+
+    # First build - should configure
+    result1 = subprocess.run(
+        ["uv", "run", "cninja", "build"],
+        capture_output=True,
+        text=True,
+        cwd=source_dir,
+    )
+    assert result1.returncode == 0
+    assert "Configuring done" in result1.stdout
+
+    # Second build - should skip configure
+    result2 = subprocess.run(
+        ["uv", "run", "cninja", "build"],
+        capture_output=True,
+        text=True,
+        cwd=source_dir,
+    )
+    assert result2.returncode == 0
+    assert "Configuring done" not in result2.stdout
