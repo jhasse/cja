@@ -87,6 +87,14 @@ class Test:
 
 
 @dataclass
+class InstallTarget:
+    """An installation target."""
+
+    targets: list[str]
+    destination: str
+
+
+@dataclass
 class BuildContext:
     """Context for processing CMake commands."""
 
@@ -109,6 +117,9 @@ class BuildContext:
         default_factory=dict
     )  # User-defined functions
     tests: list[Test] = field(default_factory=list)  # Test definitions
+    install_targets: list[InstallTarget] = field(
+        default_factory=list
+    )  # Installation targets
     source_file_properties: dict[str, SourceFileProperties] = field(
         default_factory=dict
     )  # Properties for source files
@@ -1231,6 +1242,27 @@ int main() {{
                                 f"Could not find program: {' or '.join(names)}"
                             )
 
+            case "install":
+                if len(args) >= 2 and args[0] == "TARGETS":
+                    targets = []
+                    destination = str(Path.home() / ".local" / "bin")
+                    i = 1
+                    while i < len(args):
+                        if args[i] == "DESTINATION":
+                            if i + 1 < len(args):
+                                destination = expand_variables(
+                                    args[i + 1], ctx.variables, strict, cmd.line
+                                )
+                                i += 2
+                            else:
+                                i += 1
+                        else:
+                            targets.append(args[i])
+                            i += 1
+                    ctx.install_targets.append(
+                        InstallTarget(targets=targets, destination=destination)
+                    )
+
             case "find_package":
                 if args:
                     package_name = args[0]
@@ -1890,6 +1922,44 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
 
             n.newline()
             n.build("test", "phony", test_targets)
+            n.newline()
+
+        # Generate install runner
+        if ctx.install_targets:
+            n.rule(
+                "install_file",
+                command="mkdir -p $out_dir && cp $in $out",
+                description="INSTALL $out",
+            )
+            n.newline()
+
+            install_files: list[str] = []
+            for install in ctx.install_targets:
+                for target in install.targets:
+                    src = None
+                    if target in exe_outputs:
+                        src = exe_outputs[target]
+                    elif target in lib_outputs:
+                        src = lib_outputs[target]
+
+                    if src:
+                        dest = f"{install.destination}/{Path(src).name.replace('$builddir/', '')}"
+                        # If src still contains $builddir, we need to handle it.
+                        # Actually src is like '$builddir/myapp'
+                        src_path = src.replace("$builddir/", f"{ctx.build_dir}/")
+                        # But in Ninja we should use the ninja variable if possible,
+                        # or just pass it as is if it's already a valid ninja path.
+
+                        n.build(
+                            dest,
+                            "install_file",
+                            src,
+                            variables={"out_dir": install.destination},
+                        )
+                        install_files.append(dest)
+
+            n.newline()
+            n.build("install", "phony", install_files)
             n.newline()
 
         # Default target

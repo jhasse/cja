@@ -68,6 +68,7 @@ ninja -f build-release.ninja test
 - `add_executable(name sources...)`
 - `add_library(name [STATIC|SHARED|OBJECT] sources...)`
 - `add_subdirectory(dir)`
+- `install(TARGETS targets... [DESTINATION dir])` (defaults to $HOME/.local/bin for TARGETS)
 
 ### Variables
 - `set(VAR value...)`
