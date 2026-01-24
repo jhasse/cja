@@ -16,24 +16,29 @@ from .parser import Command
 
 class ReturnFromFunction(Exception):
     """Exception raised to exit early from a function."""
+
     pass
 
 
 @dataclass
 class Library:
     """A library target."""
+
     name: str
     sources: list[str]
     lib_type: str = "STATIC"  # STATIC, SHARED, or OBJECT
     compile_features: list[str] = field(default_factory=list)  # PRIVATE features
     public_compile_features: list[str] = field(default_factory=list)  # PUBLIC features
     include_directories: list[str] = field(default_factory=list)  # PRIVATE includes
-    public_include_directories: list[str] = field(default_factory=list)  # PUBLIC includes
+    public_include_directories: list[str] = field(
+        default_factory=list
+    )  # PUBLIC includes
 
 
 @dataclass
 class Executable:
     """An executable target."""
+
     name: str
     sources: list[str]
     link_libraries: list[str] = field(default_factory=list)
@@ -44,13 +49,15 @@ class Executable:
 @dataclass
 class ImportedTarget:
     """An imported target (e.g., from find_package)."""
+
     cflags: str = ""  # Compile flags (e.g., -I/path/to/include)
-    libs: str = ""    # Link flags (e.g., -lgtest -pthread)
+    libs: str = ""  # Link flags (e.g., -lgtest -pthread)
 
 
 @dataclass
 class FunctionDef:
     """A CMake function definition."""
+
     name: str
     params: list[str]
     body: list  # list[Command] - forward reference
@@ -472,6 +479,10 @@ def process_commands(
                     ctx.project_name = args[0]
                     ctx.variables["PROJECT_NAME"] = args[0]
                     ctx.variables["CMAKE_PROJECT_NAME"] = args[0]
+                    ctx.variables["PROJECT_SOURCE_DIR"] = str(ctx.source_dir)
+                    ctx.variables["PROJECT_BINARY_DIR"] = str(ctx.build_dir)
+                    ctx.variables[f"{args[0]}_SOURCE_DIR"] = str(ctx.source_dir)
+                    ctx.variables[f"{args[0]}_BINARY_DIR"] = str(ctx.build_dir)
 
             case "set":
                 if args:
