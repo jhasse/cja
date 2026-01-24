@@ -393,7 +393,8 @@ def process_commands(commands: list[Command], ctx: BuildContext, trace: bool = F
                         # CTest sets BUILD_TESTING to ON by default
                         if "BUILD_TESTING" not in ctx.variables:
                             ctx.variables["BUILD_TESTING"] = "ON"
-                    # CheckIPOSupported is handled by check_ipo_supported command
+                    # CheckIPOSupported, CheckCXXCompilerFlag, CheckCCompilerFlag
+                    # are handled by their respective commands directly
 
             case "check_ipo_supported":
                 # check_ipo_supported(RESULT <var> [OUTPUT <var>] [LANGUAGES <lang>...])
@@ -443,6 +444,69 @@ def process_commands(commands: list[Command], ctx: BuildContext, trace: bool = F
                     ctx.variables[result_var] = "TRUE" if supported else "FALSE"
                 if output_var:
                     ctx.variables[output_var] = error_msg
+
+            case "check_cxx_compiler_flag":
+                # check_cxx_compiler_flag(<flag> <var>)
+                if len(args) >= 2:
+                    flag = args[0]
+                    result_var = args[1]
+
+                    # Check if the C++ compiler accepts the flag
+                    supported = False
+                    try:
+                        import tempfile
+                        with tempfile.NamedTemporaryFile(suffix=".cpp", delete=False) as f:
+                            f.write(b"int main() { return 0; }\n")
+                            temp_src = f.name
+                        temp_out = temp_src + ".o"
+                        result = subprocess.run(
+                            ["c++", flag, "-c", "-o", temp_out, temp_src],
+                            capture_output=True,
+                            text=True,
+                        )
+                        # Check return code and that there are no warnings about unknown flags
+                        if result.returncode == 0:
+                            # Some compilers return 0 but warn about unknown flags
+                            stderr_lower = result.stderr.lower()
+                            if "unknown" not in stderr_lower and "unrecognized" not in stderr_lower:
+                                supported = True
+                        Path(temp_out).unlink(missing_ok=True)
+                        Path(temp_src).unlink(missing_ok=True)
+                    except Exception:
+                        pass
+
+                    ctx.variables[result_var] = "1" if supported else ""
+
+            case "check_c_compiler_flag":
+                # check_c_compiler_flag(<flag> <var>)
+                if len(args) >= 2:
+                    flag = args[0]
+                    result_var = args[1]
+
+                    # Check if the C compiler accepts the flag
+                    supported = False
+                    try:
+                        import tempfile
+                        with tempfile.NamedTemporaryFile(suffix=".c", delete=False) as f:
+                            f.write(b"int main() { return 0; }\n")
+                            temp_src = f.name
+                        temp_out = temp_src + ".o"
+                        result = subprocess.run(
+                            ["cc", flag, "-c", "-o", temp_out, temp_src],
+                            capture_output=True,
+                            text=True,
+                        )
+                        # Check return code and that there are no warnings about unknown flags
+                        if result.returncode == 0:
+                            stderr_lower = result.stderr.lower()
+                            if "unknown" not in stderr_lower and "unrecognized" not in stderr_lower:
+                                supported = True
+                        Path(temp_out).unlink(missing_ok=True)
+                        Path(temp_src).unlink(missing_ok=True)
+                    except Exception:
+                        pass
+
+                    ctx.variables[result_var] = "1" if supported else ""
 
             case "add_library":
                 if len(args) >= 2:
