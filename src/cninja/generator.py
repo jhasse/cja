@@ -919,7 +919,9 @@ int main() {{
                     libs = args[1:]
                     # Skip visibility keywords
                     libs = [
-                        l for l in libs if l not in ("PUBLIC", "PRIVATE", "INTERFACE")
+                        lib
+                        for lib in libs
+                        if lib not in ("PUBLIC", "PRIVATE", "INTERFACE")
                     ]
                     exe = ctx.get_executable(target_name)
                     if exe:
@@ -1739,10 +1741,6 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
             for inc_dir in lib.include_directories:
                 lib_compile_flags.append(f"-I{inc_dir}")
 
-            lib_compile_vars: dict[str, str] | None = None
-            if lib_compile_flags:
-                lib_compile_vars = {"cflags": " ".join(lib_compile_flags)}
-
             for source in lib.sources:
                 actual_source = source
                 if source in custom_command_outputs:
@@ -1840,10 +1838,6 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
                     imported = ctx.imported_targets[lib_name]
                     if imported.cflags:
                         compile_flags.append(imported.cflags)
-
-            compile_vars: dict[str, str] | None = None
-            if compile_flags:
-                compile_vars = {"cflags": " ".join(compile_flags)}
 
             for source in exe.sources:
                 actual_source = source
@@ -1979,12 +1973,6 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
 
                     if src:
                         dest = f"{install.destination}/{Path(src).name.replace('$builddir/', '')}"
-                        # If src still contains $builddir, we need to handle it.
-                        # Actually src is like '$builddir/myapp'
-                        src_path = src.replace("$builddir/", f"{ctx.build_dir}/")
-                        # But in Ninja we should use the ninja variable if possible,
-                        # or just pass it as is if it's already a valid ninja path.
-
                         n.build(
                             dest,
                             "install_file",
