@@ -8,6 +8,7 @@ from pathlib import Path
 @dataclass
 class Command:
     """A CMake command with its name and arguments."""
+
     name: str
     args: list[str]
     line: int = 0
@@ -21,24 +22,24 @@ def tokenize(content: str) -> list[tuple[str, int]]:
 
     while i < len(content):
         # Skip whitespace
-        if content[i] in ' \t':
+        if content[i] in " \t":
             i += 1
             continue
 
         # Track newlines
-        if content[i] == '\n':
+        if content[i] == "\n":
             line += 1
             i += 1
             continue
 
         # Skip comments
-        if content[i] == '#':
-            while i < len(content) and content[i] != '\n':
+        if content[i] == "#":
+            while i < len(content) and content[i] != "\n":
                 i += 1
             continue
 
         # Parentheses
-        if content[i] in '()':
+        if content[i] in "()":
             tokens.append((content[i], line))
             i += 1
             continue
@@ -48,10 +49,10 @@ def tokenize(content: str) -> list[tuple[str, int]]:
             start = i
             i += 1
             while i < len(content) and content[i] != '"':
-                if content[i] == '\\' and i + 1 < len(content):
+                if content[i] == "\\" and i + 1 < len(content):
                     i += 2
                 else:
-                    if content[i] == '\n':
+                    if content[i] == "\n":
                         line += 1
                     i += 1
             i += 1  # Skip closing quote
@@ -60,7 +61,7 @@ def tokenize(content: str) -> list[tuple[str, int]]:
 
         # Unquoted token (identifier or value)
         start = i
-        while i < len(content) and content[i] not in ' \t\n()#"':
+        while i < len(content) and content[i] not in " \t\n()#":
             i += 1
         if i > start:
             tokens.append((content[start:i], line))
@@ -83,13 +84,13 @@ def parse(content: str) -> list[Command]:
         i += 1
 
         # Expect opening paren
-        if i >= len(tokens) or tokens[i][0] != '(':
+        if i >= len(tokens) or tokens[i][0] != "(":
             raise SyntaxError(f"Expected '(' after command '{name}' at line {line}")
         i += 1
 
         # Collect arguments until closing paren
         args: list[str] = []
-        while i < len(tokens) and tokens[i][0] != ')':
+        while i < len(tokens) and tokens[i][0] != ")":
             arg = tokens[i][0]
             # Strip quotes from quoted strings
             if arg.startswith('"') and arg.endswith('"'):

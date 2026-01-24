@@ -1180,6 +1180,13 @@ int main() {{
                                     file_props.compile_definitions.extend(
                                         expanded_values
                                     )
+                            else:
+                                warning_label = colored(
+                                    "warning:", "magenta", attrs=["bold"]
+                                )
+                                print(
+                                    f"CMakeLists.txt:{cmd.line}: {warning_label} property '{prop_name}' has no value",
+                                )
 
             case "find_program":
                 if len(args) >= 2:
@@ -1795,7 +1802,7 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
 
                 if file_props:
                     for definition in file_props.compile_definitions:
-                        source_compile_flags.append(f"-D{definition}")
+                        source_compile_flags.append(shlex.quote(f"-D{definition}"))
                     for inc_dir in file_props.include_directories:
                         source_compile_flags.append(f"-I{inc_dir}")
                     for d in file_props.object_depends:
