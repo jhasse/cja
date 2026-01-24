@@ -16,3 +16,6 @@ build/
 # Testing
 .coverage
 .pytest_cache/
+
+# Claude Code
+.claude/
