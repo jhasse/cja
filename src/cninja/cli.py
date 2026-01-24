@@ -24,8 +24,8 @@ def main() -> int:
     parser.add_argument(
         "-B", "--build-dir",
         dest="build_dir",
-        default=None,
-        help="Path to build directory (default: source_dir/build)"
+        default="build",
+        help="Relative path for build directory (default: build)"
     )
 
     parser.add_argument(
@@ -38,15 +38,12 @@ def main() -> int:
     args = parser.parse_args()
 
     # Determine source directory
-    source_dir = Path(args.source_dir_opt or args.source_dir).resolve()
+    source_dir = Path(args.source_dir_opt or args.source_dir)
 
-    # Determine build directory
-    if args.build_dir:
-        build_dir = Path(args.build_dir).resolve()
-    else:
-        build_dir = source_dir / "build"
+    # Build directory is relative to source
+    build_dir = args.build_dir
 
-    print(f"-- Source directory: {source_dir}")
+    print(f"-- Source directory: {source_dir.resolve()}")
     print(f"-- Build directory: {build_dir}")
 
     try:

@@ -1,9 +1,8 @@
 """Integration tests for cninja."""
 
+import shutil
 import subprocess
 from pathlib import Path
-
-import pytest
 
 from cninja import configure
 
@@ -13,26 +12,28 @@ EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
 
 def test_hello_example(tmp_path: Path) -> None:
     """Test building the hello example project."""
-    source_dir = EXAMPLES_DIR / "hello"
-    build_dir = tmp_path / "build"
+    # Copy example to tmp_path since build.ninja is written in source dir
+    source_dir = tmp_path / "hello"
+    shutil.copytree(EXAMPLES_DIR / "hello", source_dir)
 
     # Configure
-    configure(source_dir, build_dir)
+    configure(source_dir, "build")
 
-    # Check build.ninja was created
-    build_ninja = build_dir / "build.ninja"
+    # Check build.ninja was created in source directory
+    build_ninja = source_dir / "build.ninja"
     assert build_ninja.exists()
 
-    # Build with ninja
+    # Build with ninja (run from source dir)
     result = subprocess.run(
         ["ninja"],
-        cwd=build_dir,
+        cwd=source_dir,
         capture_output=True,
         text=True,
     )
     assert result.returncode == 0, f"ninja failed: {result.stderr}"
 
-    # Check executable was created
+    # Check executable was created in build dir
+    build_dir = source_dir / "build"
     hello_exe = build_dir / "hello"
     assert hello_exe.exists()
 
@@ -48,26 +49,28 @@ def test_hello_example(tmp_path: Path) -> None:
 
 def test_libmath_example(tmp_path: Path) -> None:
     """Test building the libmath example with static library."""
-    source_dir = EXAMPLES_DIR / "libmath"
-    build_dir = tmp_path / "build"
+    # Copy example to tmp_path since build.ninja is written in source dir
+    source_dir = tmp_path / "libmath"
+    shutil.copytree(EXAMPLES_DIR / "libmath", source_dir)
 
     # Configure
-    configure(source_dir, build_dir)
+    configure(source_dir, "build")
 
-    # Check build.ninja was created
-    build_ninja = build_dir / "build.ninja"
+    # Check build.ninja was created in source directory
+    build_ninja = source_dir / "build.ninja"
     assert build_ninja.exists()
 
-    # Build with ninja
+    # Build with ninja (run from source dir)
     result = subprocess.run(
         ["ninja"],
-        cwd=build_dir,
+        cwd=source_dir,
         capture_output=True,
         text=True,
     )
     assert result.returncode == 0, f"ninja failed: {result.stderr}"
 
-    # Check library and executable were created
+    # Check library and executable were created in build dir
+    build_dir = source_dir / "build"
     assert (build_dir / "libmath.a").exists()
     assert (build_dir / "calculator").exists()
 

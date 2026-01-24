@@ -114,7 +114,7 @@ def process_commands(commands: list[Command], ctx: BuildContext) -> None:
                 pass  # Ignore unknown commands for now
 
 
-def generate_ninja(ctx: BuildContext, output_path: Path) -> None:
+def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
     """Generate ninja build file."""
     # Detect compiler
     cc = "cc"
@@ -131,6 +131,7 @@ def generate_ninja(ctx: BuildContext, output_path: Path) -> None:
         n.newline()
 
         # Variables
+        n.variable("builddir", builddir)
         n.variable("cc", cc)
         n.variable("cxx", cxx)
         n.variable("ar", "ar")
@@ -184,8 +185,7 @@ def generate_ninja(ctx: BuildContext, output_path: Path) -> None:
             objects: list[str] = []
 
             for source in lib.sources:
-                source_path = ctx.source_dir / source
-                obj_name = f"{lib.name}_{Path(source).stem}.o"
+                obj_name = f"$builddir/{lib.name}_{Path(source).stem}.o"
                 objects.append(obj_name)
 
                 # Determine if C or C++
@@ -194,11 +194,11 @@ def generate_ninja(ctx: BuildContext, output_path: Path) -> None:
                 else:
                     rule = "cc"
 
-                n.build(obj_name, rule, str(source_path))
+                n.build(obj_name, rule, source)
 
             # Create static library
             if lib.is_static:
-                lib_name = f"lib{lib.name}{lib_ext}"
+                lib_name = f"$builddir/lib{lib.name}{lib_ext}"
                 n.build(lib_name, "ar", objects)
                 n.newline()
                 lib_outputs[lib.name] = lib_name
@@ -211,8 +211,7 @@ def generate_ninja(ctx: BuildContext, output_path: Path) -> None:
             uses_cxx = False
 
             for source in exe.sources:
-                source_path = ctx.source_dir / source
-                obj_name = f"{exe.name}_{Path(source).stem}.o"
+                obj_name = f"$builddir/{exe.name}_{Path(source).stem}.o"
                 objects.append(obj_name)
 
                 # Determine if C or C++
@@ -222,7 +221,7 @@ def generate_ninja(ctx: BuildContext, output_path: Path) -> None:
                 else:
                     rule = "cc"
 
-                n.build(obj_name, rule, str(source_path))
+                n.build(obj_name, rule, source)
 
             # Add linked libraries to inputs
             link_inputs = objects.copy()
@@ -231,7 +230,7 @@ def generate_ninja(ctx: BuildContext, output_path: Path) -> None:
                     link_inputs.append(lib_outputs[lib_name])
 
             # Link
-            exe_name = exe.name + exe_ext
+            exe_name = f"$builddir/{exe.name}{exe_ext}"
             link_rule = "link_cxx" if uses_cxx else "link"
             n.build(exe_name, link_rule, link_inputs)
             n.newline()
@@ -243,8 +242,14 @@ def generate_ninja(ctx: BuildContext, output_path: Path) -> None:
             n.default(default_targets)
 
 
-def configure(source_dir: Path, build_dir: Path) -> None:
-    """Configure a CMake project and generate build.ninja."""
+def configure(source_dir: Path, build_dir: str) -> None:
+    """Configure a CMake project and generate build.ninja.
+
+    Args:
+        source_dir: Path to source directory containing CMakeLists.txt
+        build_dir: Relative path for build directory (e.g., "build")
+    """
+    source_dir = source_dir.resolve()
     cmake_file = source_dir / "CMakeLists.txt"
     if not cmake_file.exists():
         raise FileNotFoundError(f"CMakeLists.txt not found in {source_dir}")
@@ -254,8 +259,8 @@ def configure(source_dir: Path, build_dir: Path) -> None:
     commands = parse_file(cmake_file)
 
     ctx = BuildContext(
-        source_dir=source_dir.resolve(),
-        build_dir=build_dir.resolve(),
+        source_dir=source_dir,
+        build_dir=source_dir / build_dir,
     )
 
     # Set up standard CMake variables
@@ -264,9 +269,12 @@ def configure(source_dir: Path, build_dir: Path) -> None:
 
     process_commands(commands, ctx)
 
-    # Generate build.ninja
-    build_dir.mkdir(parents=True, exist_ok=True)
-    generate_ninja(ctx, build_dir / "build.ninja")
+    # Generate build.ninja in source directory
+    output_path = source_dir / "build.ninja"
+    generate_ninja(ctx, output_path, build_dir)
+
+    # Create build directory
+    ctx.build_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"-- Configuring done")
-    print(f"-- Generated {build_dir / 'build.ninja'}")
+    print(f"-- Generated {output_path}")
