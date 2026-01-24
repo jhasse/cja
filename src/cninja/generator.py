@@ -474,6 +474,7 @@ def process_commands(commands: list[Command], ctx: BuildContext, trace: bool = F
                         expr_args = args[2:idx]
 
                     expr = " ".join(expr_args)
+                    expr = " ".join(expr.split())
 
                     # Convert C-style operators to Python if necessary
                     # Integer division is // in Python.

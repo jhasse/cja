@@ -75,3 +75,17 @@ def test_math_expr_leading_zeros() -> None:
     ]
     process_commands(commands, ctx)
     assert ctx.variables["RESULT"] == "8"
+
+
+def test_math_expr_leading_whitespace() -> None:
+    """Test math(EXPR) with leading whitespace and newlines in expression."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(
+            name="math",
+            args=["EXPR", "RESULT", "   0700\n/ 100"],
+            line=1,
+        ),
+    ]
+    process_commands(commands, ctx)
+    assert ctx.variables["RESULT"] == "7"
