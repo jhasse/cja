@@ -600,7 +600,7 @@ def process_commands(commands: list[Command], ctx: BuildContext) -> None:
                     elif mode in ("WARNING", "AUTHOR_WARNING", "DEPRECATION"):
                         print(f"CMake Warning: {message}", file=sys.stderr)
                     elif mode == "STATUS":
-                        print(f"-- {message}")
+                        print(f"{message}")
                     else:
                         print(message)
 
@@ -849,5 +849,5 @@ def configure(
     # Create build directory
     ctx.build_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"-- Configuring done")
-    print(f"-- Generated {output_path}")
+    print(f"Configuring done")
+    print(f"Generated {output_path}")

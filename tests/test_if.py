@@ -78,7 +78,7 @@ class TestIfCommand:
             Command(name="endif", args=[], line=3),
         ]
         process_commands(commands, ctx)
-        assert "-- in if" in capsys.readouterr().out
+        assert "in if" in capsys.readouterr().out
 
     def test_if_false(self, capsys: pytest.CaptureFixture[str]) -> None:
         ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
@@ -101,7 +101,7 @@ class TestIfCommand:
             Command(name="endif", args=[], line=5),
         ]
         process_commands(commands, ctx)
-        assert "-- not defined" in capsys.readouterr().out
+        assert "not defined" in capsys.readouterr().out
 
     def test_if_elseif_else(self, capsys: pytest.CaptureFixture[str]) -> None:
         ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
@@ -116,7 +116,7 @@ class TestIfCommand:
             Command(name="endif", args=[], line=7),
         ]
         process_commands(commands, ctx)
-        assert "-- X is 2" in capsys.readouterr().out
+        assert "X is 2" in capsys.readouterr().out
 
     def test_nested_if(self, capsys: pytest.CaptureFixture[str]) -> None:
         ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
@@ -130,7 +130,7 @@ class TestIfCommand:
             Command(name="endif", args=[], line=5),
         ]
         process_commands(commands, ctx)
-        assert "-- A and B" in capsys.readouterr().out
+        assert "A and B" in capsys.readouterr().out
 
     def test_set_inside_if(self) -> None:
         ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))

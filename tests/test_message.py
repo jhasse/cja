@@ -17,7 +17,7 @@ def test_message_status(capsys: pytest.CaptureFixture[str]) -> None:
     process_commands(commands, ctx)
 
     captured = capsys.readouterr()
-    assert captured.out == "-- Hello World\n"
+    assert captured.out == "Hello World\n"
 
 
 def test_message_no_mode(capsys: pytest.CaptureFixture[str]) -> None:

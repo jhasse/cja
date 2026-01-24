@@ -62,5 +62,5 @@ def test_find_program_followed_by_if(capsys: pytest.CaptureFixture[str]) -> None
     process_commands(commands, ctx)
 
     captured = capsys.readouterr()
-    assert "-- version is not greater" in captured.out
+    assert "version is not greater" in captured.out
     assert ctx.variables["MY_PROG"] == "MY_PROG-NOTFOUND"

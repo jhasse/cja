@@ -19,9 +19,9 @@ def test_foreach_basic(capsys: pytest.CaptureFixture[str]) -> None:
     process_commands(commands, ctx)
 
     captured = capsys.readouterr()
-    assert "-- a" in captured.out
-    assert "-- b" in captured.out
-    assert "-- c" in captured.out
+    assert "a" in captured.out
+    assert "b" in captured.out
+    assert "c" in captured.out
 
 
 def test_foreach_range_stop(capsys: pytest.CaptureFixture[str]) -> None:
@@ -35,10 +35,10 @@ def test_foreach_range_stop(capsys: pytest.CaptureFixture[str]) -> None:
     process_commands(commands, ctx)
 
     captured = capsys.readouterr()
-    assert "-- 0" in captured.out
-    assert "-- 1" in captured.out
-    assert "-- 2" in captured.out
-    assert "-- 3" in captured.out
+    assert "0" in captured.out
+    assert "1" in captured.out
+    assert "2" in captured.out
+    assert "3" in captured.out
 
 
 def test_foreach_range_start_stop(capsys: pytest.CaptureFixture[str]) -> None:
@@ -52,10 +52,10 @@ def test_foreach_range_start_stop(capsys: pytest.CaptureFixture[str]) -> None:
     process_commands(commands, ctx)
 
     captured = capsys.readouterr()
-    assert "-- 2" in captured.out
-    assert "-- 3" in captured.out
-    assert "-- 4" in captured.out
-    assert "-- 5" in captured.out
+    assert "2" in captured.out
+    assert "3" in captured.out
+    assert "4" in captured.out
+    assert "5" in captured.out
 
 
 def test_foreach_range_step(capsys: pytest.CaptureFixture[str]) -> None:
@@ -69,12 +69,12 @@ def test_foreach_range_step(capsys: pytest.CaptureFixture[str]) -> None:
     process_commands(commands, ctx)
 
     captured = capsys.readouterr()
-    assert "-- 0" in captured.out
-    assert "-- 2" in captured.out
-    assert "-- 4" in captured.out
-    assert "-- 6" in captured.out
-    assert "-- 8" in captured.out
-    assert "-- 10" in captured.out
+    assert "0" in captured.out
+    assert "2" in captured.out
+    assert "4" in captured.out
+    assert "6" in captured.out
+    assert "8" in captured.out
+    assert "10" in captured.out
 
 
 def test_foreach_in_lists(capsys: pytest.CaptureFixture[str]) -> None:
@@ -89,9 +89,9 @@ def test_foreach_in_lists(capsys: pytest.CaptureFixture[str]) -> None:
     process_commands(commands, ctx)
 
     captured = capsys.readouterr()
-    assert "-- x" in captured.out
-    assert "-- y" in captured.out
-    assert "-- z" in captured.out
+    assert "x" in captured.out
+    assert "y" in captured.out
+    assert "z" in captured.out
 
 
 def test_foreach_in_items(capsys: pytest.CaptureFixture[str]) -> None:
@@ -105,9 +105,9 @@ def test_foreach_in_items(capsys: pytest.CaptureFixture[str]) -> None:
     process_commands(commands, ctx)
 
     captured = capsys.readouterr()
-    assert "-- one" in captured.out
-    assert "-- two" in captured.out
-    assert "-- three" in captured.out
+    assert "one" in captured.out
+    assert "two" in captured.out
+    assert "three" in captured.out
 
 
 def test_foreach_nested(capsys: pytest.CaptureFixture[str]) -> None:
@@ -123,10 +123,10 @@ def test_foreach_nested(capsys: pytest.CaptureFixture[str]) -> None:
     process_commands(commands, ctx)
 
     captured = capsys.readouterr()
-    assert "-- a1" in captured.out
-    assert "-- a2" in captured.out
-    assert "-- b1" in captured.out
-    assert "-- b2" in captured.out
+    assert "a1" in captured.out
+    assert "a2" in captured.out
+    assert "b1" in captured.out
+    assert "b2" in captured.out
 
 
 def test_foreach_set_variable() -> None:
