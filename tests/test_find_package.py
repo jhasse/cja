@@ -69,3 +69,30 @@ def test_find_package_gtest_with_if() -> None:
         assert ctx.variables["RESULT"] == "found"
     else:
         assert ctx.variables["RESULT"] == "not_found"
+
+
+def test_find_package_threads() -> None:
+    """Test find_package(Threads) sets variables and imported target."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [Command(name="find_package", args=["Threads"], line=1)]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["Threads_FOUND"] == "TRUE"
+    assert ctx.variables["CMAKE_THREAD_LIBS_INIT"] == "-pthread"
+    assert "Threads::Threads" in ctx.imported_targets
+    assert ctx.imported_targets["Threads::Threads"] == "-pthread"
+
+
+def test_find_package_threads_link() -> None:
+    """Test that linking against Threads::Threads adds -pthread."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="find_package", args=["Threads"], line=1),
+        Command(name="add_executable", args=["myapp", "main.c"], line=2),
+        Command(name="target_link_libraries", args=["myapp", "Threads::Threads"], line=3),
+    ]
+    process_commands(commands, ctx)
+
+    exe = ctx.get_executable("myapp")
+    assert exe is not None
+    assert "Threads::Threads" in exe.link_libraries

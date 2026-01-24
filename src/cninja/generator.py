@@ -37,6 +37,7 @@ class BuildContext:
     variables: dict[str, str] = field(default_factory=dict)
     libraries: list[Library] = field(default_factory=list)
     executables: list[Executable] = field(default_factory=list)
+    imported_targets: dict[str, str] = field(default_factory=dict)  # target -> link flags
 
     def get_library(self, name: str) -> Library | None:
         for lib in self.libraries:
@@ -489,6 +490,13 @@ def process_commands(commands: list[Command], ctx: BuildContext) -> None:
                             ctx.variables["GTEST_FOUND"] = "FALSE"
                             if required:
                                 raise FileNotFoundError("Could not find package: GTest")
+                    elif package_name == "Threads":
+                        # Threads is always available on Unix-like systems
+                        ctx.variables["Threads_FOUND"] = "TRUE"
+                        ctx.variables["CMAKE_THREAD_LIBS_INIT"] = "-pthread"
+                        ctx.variables["CMAKE_USE_PTHREADS_INIT"] = "TRUE"
+                        # Register the imported target
+                        ctx.imported_targets["Threads::Threads"] = "-pthread"
                     else:
                         # Unknown package
                         ctx.variables[f"{package_name}_FOUND"] = "FALSE"
@@ -576,14 +584,14 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
         # Link rules
         n.rule(
             "link",
-            command="$cc $in -o $out",
+            command="$cc $in -o $out $libs",
             description="LINK $out",
         )
         n.newline()
 
         n.rule(
             "link_cxx",
-            command="$cxx $in -o $out",
+            command="$cxx $in -o $out $libs",
             description="LINK $out",
         )
         n.newline()
@@ -641,6 +649,7 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
 
             # Add linked libraries to inputs
             link_inputs = objects.copy()
+            link_flags: list[str] = []
             for lib_name in exe.link_libraries:
                 if lib_name in object_lib_objects:
                     # Object library: add object files directly
@@ -648,11 +657,17 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
                 elif lib_name in lib_outputs:
                     # Static library: add archive
                     link_inputs.append(lib_outputs[lib_name])
+                elif lib_name in ctx.imported_targets:
+                    # Imported target (e.g., Threads::Threads): add link flags
+                    link_flags.append(ctx.imported_targets[lib_name])
 
             # Link
             exe_name = f"$builddir/{exe.name}{exe_ext}"
             link_rule = "link_cxx" if uses_cxx else "link"
-            n.build(exe_name, link_rule, link_inputs)
+            variables: dict[str, str] = {}
+            if link_flags:
+                variables["libs"] = " ".join(link_flags)
+            n.build(exe_name, link_rule, link_inputs, variables=variables if variables else None)
             n.newline()
 
             default_targets.append(exe_name)
