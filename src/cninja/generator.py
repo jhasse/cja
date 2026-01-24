@@ -787,6 +787,46 @@ int main() {{
 
                     ctx.variables[variable] = "1" if found else ""
 
+            case "check_symbol_exists":
+                # check_symbol_exists(<symbol> <files> <variable>)
+                if len(args) >= 3:
+                    symbol = args[0]
+                    variable = args[-1]
+                    files = args[1:-1]
+                    if len(files) == 1 and ";" in files[0]:
+                        files = files[0].split(";")
+
+                    found = False
+                    try:
+                        import tempfile
+
+                        includes = "\n".join(f"#include <{f}>" for f in files)
+                        test_code = f"""{includes}
+int main() {{
+    (void)({symbol});
+    return 0;
+}}
+"""
+                        with tempfile.NamedTemporaryFile(
+                            suffix=".c", delete=False, mode="w"
+                        ) as f:
+                            f.write(test_code)
+                            temp_src = f.name
+                        temp_out = temp_src.replace(".c", "")
+                        result = subprocess.run(
+                            ["cc", "-o", temp_out, temp_src],
+                            capture_output=True,
+                            text=True,
+                        )
+                        if result.returncode == 0:
+                            found = True
+                        Path(temp_out).unlink(missing_ok=True)
+                        Path(temp_src).unlink(missing_ok=True)
+                    except Exception:
+                        pass
+
+                    ctx.variables[variable] = "1" if found else ""
+
             case "add_library":
                 if len(args) >= 2:
                     name = args[0]
