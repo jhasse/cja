@@ -14,6 +14,11 @@ from .ninja_syntax import Writer
 from .parser import Command
 
 
+class ReturnFromFunction(Exception):
+    """Exception raised to exit early from a function."""
+    pass
+
+
 @dataclass
 class Library:
     """A library target."""
@@ -44,6 +49,14 @@ class ImportedTarget:
 
 
 @dataclass
+class FunctionDef:
+    """A CMake function definition."""
+    name: str
+    params: list[str]
+    body: list  # list[Command] - forward reference
+
+
+@dataclass
 class BuildContext:
     """Context for processing CMake commands."""
     source_dir: Path
@@ -55,6 +68,8 @@ class BuildContext:
     executables: list[Executable] = field(default_factory=list)
     imported_targets: dict[str, ImportedTarget] = field(default_factory=dict)
     compile_options: list[str] = field(default_factory=list)  # Global compile options
+    functions: dict[str, FunctionDef] = field(default_factory=dict)  # User-defined functions
+    parent_scope_vars: dict[str, str] = field(default_factory=dict)  # For PARENT_SCOPE in functions
 
     def get_library(self, name: str) -> Library | None:
         for lib in self.libraries:
@@ -207,6 +222,21 @@ def find_matching_endforeach(commands: list[Command], start: int) -> int:
     raise SyntaxError(f"No matching endforeach() for foreach() at line {commands[start].line}")
 
 
+def find_matching_endfunction(commands: list[Command], start: int) -> int:
+    """Find the index of the endfunction() matching the function() at start."""
+    depth = 1
+    i = start + 1
+    while i < len(commands):
+        if commands[i].name == "function":
+            depth += 1
+        elif commands[i].name == "endfunction":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    raise SyntaxError(f"No matching endfunction() for function() at line {commands[start].line}")
+
+
 def find_else_or_elseif(commands: list[Command], start: int, end: int) -> list[tuple[str, int, list[str]]]:
     """Find elseif/else blocks between if and endif, returns list of (type, index, args)."""
     blocks: list[tuple[str, int, list[str]]] = []
@@ -335,6 +365,35 @@ def process_commands(commands: list[Command], ctx: BuildContext, trace: bool = F
             case "endforeach":
                 raise SyntaxError(f"Unexpected endforeach() at line {cmd.line}")
 
+            case "function":
+                if not args:
+                    raise SyntaxError(f"function() requires a name at line {cmd.line}")
+
+                # Find matching endfunction
+                endfunction_idx = find_matching_endfunction(commands, i)
+                body = commands[i + 1:endfunction_idx]
+
+                func_name = cmd.args[0].lower()  # CMake functions are case-insensitive
+                func_params = cmd.args[1:]  # Parameter names
+
+                # Store the function definition
+                ctx.functions[func_name] = FunctionDef(
+                    name=func_name,
+                    params=func_params,
+                    body=body,
+                )
+
+                # Skip to after endfunction
+                i = endfunction_idx + 1
+                continue
+
+            case "endfunction":
+                raise SyntaxError(f"Unexpected endfunction() at line {cmd.line}")
+
+            case "return":
+                # Exit from current function early
+                raise ReturnFromFunction()
+
             case "cmake_minimum_required":
                 pass  # Just acknowledge it
 
@@ -352,6 +411,7 @@ def process_commands(commands: list[Command], ctx: BuildContext, trace: bool = F
                     # Filter out CACHE, PARENT_SCOPE, and track FORCE
                     filtered_values: list[str] = []
                     has_force = False
+                    has_parent_scope = False
                     skip_next = 0
                     for idx, val in enumerate(values):
                         if skip_next > 0:
@@ -365,12 +425,19 @@ def process_commands(commands: list[Command], ctx: BuildContext, trace: bool = F
                             has_force = True
                             continue
                         if val == "PARENT_SCOPE":
+                            has_parent_scope = True
                             continue
                         filtered_values.append(val)
 
                     # Don't override cache variables unless FORCE is specified
                     if var_name in ctx.cache_variables and not has_force:
                         pass  # Skip, variable was set via -D flag
+                    elif has_parent_scope:
+                        # Set in parent scope (for function calls)
+                        if filtered_values:
+                            ctx.parent_scope_vars[var_name] = " ".join(filtered_values)
+                        else:
+                            ctx.parent_scope_vars[var_name] = ""
                     elif filtered_values:
                         ctx.variables[var_name] = " ".join(filtered_values)
                     else:
@@ -913,7 +980,49 @@ int main() {{
                             ctx.variables[result_variable] = "1"
 
             case _:
-                if strict:
+                # Check if this is a user-defined function call
+                func_name = cmd.name.lower()
+                if func_name in ctx.functions:
+                    func_def = ctx.functions[func_name]
+                    # Save current variables for function scope
+                    saved_vars = ctx.variables.copy()
+
+                    # Set up function arguments
+                    # ARGC = number of arguments
+                    ctx.variables["ARGC"] = str(len(args))
+                    # ARGV = all arguments as semicolon-separated list
+                    ctx.variables["ARGV"] = ";".join(args)
+                    # ARGVn = individual arguments
+                    for idx, arg in enumerate(args):
+                        ctx.variables[f"ARGV{idx}"] = arg
+                    # Named parameters
+                    for idx, param in enumerate(func_def.params):
+                        if idx < len(args):
+                            ctx.variables[param] = args[idx]
+                        else:
+                            ctx.variables[param] = ""
+                    # ARGN = arguments after named parameters
+                    extra_args = args[len(func_def.params):]
+                    ctx.variables["ARGN"] = ";".join(extra_args)
+
+                    # Clear parent_scope_vars before calling
+                    ctx.parent_scope_vars.clear()
+
+                    # Execute function body
+                    try:
+                        process_commands(func_def.body, ctx, trace, strict)
+                    except ReturnFromFunction:
+                        # return() was called, exit function early
+                        pass
+
+                    # Apply PARENT_SCOPE changes to saved_vars
+                    for var_name, var_value in ctx.parent_scope_vars.items():
+                        saved_vars[var_name] = var_value
+                    ctx.parent_scope_vars.clear()
+
+                    # Restore variables
+                    ctx.variables = saved_vars
+                elif strict:
                     error_label = colored("error:", "red", attrs=["bold"])
                     print(f"CMakeLists.txt:{cmd.line}: {error_label} unsupported command: {cmd.name}()", file=sys.stderr)
                     sys.exit(1)

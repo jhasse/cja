@@ -40,11 +40,12 @@ def test_set_with_cache() -> None:
 
 
 def test_set_with_parent_scope() -> None:
-    """Test set with PARENT_SCOPE keyword (should ignore and set value)."""
+    """Test set with PARENT_SCOPE at top level (no effect, there's no parent)."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
     commands = [Command(name="set", args=["MY_VAR", "value", "PARENT_SCOPE"], line=1)]
     process_commands(commands, ctx)
-    assert ctx.variables["MY_VAR"] == "value"
+    # At top level, PARENT_SCOPE has no effect since there's no parent scope
+    assert "MY_VAR" not in ctx.variables
 
 
 def test_set_with_cache_and_force() -> None:
