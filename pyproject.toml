@@ -1,7 +1,7 @@
 [project]
 name = "cninja"
 version = "0.1.0"
-description = "Add your description here"
+description = "A CMake reimplementation in Python with Ninja generator"
 readme = "README.md"
 license = { text = "GPL-3.0-or-later" }
 authors = [
@@ -9,6 +9,9 @@ authors = [
 ]
 requires-python = ">=3.14"
 dependencies = []
+
+[project.scripts]
+cninja = "cninja.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.9.26,<0.10.0"]
