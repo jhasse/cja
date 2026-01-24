@@ -8,14 +8,20 @@ from cninja.generator import BuildContext, process_commands
 from cninja.parser import Command
 
 
-def test_include_unknown_module_strict() -> None:
+def test_include_unknown_module_strict(capsys: pytest.CaptureFixture[str]) -> None:
     """Test that include(unknown_module) errors in strict mode."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
     commands = [
         Command(name="include", args=["NonExistentModule"], line=1),
     ]
-    with pytest.raises(RuntimeError, match="Unknown module: NonExistentModule"):
+    with pytest.raises(SystemExit) as exc_info:
         process_commands(commands, ctx, strict=True)
+    assert exc_info.value.code == 1
+
+    captured = capsys.readouterr()
+    assert "CMakeLists.txt:1:" in captured.err
+    assert "error:" in captured.err
+    assert "unknown module: NonExistentModule" in captured.err
 
 
 def test_include_unknown_module_non_strict() -> None:

@@ -401,7 +401,9 @@ def process_commands(commands: list[Command], ctx: BuildContext, trace: bool = F
                             ctx.variables["BUILD_TESTING"] = "ON"
                     elif module_name not in known_modules:
                         if strict:
-                            raise RuntimeError(f"Unknown module: {module_name} at line {cmd.line}")
+                            error_label = colored("error:", "red", attrs=["bold"])
+                            print(f"CMakeLists.txt:{cmd.line}: {error_label} unknown module: {module_name}", file=sys.stderr)
+                            sys.exit(1)
 
             case "check_ipo_supported":
                 # check_ipo_supported(RESULT <var> [OUTPUT <var>] [LANGUAGES <lang>...])
