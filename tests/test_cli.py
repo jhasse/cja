@@ -104,3 +104,15 @@ def test_d_flag_overrides_cmake_set(tmp_path: Path) -> None:
     assert "-O3" in content
     assert "-DNDEBUG" in content
     assert "-O0" not in content
+
+
+def test_custom_build_dir_ninja_name(tmp_path: Path) -> None:
+    """Test that -B custom-dir produces custom-dir.ninja."""
+    source_dir = tmp_path / "hello"
+    shutil.copytree(EXAMPLES_DIR / "hello", source_dir)
+
+    configure(source_dir, "build-release")
+
+    # Should create build-release.ninja, not build.ninja
+    assert (source_dir / "build-release.ninja").exists()
+    assert not (source_dir / "build.ninja").exists()

@@ -842,8 +842,8 @@ def configure(
 
     process_commands(commands, ctx)
 
-    # Generate build.ninja in source directory
-    output_path = source_dir / "build.ninja"
+    # Generate ninja manifest in source directory (named after build dir)
+    output_path = source_dir / f"{build_dir}.ninja"
     generate_ninja(ctx, output_path, build_dir)
 
     # Create build directory
