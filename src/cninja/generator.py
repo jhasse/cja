@@ -158,6 +158,21 @@ def find_matching_endif(commands: list[Command], start: int) -> int:
     raise SyntaxError(f"No matching endif() for if() at line {commands[start].line}")
 
 
+def find_matching_endforeach(commands: list[Command], start: int) -> int:
+    """Find the index of the endforeach() matching the foreach() at start."""
+    depth = 1
+    i = start + 1
+    while i < len(commands):
+        if commands[i].name == "foreach":
+            depth += 1
+        elif commands[i].name == "endforeach":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    raise SyntaxError(f"No matching endforeach() for foreach() at line {commands[start].line}")
+
+
 def find_else_or_elseif(commands: list[Command], start: int, end: int) -> list[tuple[str, int, list[str]]]:
     """Find elseif/else blocks between if and endif, returns list of (type, index, args)."""
     blocks: list[tuple[str, int, list[str]]] = []
@@ -229,6 +244,58 @@ def process_commands(commands: list[Command], ctx: BuildContext) -> None:
                 # These should only be encountered when processing top-level commands
                 # and indicate mismatched if/endif
                 raise SyntaxError(f"Unexpected {cmd.name}() at line {cmd.line}")
+
+            case "foreach":
+                if not args:
+                    raise SyntaxError(f"foreach() requires at least a loop variable at line {cmd.line}")
+
+                # Find matching endforeach
+                endforeach_idx = find_matching_endforeach(commands, i)
+                body = commands[i + 1:endforeach_idx]
+
+                loop_var = cmd.args[0]  # Use unexpanded for variable name
+                remaining = args[1:]  # Use expanded args for values
+
+                # Determine iteration items
+                items: list[str] = []
+                if remaining and remaining[0] == "RANGE":
+                    # foreach(var RANGE stop) or foreach(var RANGE start stop [step])
+                    range_args = remaining[1:]
+                    if len(range_args) == 1:
+                        stop = int(range_args[0])
+                        items = [str(x) for x in range(stop + 1)]
+                    elif len(range_args) == 2:
+                        start, stop = int(range_args[0]), int(range_args[1])
+                        items = [str(x) for x in range(start, stop + 1)]
+                    elif len(range_args) >= 3:
+                        start, stop, step = int(range_args[0]), int(range_args[1]), int(range_args[2])
+                        items = [str(x) for x in range(start, stop + 1, step)]
+                elif remaining and remaining[0] == "IN":
+                    # foreach(var IN LISTS list1 ... | ITEMS item1 ...)
+                    mode = remaining[1] if len(remaining) > 1 else ""
+                    values = remaining[2:]
+                    if mode == "LISTS":
+                        for list_name in values:
+                            list_val = ctx.variables.get(list_name, "")
+                            if list_val:
+                                items.extend(list_val.split())
+                    elif mode == "ITEMS":
+                        items = values
+                else:
+                    # foreach(var item1 item2 ...)
+                    items = remaining
+
+                # Execute body for each item
+                for item in items:
+                    ctx.variables[loop_var] = item
+                    process_commands(body, ctx)
+
+                # Skip to after endforeach
+                i = endforeach_idx + 1
+                continue
+
+            case "endforeach":
+                raise SyntaxError(f"Unexpected endforeach() at line {cmd.line}")
 
             case "cmake_minimum_required":
                 pass  # Just acknowledge it
