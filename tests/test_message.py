@@ -37,7 +37,9 @@ def test_message_warning(capsys: pytest.CaptureFixture[str]) -> None:
     process_commands(commands, ctx)
 
     captured = capsys.readouterr()
-    assert "CMake Warning: This is a warning" in captured.err
+    assert "CMakeLists.txt:1:" in captured.err
+    assert "warning:" in captured.err
+    assert "This is a warning" in captured.err
 
 
 def test_message_fatal_error() -> None:

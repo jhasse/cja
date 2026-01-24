@@ -8,6 +8,8 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from termcolor import colored
+
 from .ninja_syntax import Writer
 from .parser import Command
 
@@ -593,12 +595,15 @@ def process_commands(commands: list[Command], ctx: BuildContext) -> None:
                     message = " ".join(message_parts)
 
                     if mode == "FATAL_ERROR":
-                        print(f"CMake Error: {message}", file=sys.stderr)
+                        error_label = colored("error:", "red", attrs=["bold"])
+                        print(f"CMakeLists.txt:{cmd.line}: {error_label} {message}", file=sys.stderr)
                         raise SystemExit(1)
                     elif mode == "SEND_ERROR":
-                        print(f"CMake Error: {message}", file=sys.stderr)
+                        error_label = colored("error:", "red", attrs=["bold"])
+                        print(f"CMakeLists.txt:{cmd.line}: {error_label} {message}", file=sys.stderr)
                     elif mode in ("WARNING", "AUTHOR_WARNING", "DEPRECATION"):
-                        print(f"CMake Warning: {message}", file=sys.stderr)
+                        warning_label = colored("warning:", "magenta", attrs=["bold"])
+                        print(f"CMakeLists.txt:{cmd.line}: {warning_label} {message}", file=sys.stderr)
                     elif mode == "STATUS":
                         print(f"{message}")
                     else:
