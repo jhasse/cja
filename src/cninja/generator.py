@@ -1999,7 +1999,7 @@ def configure(
     variables: dict[str, str] | None = None,
     trace: bool = False,
     strict: bool = False,
-) -> None:
+) -> BuildContext:
     """Configure a CMake project and generate build.ninja.
 
     Args:
@@ -2042,4 +2042,17 @@ def configure(
     # Create build directory
     ctx.build_dir.mkdir(parents=True, exist_ok=True)
 
+    # Generate compilation database
+    try:
+        compdb = subprocess.check_output(
+            ["ninja", "-f", str(output_path), "-t", "compdb"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        (ctx.build_dir / "compile_commands.json").write_text(compdb)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        # Ignore errors if ninja is not found or fails
+        pass
+
     print(f"{colored('Configured', 'green', attrs=['bold'])} {build_dir}.ninja")
+    return ctx
