@@ -164,6 +164,37 @@ add_custom_command(
     assert "build $builddir/out.txt: custom_command in.txt extra.txt" in ninja_content
 
 
+def test_add_custom_command_absolute_output(tmp_path: Path) -> None:
+    """Test that absolute paths in OUTPUT are converted to relative."""
+    from cninja.generator import configure
+
+    source_dir = tmp_path
+    build_dir = tmp_path / "build"
+    build_dir.mkdir()
+
+    output_file = build_dir / "generated.txt"
+
+    cmake_content = f"""cmake_minimum_required(VERSION 3.10)
+project(AbsOutTest)
+
+add_custom_command(
+    OUTPUT {output_file}
+    COMMAND echo "hello" > {output_file}
+)
+"""
+    (source_dir / "CMakeLists.txt").write_text(cmake_content)
+
+    configure(source_dir, "build")
+
+    ninja_file = source_dir / "build.ninja"
+    ninja_content = ninja_file.read_text()
+
+    # It should be prefixed with $builddir/ and the filename
+    assert "$builddir/generated.txt" in ninja_content
+    # And NOT the absolute path in the build statement
+    assert f"build {output_file}" not in ninja_content
+
+
 def test_add_custom_command_working_dir_verbatim(tmp_path: Path) -> None:
     """Test that WORKING_DIRECTORY and VERBATIM are correctly handled."""
     from cninja.generator import configure

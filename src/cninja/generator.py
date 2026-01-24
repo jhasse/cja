@@ -1087,13 +1087,25 @@ int main() {{
                     else:
                         arg = expand_variables(arg, ctx.variables, strict, cmd.line)
                         if current_section == "OUTPUT":
-                            outputs.append(arg)
+                            # Make relative to build_dir or source_dir
+                            rel = make_relative(arg, ctx.build_dir)
+                            if rel == arg:
+                                rel = make_relative(arg, ctx.source_dir)
+                            outputs.append(rel)
                         elif current_section == "COMMAND":
                             command_list[-1].append(arg)
                         elif current_section == "DEPENDS":
-                            depends.append(arg)
+                            # Make relative to build_dir or source_dir
+                            rel = make_relative(arg, ctx.build_dir)
+                            if rel == arg:
+                                rel = make_relative(arg, ctx.source_dir)
+                            depends.append(rel)
                         elif current_section == "MAIN_DEPENDENCY":
-                            main_dependency = arg
+                            # Make relative to build_dir or source_dir
+                            rel = make_relative(arg, ctx.build_dir)
+                            if rel == arg:
+                                rel = make_relative(arg, ctx.source_dir)
+                            main_dependency = rel
                         elif current_section == "WORKING_DIRECTORY":
                             working_directory = arg
                     arg_idx += 1
