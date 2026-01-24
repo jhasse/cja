@@ -30,7 +30,7 @@ def test_add_custom_command_minimal() -> None:
     assert len(ctx.custom_commands) == 1
     custom = ctx.custom_commands[0]
     assert custom["outputs"] == ["generated.txt"]
-    assert custom["command"] == ["echo", "hello"]
+    assert custom["commands"] == [["echo", "hello"]]
     assert custom["depends"] == ["input.txt"]
 
 
@@ -61,7 +61,7 @@ def test_add_custom_command_multiple_outputs() -> None:
     assert len(ctx.custom_commands) == 1
     custom = ctx.custom_commands[0]
     assert custom["outputs"] == ["out1.txt", "out2.txt"]
-    assert custom["command"] == ["python", "-c", "print('hi')"]
+    assert custom["commands"] == [["python", "-c", "print('hi')"]]
     assert custom["depends"] == ["input1.txt", "input2.txt"]
 
 
@@ -193,3 +193,27 @@ add_custom_command(
         "cmd = cd scripts && echo 'hello world'" in ninja_content
         or 'cmd = cd scripts && echo "hello world"' in ninja_content
     )
+
+
+def test_add_custom_command_multiple_commands(tmp_path: Path) -> None:
+    """Test that multiple COMMAND sections are correctly joined with &&."""
+    from cninja.generator import configure
+
+    source_dir = tmp_path
+    cmake_content = """cmake_minimum_required(VERSION 3.10)
+project(MultiCmdTest)
+
+add_custom_command(
+    OUTPUT out.txt
+    COMMAND echo "first" > out.txt
+    COMMAND echo "second" >> out.txt
+)
+"""
+    (source_dir / "CMakeLists.txt").write_text(cmake_content)
+
+    configure(source_dir, "build")
+
+    ninja_file = source_dir / "build.ninja"
+    ninja_content = ninja_file.read_text()
+
+    assert "cmd = echo first > out.txt && echo second >> out.txt" in ninja_content

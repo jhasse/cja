@@ -1052,7 +1052,7 @@ int main() {{
             case "add_custom_command":
                 # Minimal support: add_custom_command(OUTPUT ... COMMAND ... DEPENDS ... MAIN_DEPENDENCY ... WORKING_DIRECTORY ... VERBATIM)
                 outputs: list[str] = []
-                command: list[str] = []
+                command_list: list[list[str]] = []
                 depends: list[str] = []
                 main_dependency: str | None = None
                 working_directory: str | None = None
@@ -1069,6 +1069,8 @@ int main() {{
                         "WORKING_DIRECTORY",
                     ):
                         current_section = arg
+                        if arg == "COMMAND":
+                            command_list.append([])
                     elif arg == "VERBATIM":
                         verbatim = True
                     else:
@@ -1076,7 +1078,7 @@ int main() {{
                         if current_section == "OUTPUT":
                             outputs.append(arg)
                         elif current_section == "COMMAND":
-                            command.append(arg)
+                            command_list[-1].append(arg)
                         elif current_section == "DEPENDS":
                             depends.append(arg)
                         elif current_section == "MAIN_DEPENDENCY":
@@ -1085,11 +1087,11 @@ int main() {{
                             working_directory = arg
                     arg_idx += 1
 
-                if outputs and command:
+                if outputs and command_list:
                     ctx.custom_commands.append(
                         {
                             "outputs": outputs,
-                            "command": command,
+                            "commands": command_list,
                             "depends": depends,
                             "main_dependency": main_dependency,
                             "working_directory": working_directory,
@@ -1601,7 +1603,17 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
                     custom_command_outputs.add(o)
                 else:
                     outputs.append(o)
-            command = custom_cmd["command"]  # type: ignore
+
+            # Process multiple commands
+            cmd_parts: list[str] = []
+            for command in custom_cmd["commands"]:  # type: ignore
+                if custom_cmd.get("verbatim"):  # type: ignore
+                    cmd_parts.append(shlex.join(str(c) for c in command))
+                else:
+                    cmd_parts.append(" ".join(str(c) for c in command))
+
+            cmd_str = " && ".join(cmd_parts)
+
             depends = [
                 f"$builddir/{d}"
                 if d in custom_command_outputs and not Path(d).is_absolute()
@@ -1616,11 +1628,6 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
                 ):
                     main_dep = f"$builddir/{main_dep}"
                 depends.insert(0, main_dep)
-
-            if custom_cmd.get("verbatim"):  # type: ignore
-                cmd_str = shlex.join(str(c) for c in command)
-            else:
-                cmd_str = " ".join(str(c) for c in command)
 
             working_dir = custom_cmd.get("working_directory")  # type: ignore
             if working_dir:
