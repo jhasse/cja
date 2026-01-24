@@ -303,21 +303,21 @@ def process_commands(commands: list[Command], ctx: BuildContext) -> None:
                     # Parse arguments: find_program(VAR name1 [name2...] [NAMES name1...] [REQUIRED])
                     names: list[str] = []
                     required = False
-                    i = 1
-                    while i < len(args):
-                        arg = args[i]
+                    arg_idx = 1
+                    while arg_idx < len(args):
+                        arg = args[arg_idx]
                         if arg == "REQUIRED":
                             required = True
                         elif arg == "NAMES":
                             # Collect names until next keyword or end
-                            i += 1
-                            while i < len(args) and args[i] not in ("REQUIRED", "PATHS", "HINTS", "DOC"):
-                                names.append(args[i])
-                                i += 1
+                            arg_idx += 1
+                            while arg_idx < len(args) and args[arg_idx] not in ("REQUIRED", "PATHS", "HINTS", "DOC"):
+                                names.append(args[arg_idx])
+                                arg_idx += 1
                             continue
                         elif arg not in ("PATHS", "HINTS", "DOC", "NO_CACHE"):
                             names.append(arg)
-                        i += 1
+                        arg_idx += 1
 
                     # Search for program
                     found_path = None
