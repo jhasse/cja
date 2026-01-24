@@ -333,6 +333,19 @@ def process_commands(commands: list[Command], ctx: BuildContext) -> None:
                         # set(VAR) with no value unsets the variable
                         ctx.variables.pop(var_name, None)
 
+            case "option":
+                # option(<variable> "<help_text>" [value])
+                # Defines a boolean cache variable, default OFF
+                # Does nothing if variable already defined
+                if args:
+                    var_name = args[0]
+                    if var_name not in ctx.variables:
+                        # Default to OFF, or use provided value (3rd arg)
+                        value = "OFF"
+                        if len(args) >= 3:
+                            value = args[2]
+                        ctx.variables[var_name] = value
+
             case "add_library":
                 if len(args) >= 2:
                     name = args[0]
