@@ -29,9 +29,6 @@ def cmd_configure(args: argparse.Namespace) -> int:
         name, value = parse_define(define)
         variables[name] = value
 
-    print(f"Source directory: {source_dir.resolve()}")
-    print(f"Build directory: {build_dir}")
-
     try:
         configure(source_dir, build_dir, variables=variables if variables else None)
         return 0
@@ -59,9 +56,6 @@ def cmd_build(args: argparse.Namespace) -> int:
 
     # Only configure if ninja file doesn't exist
     if not ninja_file.exists():
-        print(f"Source directory: {source_dir.resolve()}")
-        print(f"Build directory: {build_dir}")
-
         try:
             configure(source_dir, build_dir, variables=variables if variables else None)
         except FileNotFoundError as e:

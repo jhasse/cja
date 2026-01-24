@@ -173,7 +173,7 @@ def test_build_subcommand_skips_configure_if_ninja_exists(tmp_path: Path) -> Non
         cwd=source_dir,
     )
     assert result1.returncode == 0
-    assert "Configuring done" in result1.stdout
+    assert "Configured" in result1.stdout
 
     # Second build - should skip configure
     result2 = subprocess.run(
@@ -183,4 +183,4 @@ def test_build_subcommand_skips_configure_if_ninja_exists(tmp_path: Path) -> Non
         cwd=source_dir,
     )
     assert result2.returncode == 0
-    assert "Configuring done" not in result2.stdout
+    assert "Configured" not in result2.stdout

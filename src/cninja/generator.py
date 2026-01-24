@@ -854,5 +854,4 @@ def configure(
     # Create build directory
     ctx.build_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"Configuring done")
-    print(f"Generated {output_path}")
+    print(f"{colored('Configured', 'green', attrs=['bold'])} {build_dir}.ninja")
