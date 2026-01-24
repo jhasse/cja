@@ -10,7 +10,7 @@ build/
 
 # IDE
 .idea/
-.vscode/
+/.vscode/settings.json
 *.swp
 
 # Testing
