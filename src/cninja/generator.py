@@ -18,7 +18,8 @@ class Library:
     name: str
     sources: list[str]
     lib_type: str = "STATIC"  # STATIC, SHARED, or OBJECT
-    compile_features: list[str] = field(default_factory=list)
+    compile_features: list[str] = field(default_factory=list)  # PRIVATE features
+    public_compile_features: list[str] = field(default_factory=list)  # PUBLIC features
 
 
 @dataclass
@@ -429,17 +430,33 @@ def process_commands(commands: list[Command], ctx: BuildContext) -> None:
             case "target_compile_features":
                 if len(args) >= 2:
                     target_name = args[0]
-                    features = args[1:]
-                    # Skip visibility keywords
-                    features = [f for f in features if f not in ("PUBLIC", "PRIVATE", "INTERFACE")]
+                    # Parse features with visibility keywords
+                    public_features: list[str] = []
+                    private_features: list[str] = []
+                    visibility = "PUBLIC"  # Default visibility
+                    for arg in args[1:]:
+                        if arg in ("PUBLIC", "INTERFACE"):
+                            visibility = "PUBLIC"
+                        elif arg == "PRIVATE":
+                            visibility = "PRIVATE"
+                        else:
+                            if visibility == "PUBLIC":
+                                public_features.append(arg)
+                            else:
+                                private_features.append(arg)
                     # Add features to library or executable
                     lib = ctx.get_library(target_name)
                     if lib:
-                        lib.compile_features.extend(features)
+                        lib.compile_features.extend(private_features)
+                        lib.public_compile_features.extend(public_features)
+                        # Library also uses its own public features
+                        lib.compile_features.extend(public_features)
                     else:
                         exe = ctx.get_executable(target_name)
                         if exe:
-                            exe.compile_features.extend(features)
+                            # Executables don't propagate, so all features go to compile_features
+                            exe.compile_features.extend(public_features)
+                            exe.compile_features.extend(private_features)
 
             case "find_program":
                 if len(args) >= 2:
@@ -697,13 +714,21 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
             objects: list[str] = []
             uses_cxx = False
 
-            # Collect cflags from compile features and imported targets
+            # Collect cflags from compile features, linked libraries, and imported targets
             compile_flags: list[str] = []
             for feature in exe.compile_features:
                 flag = compile_feature_to_flag(feature)
                 if flag:
                     compile_flags.append(flag)
             for lib_name in exe.link_libraries:
+                # Check for public compile features from linked libraries
+                linked_lib = ctx.get_library(lib_name)
+                if linked_lib:
+                    for feature in linked_lib.public_compile_features:
+                        flag = compile_feature_to_flag(feature)
+                        if flag and flag not in compile_flags:
+                            compile_flags.append(flag)
+                # Check for cflags from imported targets
                 if lib_name in ctx.imported_targets:
                     imported = ctx.imported_targets[lib_name]
                     if imported.cflags:

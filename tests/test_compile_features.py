@@ -68,3 +68,37 @@ def test_target_compile_features_multiple() -> None:
     assert exe is not None
     assert "cxx_std_17" in exe.compile_features
     assert "cxx_constexpr" in exe.compile_features
+
+
+def test_target_compile_features_public_propagates() -> None:
+    """Test PUBLIC compile features propagate to linking executable."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="add_library", args=["mylib", "lib.cpp"], line=1),
+        Command(name="target_compile_features", args=["mylib", "PUBLIC", "cxx_std_17"], line=2),
+        Command(name="add_executable", args=["myapp", "main.cpp"], line=3),
+        Command(name="target_link_libraries", args=["myapp", "mylib"], line=4),
+    ]
+    process_commands(commands, ctx)
+
+    lib = ctx.get_library("mylib")
+    assert lib is not None
+    assert "cxx_std_17" in lib.public_compile_features
+    assert "cxx_std_17" in lib.compile_features  # Library also compiles with it
+
+
+def test_target_compile_features_private_does_not_propagate() -> None:
+    """Test PRIVATE compile features do not propagate to linking executable."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="add_library", args=["mylib", "lib.cpp"], line=1),
+        Command(name="target_compile_features", args=["mylib", "PRIVATE", "cxx_std_20"], line=2),
+        Command(name="add_executable", args=["myapp", "main.cpp"], line=3),
+        Command(name="target_link_libraries", args=["myapp", "mylib"], line=4),
+    ]
+    process_commands(commands, ctx)
+
+    lib = ctx.get_library("mylib")
+    assert lib is not None
+    assert "cxx_std_20" in lib.compile_features
+    assert "cxx_std_20" not in lib.public_compile_features
