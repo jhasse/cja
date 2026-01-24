@@ -30,7 +30,7 @@ def cmd_configure(args: argparse.Namespace) -> int:
         variables[name] = value
 
     try:
-        configure(source_dir, build_dir, variables=variables if variables else None)
+        configure(source_dir, build_dir, variables=variables if variables else None, trace=args.trace)
         return 0
     except FileNotFoundError as e:
         print(f"Error: {e}", file=sys.stderr)
@@ -95,6 +95,12 @@ def main() -> int:
         default=[],
         metavar="VAR=VALUE",
         help="Set a CMake variable (can be used multiple times)"
+    )
+
+    parser.add_argument(
+        "--trace",
+        action="store_true",
+        help="Print each command as it's processed"
     )
 
     # Build subcommand
