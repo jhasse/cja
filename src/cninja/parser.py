@@ -1,6 +1,6 @@
 """CMake file parser."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -10,6 +10,7 @@ class Command:
 
     name: str
     args: list[str]
+    is_quoted: list[bool] = field(default_factory=list)
     line: int = 0
 
 
@@ -89,19 +90,25 @@ def parse(content: str) -> list[Command]:
 
         # Collect arguments until closing paren
         args: list[str] = []
+        is_quoted: list[bool] = []
         while i < len(tokens) and tokens[i][0] != ")":
             arg = tokens[i][0]
+            quoted = False
             # Strip quotes from quoted strings
             if arg.startswith('"') and arg.endswith('"'):
                 arg = arg[1:-1]
+                quoted = True
             args.append(arg)
+            is_quoted.append(quoted)
             i += 1
 
         if i >= len(tokens):
             raise SyntaxError(f"Expected ')' for command '{name}' at line {line}")
         i += 1  # Skip closing paren
 
-        commands.append(Command(name=name.lower(), args=args, line=line))
+        commands.append(
+            Command(name=name.lower(), args=args, is_quoted=is_quoted, line=line)
+        )
 
     return commands
 

@@ -6,6 +6,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import glob as py_glob
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -375,9 +376,16 @@ def process_commands(
     i = 0
     while i < len(commands):
         cmd = commands[i]
-        args = [
-            expand_variables(arg, ctx.variables, strict, cmd.line) for arg in cmd.args
-        ]
+        expanded_args: list[str] = []
+        for idx, arg in enumerate(cmd.args):
+            expanded = expand_variables(arg, ctx.variables, strict, cmd.line)
+            # In CMake, unquoted arguments are split on semicolons
+            quoted = cmd.is_quoted[idx] if idx < len(cmd.is_quoted) else False
+            if ";" in expanded and not quoted:
+                expanded_args.extend(expanded.split(";"))
+            else:
+                expanded_args.append(expanded)
+        args = expanded_args
 
         if trace:
             args_str = " ".join(cmd.args) if cmd.args else ""
@@ -579,11 +587,11 @@ def process_commands(
                     elif has_parent_scope:
                         # Set in parent scope (for function calls)
                         if filtered_values:
-                            ctx.parent_scope_vars[var_name] = " ".join(filtered_values)
+                            ctx.parent_scope_vars[var_name] = ";".join(filtered_values)
                         else:
                             ctx.parent_scope_vars[var_name] = ""
                     elif filtered_values:
-                        ctx.variables[var_name] = " ".join(filtered_values)
+                        ctx.variables[var_name] = ";".join(filtered_values)
                     else:
                         # set(VAR) with no value unsets the variable
                         ctx.variables.pop(var_name, None)
@@ -1061,6 +1069,27 @@ int main() {{
                             # Executables don't propagate, so all defs go to compile_definitions
                             exe.compile_definitions.extend(target_defs)
                             exe.compile_definitions.extend(public_defs)
+
+            case "file":
+                if len(args) >= 3:
+                    mode = args[0]
+                    if mode == "GLOB":
+                        var_name = args[1]
+                        patterns = args[2:]
+                        matched_files: list[str] = []
+                        for pattern in patterns:
+                            expanded_pattern = expand_variables(
+                                pattern, ctx.variables, strict, cmd.line
+                            )
+                            if Path(expanded_pattern).is_absolute():
+                                matched = py_glob.glob(expanded_pattern)
+                            else:
+                                matched = py_glob.glob(
+                                    str(ctx.source_dir / expanded_pattern)
+                                )
+                            matched.sort()
+                            matched_files.extend(matched)
+                        ctx.variables[var_name] = ";".join(matched_files)
 
             case "add_compile_options":
                 # add_compile_options adds flags to all targets

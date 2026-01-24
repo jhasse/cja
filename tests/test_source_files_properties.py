@@ -75,6 +75,7 @@ def test_multiple_files_and_semicolons(tmp_path: Path) -> None:
                 "COMPILE_DEFINITIONS",
                 "DEF1;DEF2",
             ],
+            is_quoted=[False, False, False, False, True],
             line=2,
         ),
     ]

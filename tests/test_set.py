@@ -15,11 +15,11 @@ def test_set_basic() -> None:
 
 
 def test_set_multiple_values() -> None:
-    """Test set with multiple values (creates space-separated string)."""
+    """Test set with multiple values (creates semicolon-separated string)."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
     commands = [Command(name="set", args=["MY_LIST", "a", "b", "c"], line=1)]
     process_commands(commands, ctx)
-    assert ctx.variables["MY_LIST"] == "a b c"
+    assert ctx.variables["MY_LIST"] == "a;b;c"
 
 
 def test_set_unset() -> None:
@@ -34,7 +34,13 @@ def test_set_unset() -> None:
 def test_set_with_cache() -> None:
     """Test set with CACHE keyword (should ignore CACHE and set value)."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
-    commands = [Command(name="set", args=["MY_VAR", "value", "CACHE", "STRING", "description"], line=1)]
+    commands = [
+        Command(
+            name="set",
+            args=["MY_VAR", "value", "CACHE", "STRING", "description"],
+            line=1,
+        )
+    ]
     process_commands(commands, ctx)
     assert ctx.variables["MY_VAR"] == "value"
 
@@ -51,6 +57,12 @@ def test_set_with_parent_scope() -> None:
 def test_set_with_cache_and_force() -> None:
     """Test set with CACHE and FORCE keywords."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
-    commands = [Command(name="set", args=["MY_VAR", "value", "CACHE", "STRING", "desc", "FORCE"], line=1)]
+    commands = [
+        Command(
+            name="set",
+            args=["MY_VAR", "value", "CACHE", "STRING", "desc", "FORCE"],
+            line=1,
+        )
+    ]
     process_commands(commands, ctx)
     assert ctx.variables["MY_VAR"] == "value"
