@@ -1,7 +1,6 @@
 """Tests for CMAKE_BUILD_TYPE support."""
 
 import shutil
-import subprocess
 from pathlib import Path
 
 from cninja.generator import configure

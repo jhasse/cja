@@ -1,6 +1,5 @@
 """Tests for check_symbol_exists command."""
 
-import pytest
 from pathlib import Path
 from cninja.generator import BuildContext
 from cninja.parser import Command

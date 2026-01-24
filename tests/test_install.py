@@ -1,7 +1,6 @@
 """Tests for install command."""
 
 from pathlib import Path
-import os
 
 from cninja.generator import BuildContext, process_commands, generate_ninja
 from cninja.parser import Command

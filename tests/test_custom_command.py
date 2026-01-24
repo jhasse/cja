@@ -68,7 +68,6 @@ def test_add_custom_command_multiple_outputs() -> None:
 def test_add_custom_command_integration() -> None:
     """Integration test: verify custom command generates build.ninja correctly."""
     import tempfile
-    import shutil
     from cninja.generator import configure
 
     with tempfile.TemporaryDirectory() as tmpdir:

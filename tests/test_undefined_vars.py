@@ -1,7 +1,5 @@
 """Tests for undefined variable warnings."""
 
-import sys
-from io import StringIO
 from pathlib import Path
 
 from cninja.generator import BuildContext, process_commands

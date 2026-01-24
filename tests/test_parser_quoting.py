@@ -1,6 +1,5 @@
 """Test CMake-like argument parsing."""
 
-from pathlib import Path
 from cninja.parser import parse
 
 
