@@ -69,6 +69,15 @@ class FunctionDef:
 
 
 @dataclass
+class SourceFileProperties:
+    """Properties for a source file."""
+
+    object_depends: list[str] = field(default_factory=list)
+    include_directories: list[str] = field(default_factory=list)
+    compile_definitions: list[str] = field(default_factory=list)
+
+
+@dataclass
 class BuildContext:
     """Context for processing CMake commands."""
 
@@ -90,6 +99,9 @@ class BuildContext:
     functions: dict[str, FunctionDef] = field(
         default_factory=dict
     )  # User-defined functions
+    source_file_properties: dict[str, SourceFileProperties] = field(
+        default_factory=dict
+    )  # Properties for source files
     parent_scope_vars: dict[str, str] = field(
         default_factory=dict
     )  # For PARENT_SCOPE in functions
@@ -1042,6 +1054,56 @@ int main() {{
                         }
                     )
 
+            case "set_source_files_properties":
+                if "PROPERTIES" in args:
+                    prop_idx = args.index("PROPERTIES")
+                    files = args[:prop_idx]
+                    props = args[prop_idx + 1 :]
+
+                    for filename in files:
+                        expanded_filename = expand_variables(
+                            filename, ctx.variables, strict, cmd.line
+                        )
+                        if not Path(expanded_filename).is_absolute():
+                            expanded_filename = str(ctx.source_dir / expanded_filename)
+
+                        if expanded_filename not in ctx.source_file_properties:
+                            ctx.source_file_properties[expanded_filename] = (
+                                SourceFileProperties()
+                            )
+
+                        file_props = ctx.source_file_properties[expanded_filename]
+
+                        # Parse properties in pairs
+                        i = 0
+                        while i < len(props):
+                            prop_name = props[i]
+                            i += 1
+                            if i < len(props):
+                                prop_value = props[i]
+                                i += 1
+                                # Handle semicolon-separated lists in CMake
+                                values = prop_value.split(";")
+                                expanded_values = [
+                                    expand_variables(v, ctx.variables, strict, cmd.line)
+                                    for v in values
+                                ]
+
+                                if prop_name == "OBJECT_DEPENDS":
+                                    for v in expanded_values:
+                                        if not Path(v).is_absolute():
+                                            v = str(ctx.source_dir / v)
+                                        file_props.object_depends.append(v)
+                                elif prop_name == "INCLUDE_DIRECTORIES":
+                                    for v in expanded_values:
+                                        if not Path(v).is_absolute():
+                                            v = str(ctx.source_dir / v)
+                                        file_props.include_directories.append(v)
+                                elif prop_name == "COMPILE_DEFINITIONS":
+                                    file_props.compile_definitions.extend(
+                                        expanded_values
+                                    )
+
             case "find_program":
                 if len(args) >= 2:
                     var_name = args[0]
@@ -1497,7 +1559,31 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
                 else:
                     rule = "cc"
 
-                n.build(obj_name, rule, source, variables=lib_compile_vars)
+                # Check for source file properties
+                abs_source = str(ctx.source_dir / source)
+                file_props = ctx.source_file_properties.get(abs_source)
+
+                source_compile_flags = list(lib_compile_flags)
+                source_depends = []
+
+                if file_props:
+                    for definition in file_props.compile_definitions:
+                        source_compile_flags.append(f"-D{definition}")
+                    for inc_dir in file_props.include_directories:
+                        source_compile_flags.append(f"-I{inc_dir}")
+                    source_depends.extend(file_props.object_depends)
+
+                source_vars = None
+                if source_compile_flags:
+                    source_vars = {"cflags": " ".join(source_compile_flags)}
+
+                n.build(
+                    obj_name,
+                    rule,
+                    source,
+                    implicit=source_depends,
+                    variables=source_vars,
+                )
 
             if lib.lib_type == "OBJECT":
                 # Object libraries don't produce an archive, just track objects
@@ -1568,7 +1654,31 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
                 else:
                     rule = "cc"
 
-                n.build(obj_name, rule, source, variables=compile_vars)
+                # Check for source file properties
+                abs_source = str(ctx.source_dir / source)
+                file_props = ctx.source_file_properties.get(abs_source)
+
+                source_compile_flags = list(compile_flags)
+                source_depends = []
+
+                if file_props:
+                    for definition in file_props.compile_definitions:
+                        source_compile_flags.append(f"-D{definition}")
+                    for inc_dir in file_props.include_directories:
+                        source_compile_flags.append(f"-I{inc_dir}")
+                    source_depends.extend(file_props.object_depends)
+
+                source_vars = None
+                if source_compile_flags:
+                    source_vars = {"cflags": " ".join(source_compile_flags)}
+
+                n.build(
+                    obj_name,
+                    rule,
+                    source,
+                    implicit=source_depends,
+                    variables=source_vars,
+                )
 
             # Add linked libraries to inputs
             link_inputs = objects.copy()
