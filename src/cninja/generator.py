@@ -1060,6 +1060,7 @@ int main() {{
                     if arg in ("OUTPUT", "COMMAND", "DEPENDS"):
                         current_section = arg
                     else:
+                        arg = expand_variables(arg, ctx.variables, strict, cmd.line)
                         if current_section == "OUTPUT":
                             outputs.append(arg)
                         elif current_section == "COMMAND":
@@ -1561,6 +1562,7 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
         lib_outputs: dict[str, str] = {}
         exe_outputs: dict[str, str] = {}
         object_lib_objects: dict[str, list[str]] = {}
+        custom_command_outputs: set[str] = set()
 
         # Generate custom command rule
         n.rule(
@@ -1572,14 +1574,26 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
 
         # Generate custom commands
         for custom_cmd in ctx.custom_commands:
-            outputs = custom_cmd["outputs"]  # type: ignore
+            outputs = []
+            for o in custom_cmd["outputs"]:  # type: ignore
+                if not Path(o).is_absolute():
+                    prefixed_o = f"$builddir/{o}"
+                    outputs.append(prefixed_o)
+                    custom_command_outputs.add(o)
+                else:
+                    outputs.append(o)
             command = custom_cmd["command"]  # type: ignore
-            depends = custom_cmd["depends"]  # type: ignore
+            depends = [
+                f"$builddir/{d}"
+                if d in custom_command_outputs and not Path(d).is_absolute()
+                else d
+                for d in custom_cmd["depends"]  # type: ignore
+            ]
             cmd_str = " ".join(str(c) for c in command)
             n.build(
-                outputs,  # type: ignore
+                outputs,
                 "custom_command",
-                depends,  # type: ignore
+                depends,
                 variables={"cmd": cmd_str},
             )
             n.newline()
@@ -1606,6 +1620,10 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
                 lib_compile_vars = {"cflags": " ".join(lib_compile_flags)}
 
             for source in lib.sources:
+                actual_source = source
+                if source in custom_command_outputs:
+                    actual_source = f"$builddir/{source}"
+
                 obj_name = f"$builddir/{lib.name}_{Path(source).stem}.o"
                 objects.append(obj_name)
 
@@ -1627,7 +1645,11 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
                         source_compile_flags.append(f"-D{definition}")
                     for inc_dir in file_props.include_directories:
                         source_compile_flags.append(f"-I{inc_dir}")
-                    source_depends.extend(file_props.object_depends)
+                    for d in file_props.object_depends:
+                        if d in custom_command_outputs:
+                            source_depends.append(f"$builddir/{d}")
+                        else:
+                            source_depends.append(d)
 
                 source_vars = None
                 if source_compile_flags:
@@ -1636,7 +1658,7 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
                 n.build(
                     obj_name,
                     rule,
-                    source,
+                    actual_source,
                     implicit=source_depends,
                     variables=source_vars,
                 )
@@ -1700,6 +1722,10 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
                 compile_vars = {"cflags": " ".join(compile_flags)}
 
             for source in exe.sources:
+                actual_source = source
+                if source in custom_command_outputs:
+                    actual_source = f"$builddir/{source}"
+
                 obj_name = f"$builddir/{exe.name}_{Path(source).stem}.o"
                 objects.append(obj_name)
 
@@ -1722,7 +1748,11 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
                         source_compile_flags.append(f"-D{definition}")
                     for inc_dir in file_props.include_directories:
                         source_compile_flags.append(f"-I{inc_dir}")
-                    source_depends.extend(file_props.object_depends)
+                    for d in file_props.object_depends:
+                        if d in custom_command_outputs:
+                            source_depends.append(f"$builddir/{d}")
+                        else:
+                            source_depends.append(d)
 
                 source_vars = None
                 if source_compile_flags:
@@ -1731,7 +1761,7 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
                 n.build(
                     obj_name,
                     rule,
-                    source,
+                    actual_source,
                     implicit=source_depends,
                     variables=source_vars,
                 )

@@ -13,9 +13,13 @@ def test_add_custom_command_minimal() -> None:
         Command(
             name="add_custom_command",
             args=[
-                "OUTPUT", "generated.txt",
-                "COMMAND", "echo", "hello",
-                "DEPENDS", "input.txt",
+                "OUTPUT",
+                "generated.txt",
+                "COMMAND",
+                "echo",
+                "hello",
+                "DEPENDS",
+                "input.txt",
             ],
             line=1,
         ),
@@ -37,9 +41,16 @@ def test_add_custom_command_multiple_outputs() -> None:
         Command(
             name="add_custom_command",
             args=[
-                "OUTPUT", "out1.txt", "out2.txt",
-                "COMMAND", "python", "-c", "print('hi')",
-                "DEPENDS", "input1.txt", "input2.txt",
+                "OUTPUT",
+                "out1.txt",
+                "out2.txt",
+                "COMMAND",
+                "python",
+                "-c",
+                "print('hi')",
+                "DEPENDS",
+                "input1.txt",
+                "input2.txt",
             ],
             line=1,
         ),
@@ -86,6 +97,40 @@ add_custom_command(
         # Check that custom command is in the ninja file
         ninja_content = ninja_file.read_text()
         assert "rule custom_command" in ninja_content
-        assert "generated.txt" in ninja_content
-        assert 'echo Hello from custom command > generated.txt' in ninja_content
+        assert "$builddir/generated.txt" in ninja_content
+        assert "echo Hello from custom command > generated.txt" in ninja_content
         assert "input.txt" in ninja_content
+
+
+def test_add_custom_command_dependency(tmp_path: Path) -> None:
+    """Test that a target depending on custom command output uses builddir."""
+    from cninja.generator import configure
+
+    source_dir = tmp_path
+    cmake_content = """cmake_minimum_required(VERSION 3.10)
+project(DepTest)
+
+add_custom_command(
+    OUTPUT generated.cpp
+    COMMAND echo "int main() { return 0; }" > generated.cpp
+    DEPENDS input.txt
+)
+
+add_executable(myapp generated.cpp)
+"""
+    (source_dir / "CMakeLists.txt").write_text(cmake_content)
+    (source_dir / "input.txt").write_text("input")
+
+    configure(source_dir, "build")
+
+    ninja_file = source_dir / "build.ninja"
+    assert ninja_file.exists()
+    ninja_content = ninja_file.read_text()
+
+    # The custom command output should be prefixed
+    assert "build $builddir/generated.cpp: custom_command input.txt" in ninja_content
+    # The executable should depend on the prefixed source
+    assert (
+        "build $builddir/myapp_generated.o: cxx $builddir/generated.cpp"
+        in ninja_content
+    )
