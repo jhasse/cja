@@ -134,11 +134,12 @@ def evaluate_condition(args: list[str], variables: dict[str, str]) -> bool:
     # Single value - check if variable is defined and truthy
     if len(args) == 1:
         var_name = args[0]
-        # First check if it's a variable reference
+        # In CMake, if(VAR) checks if VAR is defined and truthy
+        # Undefined variables evaluate to false
         if var_name in variables:
             return is_truthy(variables[var_name])
-        # Otherwise treat as literal (non-empty string is true, but special constants are false)
-        return is_truthy(var_name)
+        # If not a defined variable, treat as false (undefined = false in CMake)
+        return False
 
     return False
 
@@ -363,6 +364,21 @@ def process_commands(commands: list[Command], ctx: BuildContext) -> None:
                     exe = ctx.get_executable(target_name)
                     if exe:
                         exe.link_libraries.extend(libs)
+
+            case "target_sources":
+                if len(args) >= 2:
+                    target_name = args[0]
+                    sources = args[1:]
+                    # Skip visibility keywords
+                    sources = [s for s in sources if s not in ("PUBLIC", "PRIVATE", "INTERFACE")]
+                    # Add sources to library or executable
+                    lib = ctx.get_library(target_name)
+                    if lib:
+                        lib.sources.extend(sources)
+                    else:
+                        exe = ctx.get_executable(target_name)
+                        if exe:
+                            exe.sources.extend(sources)
 
             case "find_program":
                 if len(args) >= 2:

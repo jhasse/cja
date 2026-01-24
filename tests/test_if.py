@@ -35,6 +35,12 @@ class TestEvaluateCondition:
         variables = {"MY_VAR": "MY_VAR-NOTFOUND"}
         assert evaluate_condition(["MY_VAR"], variables) is False
 
+    def test_undefined_variable(self) -> None:
+        """Test that undefined variables evaluate to false (e.g. if(WIN32) when WIN32 not set)."""
+        variables: dict[str, str] = {}
+        assert evaluate_condition(["WIN32"], variables) is False
+        assert evaluate_condition(["UNDEFINED_VAR"], variables) is False
+
     def test_strequal_true(self) -> None:
         variables = {"X": "hello"}
         assert evaluate_condition(["X", "STREQUAL", "hello"], variables) is True
