@@ -3,6 +3,7 @@
 import platform
 import re
 import shutil
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -346,6 +347,14 @@ def process_commands(commands: list[Command], ctx: BuildContext) -> None:
                             value = args[2]
                         ctx.variables[var_name] = value
 
+            case "include":
+                if args:
+                    module_name = args[0]
+                    if module_name == "CTest":
+                        # CTest sets BUILD_TESTING to ON by default
+                        if "BUILD_TESTING" not in ctx.variables:
+                            ctx.variables["BUILD_TESTING"] = "ON"
+
             case "add_library":
                 if len(args) >= 2:
                     name = args[0]
@@ -428,6 +437,63 @@ def process_commands(commands: list[Command], ctx: BuildContext) -> None:
                         ctx.variables[var_name] = f"{var_name}-NOTFOUND"
                         if required:
                             raise FileNotFoundError(f"Could not find program: {' or '.join(names)}")
+
+            case "find_package":
+                if args:
+                    package_name = args[0]
+                    required = "REQUIRED" in args
+
+                    if package_name == "GTest":
+                        # Try to find GTest using pkg-config
+                        found = False
+                        try:
+                            result = subprocess.run(
+                                ["pkg-config", "--exists", "gtest"],
+                                capture_output=True,
+                            )
+                            if result.returncode == 0:
+                                found = True
+                                # Get cflags and libs
+                                cflags_result = subprocess.run(
+                                    ["pkg-config", "--cflags", "gtest"],
+                                    capture_output=True,
+                                    text=True,
+                                )
+                                libs_result = subprocess.run(
+                                    ["pkg-config", "--libs", "gtest"],
+                                    capture_output=True,
+                                    text=True,
+                                )
+                                ctx.variables["GTEST_INCLUDE_DIRS"] = cflags_result.stdout.strip()
+                                ctx.variables["GTEST_LIBRARIES"] = libs_result.stdout.strip()
+
+                                # Also try gtest_main
+                                main_result = subprocess.run(
+                                    ["pkg-config", "--libs", "gtest_main"],
+                                    capture_output=True,
+                                    text=True,
+                                )
+                                if main_result.returncode == 0:
+                                    ctx.variables["GTEST_MAIN_LIBRARIES"] = main_result.stdout.strip()
+                                    ctx.variables["GTEST_BOTH_LIBRARIES"] = (
+                                        libs_result.stdout.strip() + " " + main_result.stdout.strip()
+                                    )
+                        except FileNotFoundError:
+                            pass  # pkg-config not available
+
+                        if found:
+                            ctx.variables["GTest_FOUND"] = "TRUE"
+                            ctx.variables["GTEST_FOUND"] = "TRUE"
+                        else:
+                            ctx.variables["GTest_FOUND"] = "FALSE"
+                            ctx.variables["GTEST_FOUND"] = "FALSE"
+                            if required:
+                                raise FileNotFoundError("Could not find package: GTest")
+                    else:
+                        # Unknown package
+                        ctx.variables[f"{package_name}_FOUND"] = "FALSE"
+                        if required:
+                            raise FileNotFoundError(f"Could not find package: {package_name}")
 
             case "message":
                 if args:
