@@ -485,7 +485,7 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
         # Compile rules
         n.rule(
             "cc",
-            command="$cc -MMD -MF $out.d -c $in -o $out",
+            command="$cc -MMD -MF $out.d -fdiagnostics-color -c $in -o $out",
             depfile="$out.d",
             description="CC $out",
         )
@@ -493,7 +493,7 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
 
         n.rule(
             "cxx",
-            command="$cxx -MMD -MF $out.d -c $in -o $out",
+            command="$cxx -MMD -MF $out.d -fdiagnostics-color -c $in -o $out",
             depfile="$out.d",
             description="CXX $out",
         )
