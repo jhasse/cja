@@ -180,6 +180,12 @@ def expand_variables(
     return re.sub(r"\$\{(\w+)\}", replace, value)
 
 
+def is_header(filename: str) -> bool:
+    """Check if a filename refers to a header file."""
+    header_extensions = (".h", ".hpp", ".hxx", ".hh", ".inc", ".inl")
+    return filename.lower().endswith(header_extensions)
+
+
 def make_relative(path_str: str, root: Path) -> str:
     """Convert an absolute path to a relative path if it's under the root directory."""
     try:
@@ -1770,7 +1776,12 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
             for inc_dir in lib.include_directories:
                 lib_compile_flags.append(f"-I{inc_dir}")
 
-            for source in lib.sources:
+            # Filter out headers from compileable sources
+            compileable_sources: list[str] = [
+                s for s in lib.sources if not is_header(s)
+            ]
+
+            for source in compileable_sources:
                 actual_source = source
                 if source in custom_command_outputs:
                     actual_source = f"$builddir/{source}"
@@ -1868,7 +1879,12 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
                     if imported.cflags:
                         compile_flags.append(imported.cflags)
 
-            for source in exe.sources:
+            # Filter out headers from compileable sources
+            compileable_sources: list[str] = [
+                s for s in exe.sources if not is_header(s)
+            ]
+
+            for source in compileable_sources:
                 actual_source = source
                 if source in custom_command_outputs:
                     actual_source = f"$builddir/{source}"
