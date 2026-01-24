@@ -65,3 +65,13 @@ def test_math_expr_bitwise() -> None:
     ]
     process_commands(commands, ctx)
     assert ctx.variables["RESULT"] == "17"
+
+
+def test_math_expr_leading_zeros() -> None:
+    """Test math(EXPR) with leading-zero decimal literals."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="math", args=["EXPR", "RESULT", "007 + 1"], line=1),
+    ]
+    process_commands(commands, ctx)
+    assert ctx.variables["RESULT"] == "8"

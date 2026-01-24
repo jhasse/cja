@@ -479,6 +479,13 @@ def process_commands(commands: list[Command], ctx: BuildContext, trace: bool = F
                     # Integer division is // in Python.
                     # CMake's / is integer division.
                     expr = expr.replace("/", "//")
+                    # Normalize leading-zero integer literals (CMake treats as decimal)
+                    # Avoid transforming hex literals like 0xFF
+                    def _normalize_leading_zeros(match: re.Match[str]) -> str:
+                        literal = match.group(0)
+                        return str(int(literal, 10))
+
+                    expr = re.sub(r"\b0[0-9]+\b", _normalize_leading_zeros, expr)
                     # Handle bitwise NOT ~ which is the same in Python
                     # Handle % which is the same
                     # Handle <<, >>, &, |, ^ which are the same
