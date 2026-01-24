@@ -10,10 +10,19 @@ from .parser import Command
 
 
 @dataclass
+class Library:
+    """A library target."""
+    name: str
+    sources: list[str]
+    is_static: bool = True
+
+
+@dataclass
 class Executable:
     """An executable target."""
     name: str
     sources: list[str]
+    link_libraries: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -23,7 +32,20 @@ class BuildContext:
     build_dir: Path
     project_name: str = ""
     variables: dict[str, str] = field(default_factory=dict)
+    libraries: list[Library] = field(default_factory=list)
     executables: list[Executable] = field(default_factory=list)
+
+    def get_library(self, name: str) -> Library | None:
+        for lib in self.libraries:
+            if lib.name == name:
+                return lib
+        return None
+
+    def get_executable(self, name: str) -> Executable | None:
+        for exe in self.executables:
+            if exe.name == name:
+                return exe
+        return None
 
 
 def expand_variables(value: str, variables: dict[str, str]) -> str:
@@ -56,12 +78,37 @@ def process_commands(commands: list[Command], ctx: BuildContext) -> None:
                 elif len(args) == 1:
                     ctx.variables[args[0]] = ""
 
+            case "add_library":
+                if len(args) >= 2:
+                    name = args[0]
+                    # Check for STATIC/SHARED keyword
+                    sources = args[1:]
+                    is_static = True
+                    if sources and sources[0] in ("STATIC", "SHARED"):
+                        is_static = sources[0] == "STATIC"
+                        sources = sources[1:]
+                    ctx.libraries.append(Library(
+                        name=name,
+                        sources=sources,
+                        is_static=is_static,
+                    ))
+
             case "add_executable":
                 if len(args) >= 2:
                     ctx.executables.append(Executable(
                         name=args[0],
                         sources=args[1:]
                     ))
+
+            case "target_link_libraries":
+                if len(args) >= 2:
+                    target_name = args[0]
+                    libs = args[1:]
+                    # Skip visibility keywords
+                    libs = [l for l in libs if l not in ("PUBLIC", "PRIVATE", "INTERFACE")]
+                    exe = ctx.get_executable(target_name)
+                    if exe:
+                        exe.link_libraries.extend(libs)
 
             case _:
                 pass  # Ignore unknown commands for now
@@ -73,8 +120,9 @@ def generate_ninja(ctx: BuildContext, output_path: Path) -> None:
     cc = "cc"
     cxx = "c++"
 
-    # Detect executable extension
+    # Detect extensions
     exe_ext = ".exe" if platform.system() == "Windows" else ""
+    lib_ext = ".lib" if platform.system() == "Windows" else ".a"
 
     with open(output_path, "w") as f:
         n = Writer(f)
@@ -85,6 +133,7 @@ def generate_ninja(ctx: BuildContext, output_path: Path) -> None:
         # Variables
         n.variable("cc", cc)
         n.variable("cxx", cxx)
+        n.variable("ar", "ar")
         n.newline()
 
         # Compile rules
@@ -104,6 +153,14 @@ def generate_ninja(ctx: BuildContext, output_path: Path) -> None:
         )
         n.newline()
 
+        # Archive rule for static libraries
+        n.rule(
+            "ar",
+            command="$ar rcs $out $in",
+            description="AR $out",
+        )
+        n.newline()
+
         # Link rules
         n.rule(
             "link",
@@ -119,7 +176,34 @@ def generate_ninja(ctx: BuildContext, output_path: Path) -> None:
         )
         n.newline()
 
-        # Generate build statements for each executable
+        # Track library outputs for linking
+        lib_outputs: dict[str, str] = {}
+
+        # Generate build statements for libraries
+        for lib in ctx.libraries:
+            objects: list[str] = []
+
+            for source in lib.sources:
+                source_path = ctx.source_dir / source
+                obj_name = f"{lib.name}_{Path(source).stem}.o"
+                objects.append(obj_name)
+
+                # Determine if C or C++
+                if source.endswith(('.cpp', '.cxx', '.cc', '.C')):
+                    rule = "cxx"
+                else:
+                    rule = "cc"
+
+                n.build(obj_name, rule, str(source_path))
+
+            # Create static library
+            if lib.is_static:
+                lib_name = f"lib{lib.name}{lib_ext}"
+                n.build(lib_name, "ar", objects)
+                n.newline()
+                lib_outputs[lib.name] = lib_name
+
+        # Generate build statements for executables
         default_targets: list[str] = []
 
         for exe in ctx.executables:
@@ -128,7 +212,7 @@ def generate_ninja(ctx: BuildContext, output_path: Path) -> None:
 
             for source in exe.sources:
                 source_path = ctx.source_dir / source
-                obj_name = Path(source).stem + ".o"
+                obj_name = f"{exe.name}_{Path(source).stem}.o"
                 objects.append(obj_name)
 
                 # Determine if C or C++
@@ -138,13 +222,18 @@ def generate_ninja(ctx: BuildContext, output_path: Path) -> None:
                 else:
                     rule = "cc"
 
-                # Use path to source
                 n.build(obj_name, rule, str(source_path))
+
+            # Add linked libraries to inputs
+            link_inputs = objects.copy()
+            for lib_name in exe.link_libraries:
+                if lib_name in lib_outputs:
+                    link_inputs.append(lib_outputs[lib_name])
 
             # Link
             exe_name = exe.name + exe_ext
             link_rule = "link_cxx" if uses_cxx else "link"
-            n.build(exe_name, link_rule, objects)
+            n.build(exe_name, link_rule, link_inputs)
             n.newline()
 
             default_targets.append(exe_name)
