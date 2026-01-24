@@ -155,6 +155,17 @@ def expand_variables(
     return re.sub(r"\$\{(\w+)\}", replace, value)
 
 
+def make_relative(path_str: str, root: Path) -> str:
+    """Convert an absolute path to a relative path if it's under the root directory."""
+    try:
+        path = Path(path_str)
+        if path.is_absolute() and path.is_relative_to(root):
+            return str(path.relative_to(root))
+    except ValueError:
+        pass
+    return path_str
+
+
 def is_truthy(value: str) -> bool:
     """Check if a CMake value is considered true."""
     if not value:
@@ -864,6 +875,7 @@ int main() {{
                     if sources and sources[0] in ("STATIC", "SHARED", "OBJECT"):
                         lib_type = sources[0]
                         sources = sources[1:]
+                    sources = [make_relative(s, ctx.source_dir) for s in sources]
                     ctx.libraries.append(
                         Library(
                             name=name,
@@ -874,7 +886,8 @@ int main() {{
 
             case "add_executable":
                 if len(args) >= 2:
-                    ctx.executables.append(Executable(name=args[0], sources=args[1:]))
+                    sources = [make_relative(s, ctx.source_dir) for s in args[1:]]
+                    ctx.executables.append(Executable(name=args[0], sources=sources))
 
             case "target_link_libraries":
                 if len(args) >= 2:
@@ -898,6 +911,7 @@ int main() {{
                         for s in sources
                         if s not in ("PUBLIC", "PRIVATE", "INTERFACE")
                     ]
+                    sources = [make_relative(s, ctx.source_dir) for s in sources]
                     # Add sources to library or executable
                     lib = ctx.get_library(target_name)
                     if lib:
@@ -1132,11 +1146,13 @@ int main() {{
                                     for v in expanded_values:
                                         if not Path(v).is_absolute():
                                             v = str(ctx.source_dir / v)
+                                        v = make_relative(v, ctx.source_dir)
                                         file_props.object_depends.append(v)
                                 elif prop_name == "INCLUDE_DIRECTORIES":
                                     for v in expanded_values:
                                         if not Path(v).is_absolute():
                                             v = str(ctx.source_dir / v)
+                                        v = make_relative(v, ctx.source_dir)
                                         file_props.include_directories.append(v)
                                 elif prop_name == "COMPILE_DEFINITIONS":
                                     file_props.compile_definitions.extend(

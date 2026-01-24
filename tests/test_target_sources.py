@@ -11,7 +11,11 @@ def test_target_sources_executable() -> None:
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
     commands = [
         Command(name="add_executable", args=["myapp", "main.c"], line=1),
-        Command(name="target_sources", args=["myapp", "PRIVATE", "extra.c", "util.c"], line=2),
+        Command(
+            name="target_sources",
+            args=["myapp", "PRIVATE", "extra.c", "util.c"],
+            line=2,
+        ),
     ]
     process_commands(commands, ctx)
 
@@ -42,7 +46,11 @@ def test_target_sources_multiple_visibility() -> None:
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
     commands = [
         Command(name="add_executable", args=["myapp", "main.c"], line=1),
-        Command(name="target_sources", args=["myapp", "PUBLIC", "pub.c", "PRIVATE", "priv.c"], line=2),
+        Command(
+            name="target_sources",
+            args=["myapp", "PUBLIC", "pub.c", "PRIVATE", "priv.c"],
+            line=2,
+        ),
     ]
     process_commands(commands, ctx)
 
@@ -66,3 +74,29 @@ def test_target_sources_no_visibility() -> None:
     assert exe is not None
     assert "main.c" in exe.sources
     assert "extra.c" in exe.sources
+
+
+def test_absolute_paths_handling() -> None:
+    """Test that absolute paths are converted to relative if under source_dir."""
+    source_root = Path("/home/user/project").absolute()
+    ctx = BuildContext(source_dir=source_root, build_dir=source_root / "build")
+
+    commands = [
+        Command(
+            name="add_executable", args=["myapp", str(source_root / "main.c")], line=1
+        ),
+        Command(
+            name="target_sources",
+            args=["myapp", str(source_root / "src/util.c"), "/other/path/external.c"],
+            line=2,
+        ),
+    ]
+    process_commands(commands, ctx)
+
+    exe = ctx.get_executable("myapp")
+    assert exe is not None
+    # Path inside source_dir should be relative
+    assert "main.c" in exe.sources
+    assert "src/util.c" in exe.sources
+    # Path outside source_dir should remain absolute
+    assert "/other/path/external.c" in exe.sources
