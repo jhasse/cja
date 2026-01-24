@@ -222,7 +222,7 @@ def find_else_or_elseif(commands: list[Command], start: int, end: int) -> list[t
     return blocks
 
 
-def process_commands(commands: list[Command], ctx: BuildContext, trace: bool = False) -> None:
+def process_commands(commands: list[Command], ctx: BuildContext, trace: bool = False, strict: bool = False) -> None:
     """Process CMake commands and populate the build context."""
     i = 0
     while i < len(commands):
@@ -249,7 +249,7 @@ def process_commands(commands: list[Command], ctx: BuildContext, trace: bool = F
                 if evaluate_condition(if_args, ctx.variables):
                     # Execute commands from if to first elseif/else or endif
                     block_end = blocks[0][1] if blocks else endif_idx
-                    process_commands(commands[block_start:block_end], ctx, trace)
+                    process_commands(commands[block_start:block_end], ctx, trace, strict)
                     executed = True
                 else:
                     # Check elseif/else blocks
@@ -262,12 +262,12 @@ def process_commands(commands: list[Command], ctx: BuildContext, trace: bool = F
                                 # Execute this elseif block
                                 block_start = block_idx + 1
                                 block_end = blocks[j + 1][1] if j + 1 < len(blocks) else endif_idx
-                                process_commands(commands[block_start:block_end], ctx, trace)
+                                process_commands(commands[block_start:block_end], ctx, trace, strict)
                                 executed = True
                         elif block_type == "else":
                             # Execute else block
                             block_start = block_idx + 1
-                            process_commands(commands[block_start:endif_idx], ctx, trace)
+                            process_commands(commands[block_start:endif_idx], ctx, trace, strict)
                             executed = True
 
                 # Skip to after endif
@@ -322,7 +322,7 @@ def process_commands(commands: list[Command], ctx: BuildContext, trace: bool = F
                 # Execute body for each item
                 for item in items:
                     ctx.variables[loop_var] = item
-                    process_commands(body, ctx, trace)
+                    process_commands(body, ctx, trace, strict)
 
                 # Skip to after endforeach
                 i = endforeach_idx + 1
@@ -698,7 +698,9 @@ def process_commands(commands: list[Command], ctx: BuildContext, trace: bool = F
                             ctx.variables[result_variable] = "1"
 
             case _:
-                pass  # Ignore unknown commands for now
+                if strict:
+                    raise RuntimeError(f"Unsupported command: {cmd.name}() at line {cmd.line}")
+                # Ignore unknown commands by default
 
         i += 1
 
@@ -902,6 +904,7 @@ def configure(
     build_dir: str,
     variables: dict[str, str] | None = None,
     trace: bool = False,
+    strict: bool = False,
 ) -> None:
     """Configure a CMake project and generate build.ninja.
 
@@ -910,6 +913,7 @@ def configure(
         build_dir: Relative path for build directory (e.g., "build")
         variables: Optional dict of variables to set (e.g., from -D flags)
         trace: If True, print each command as it's processed
+        strict: If True, error on unsupported commands instead of ignoring them
     """
     source_dir = source_dir.resolve()
     cmake_file = source_dir / "CMakeLists.txt"
@@ -935,7 +939,7 @@ def configure(
     ctx.variables["CMAKE_SOURCE_DIR"] = str(ctx.source_dir)
     ctx.variables["CMAKE_BINARY_DIR"] = str(ctx.build_dir)
 
-    process_commands(commands, ctx, trace)
+    process_commands(commands, ctx, trace, strict)
 
     # Generate ninja manifest in source directory (named after build dir)
     output_path = source_dir / f"{build_dir}.ninja"

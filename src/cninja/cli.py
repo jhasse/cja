@@ -30,13 +30,16 @@ def cmd_configure(args: argparse.Namespace) -> int:
         variables[name] = value
 
     try:
-        configure(source_dir, build_dir, variables=variables if variables else None, trace=args.trace)
+        configure(source_dir, build_dir, variables=variables if variables else None, trace=args.trace, strict=args.strict)
         return 0
     except FileNotFoundError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
     except SyntaxError as e:
         print(f"Parse error: {e}", file=sys.stderr)
+        return 1
+    except RuntimeError as e:
+        print(f"Error: {e}", file=sys.stderr)
         return 1
 
 
@@ -101,6 +104,12 @@ def main() -> int:
         "--trace",
         action="store_true",
         help="Print each command as it's processed"
+    )
+
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Error on unsupported commands instead of ignoring them"
     )
 
     # Build subcommand
