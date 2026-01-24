@@ -51,6 +51,7 @@ class BuildContext:
     libraries: list[Library] = field(default_factory=list)
     executables: list[Executable] = field(default_factory=list)
     imported_targets: dict[str, ImportedTarget] = field(default_factory=dict)
+    compile_options: list[str] = field(default_factory=list)  # Global compile options
 
     def get_library(self, name: str) -> Library | None:
         for lib in self.libraries:
@@ -595,6 +596,12 @@ def process_commands(commands: list[Command], ctx: BuildContext, trace: bool = F
                             exe.compile_features.extend(public_features)
                             exe.compile_features.extend(private_features)
 
+            case "add_compile_options":
+                # add_compile_options adds flags to all targets
+                for arg in args:
+                    expanded = expand_variables(arg, ctx.variables)
+                    ctx.compile_options.append(expanded)
+
             case "find_program":
                 if len(args) >= 2:
                     var_name = args[0]
@@ -914,8 +921,8 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
         for lib in ctx.libraries:
             objects: list[str] = []
 
-            # Collect compile flags from compile features
-            lib_compile_flags: list[str] = []
+            # Collect compile flags from global options and compile features
+            lib_compile_flags: list[str] = list(ctx.compile_options)
             for feature in lib.compile_features:
                 flag = compile_feature_to_flag(feature)
                 if flag:
@@ -955,8 +962,8 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
             objects: list[str] = []
             uses_cxx = False
 
-            # Collect cflags from compile features, linked libraries, and imported targets
-            compile_flags: list[str] = []
+            # Collect cflags from global options, compile features, linked libraries, and imported targets
+            compile_flags: list[str] = list(ctx.compile_options)
             for feature in exe.compile_features:
                 flag = compile_feature_to_flag(feature)
                 if flag:
