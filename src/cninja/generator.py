@@ -78,6 +78,14 @@ class SourceFileProperties:
 
 
 @dataclass
+class Test:
+    """A test definition."""
+
+    name: str
+    command: list[str]
+
+
+@dataclass
 class BuildContext:
     """Context for processing CMake commands."""
 
@@ -99,6 +107,7 @@ class BuildContext:
     functions: dict[str, FunctionDef] = field(
         default_factory=dict
     )  # User-defined functions
+    tests: list[Test] = field(default_factory=list)  # Test definitions
     source_file_properties: dict[str, SourceFileProperties] = field(
         default_factory=dict
     )  # Properties for source files
@@ -1054,6 +1063,36 @@ int main() {{
                         }
                     )
 
+            case "add_test":
+                # Support: add_test(NAME <name> COMMAND <command> ...)
+                # Or: add_test(<name> <command> ...)
+                if len(args) >= 2:
+                    test_name = ""
+                    test_command = []
+                    if args[0] == "NAME":
+                        # NAME ... COMMAND ...
+                        test_name = expand_variables(
+                            args[1], ctx.variables, strict, cmd.line
+                        )
+                        if "COMMAND" in args:
+                            cmd_idx = args.index("COMMAND")
+                            test_command = [
+                                expand_variables(a, ctx.variables, strict, cmd.line)
+                                for a in args[cmd_idx + 1 :]
+                            ]
+                    else:
+                        # <name> <command> ...
+                        test_name = expand_variables(
+                            args[0], ctx.variables, strict, cmd.line
+                        )
+                        test_command = [
+                            expand_variables(a, ctx.variables, strict, cmd.line)
+                            for a in args[1:]
+                        ]
+
+                    if test_name and test_command:
+                        ctx.tests.append(Test(name=test_name, command=test_command))
+
             case "set_source_files_properties":
                 if "PROPERTIES" in args:
                     prop_idx = args.index("PROPERTIES")
@@ -1502,8 +1541,9 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
         )
         n.newline()
 
-        # Track library outputs for linking (archive path for STATIC, object list for OBJECT)
+        # Track library and executable outputs for linking and testing
         lib_outputs: dict[str, str] = {}
+        exe_outputs: dict[str, str] = {}
         object_lib_objects: dict[str, list[str]] = {}
 
         # Generate custom command rule
@@ -1710,7 +1750,44 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
             )
             n.newline()
 
+            exe_outputs[exe.name] = exe_name
             default_targets.append(exe_name)
+
+        # Generate test runner
+        if ctx.tests:
+            n.rule(
+                "test_run",
+                command="$cmd",
+                description="TEST $name",
+                pool="console",
+            )
+            n.newline()
+
+            test_targets: list[str] = []
+            for test in ctx.tests:
+                # Resolve target in command
+                cmd = list(test.command)
+                depends = []
+                if cmd[0] in exe_outputs:
+                    target_exe = exe_outputs[cmd[0]]
+                    cmd[0] = target_exe
+                    depends.append(target_exe)
+
+                test_target = f"test_{test.name}"
+                n.build(
+                    test_target,
+                    "test_run",
+                    implicit=depends,
+                    variables={
+                        "cmd": " ".join(cmd),
+                        "name": test.name,
+                    },
+                )
+                test_targets.append(test_target)
+
+            n.newline()
+            n.build("test", "phony", test_targets)
+            n.newline()
 
         # Default target
         if default_targets:
