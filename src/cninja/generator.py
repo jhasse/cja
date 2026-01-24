@@ -3,6 +3,7 @@
 import platform
 import re
 import shutil
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -146,6 +147,30 @@ def process_commands(commands: list[Command], ctx: BuildContext) -> None:
                         ctx.variables[var_name] = f"{var_name}-NOTFOUND"
                         if required:
                             raise FileNotFoundError(f"Could not find program: {' or '.join(names)}")
+
+            case "message":
+                if args:
+                    # Check for mode keyword
+                    modes = ("STATUS", "WARNING", "AUTHOR_WARNING", "SEND_ERROR", "FATAL_ERROR", "DEPRECATION")
+                    mode = ""
+                    message_parts = args
+                    if args[0] in modes:
+                        mode = args[0]
+                        message_parts = args[1:]
+
+                    message = " ".join(message_parts)
+
+                    if mode == "FATAL_ERROR":
+                        print(f"CMake Error: {message}", file=sys.stderr)
+                        raise SystemExit(1)
+                    elif mode == "SEND_ERROR":
+                        print(f"CMake Error: {message}", file=sys.stderr)
+                    elif mode in ("WARNING", "AUTHOR_WARNING", "DEPRECATION"):
+                        print(f"CMake Warning: {message}", file=sys.stderr)
+                    elif mode == "STATUS":
+                        print(f"-- {message}")
+                    else:
+                        print(message)
 
             case _:
                 pass  # Ignore unknown commands for now
