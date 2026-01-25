@@ -5,6 +5,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from termcolor import colored
+
 from .generator import configure
 
 
@@ -39,13 +41,28 @@ def cmd_configure(args: argparse.Namespace) -> int:
         )
         return 0
     except FileNotFoundError as e:
-        print(f"Error: {e}", file=sys.stderr)
+        error_label = colored("error:", "red", attrs=["bold"])
+        print(f"{error_label} {e}", file=sys.stderr)
         return 1
     except SyntaxError as e:
-        print(f"Parse error: {e}", file=sys.stderr)
+        if e.filename and e.lineno:
+            rel_file = e.filename
+            try:
+                # Try to make path relative to current directory for cleaner output
+                p = Path(e.filename)
+                if p.is_absolute():
+                    rel_file = str(p.relative_to(Path(".").resolve()))
+            except ValueError:
+                pass
+            error_label = colored("error:", "red", attrs=["bold"])
+            print(f"{rel_file}:{e.lineno}: {error_label} {e.msg}", file=sys.stderr)
+        else:
+            error_label = colored("error:", "red", attrs=["bold"])
+            print(f"{error_label} Parse error: {e}", file=sys.stderr)
         return 1
     except RuntimeError as e:
-        print(f"Error: {e}", file=sys.stderr)
+        error_label = colored("error:", "red", attrs=["bold"])
+        print(f"{error_label} {e}", file=sys.stderr)
         return 1
 
 
@@ -77,7 +94,8 @@ def cmd_command_mode(args: list[str]) -> int:
             Path(directory).mkdir(parents=True, exist_ok=True)
         return 0
     else:
-        print(f"Error: Unknown command -E {cmd}", file=sys.stderr)
+        error_label = colored("error:", "red", attrs=["bold"])
+        print(f"{error_label} Unknown command -E {cmd}", file=sys.stderr)
         return 1
 
 
@@ -100,10 +118,23 @@ def _run_ninja(args: argparse.Namespace, target: str | None) -> int:
         try:
             configure(source_dir, build_dir, variables=variables if variables else None)
         except FileNotFoundError as e:
-            print(f"Error: {e}", file=sys.stderr)
+            error_label = colored("error:", "red", attrs=["bold"])
+            print(f"{error_label} {e}", file=sys.stderr)
             return 1
         except SyntaxError as e:
-            print(f"Parse error: {e}", file=sys.stderr)
+            if e.filename and e.lineno:
+                rel_file = e.filename
+                try:
+                    p = Path(e.filename)
+                    if p.is_absolute():
+                        rel_file = str(p.relative_to(Path(".").resolve()))
+                except ValueError:
+                    pass
+                error_label = colored("error:", "red", attrs=["bold"])
+                print(f"{rel_file}:{e.lineno}: {error_label} {e.msg}", file=sys.stderr)
+            else:
+                error_label = colored("error:", "red", attrs=["bold"])
+                print(f"{error_label} Parse error: {e}", file=sys.stderr)
             return 1
 
     # Run ninja

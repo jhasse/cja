@@ -202,6 +202,10 @@ class BuildContext:
         location = f"{rel_file}:{line}: " if line > 0 else ""
         print(f"{location}{error_label} {message}", file=sys.stderr)
 
+    def raise_syntax_error(self, message: str, line: int) -> None:
+        """Raise a SyntaxError with file and line information."""
+        raise SyntaxError(message, (str(self.current_list_file), line, 0, ""))
+
     def expand_variables(self, value: str, strict: bool = False, line: int = 0) -> str:
         """Expand ${VAR} references in a string."""
 
@@ -338,7 +342,7 @@ def evaluate_condition(args: list[str], variables: dict[str, str]) -> bool:
     return False
 
 
-def find_matching_endif(commands: list[Command], start: int) -> int:
+def find_matching_endif(commands: list[Command], start: int, ctx: BuildContext) -> int:
     """Find the index of the endif() matching the if() at start."""
     depth = 1
     i = start + 1
@@ -350,10 +354,13 @@ def find_matching_endif(commands: list[Command], start: int) -> int:
             if depth == 0:
                 return i
         i += 1
-    raise SyntaxError(f"No matching endif() for if() at line {commands[start].line}")
+    ctx.raise_syntax_error("No matching endif() for if()", commands[start].line)
+    return -1  # unreachable
 
 
-def find_matching_endforeach(commands: list[Command], start: int) -> int:
+def find_matching_endforeach(
+    commands: list[Command], start: int, ctx: BuildContext
+) -> int:
     """Find the index of the endforeach() matching the foreach() at start."""
     depth = 1
     i = start + 1
@@ -365,12 +372,15 @@ def find_matching_endforeach(commands: list[Command], start: int) -> int:
             if depth == 0:
                 return i
         i += 1
-    raise SyntaxError(
-        f"No matching endforeach() for foreach() at line {commands[start].line}"
+    ctx.raise_syntax_error(
+        "No matching endforeach() for foreach()", commands[start].line
     )
+    return -1  # unreachable
 
 
-def find_matching_endfunction(commands: list[Command], start: int) -> int:
+def find_matching_endfunction(
+    commands: list[Command], start: int, ctx: BuildContext
+) -> int:
     """Find the index of the endfunction() matching the function() at start."""
     depth = 1
     i = start + 1
@@ -382,9 +392,10 @@ def find_matching_endfunction(commands: list[Command], start: int) -> int:
             if depth == 0:
                 return i
         i += 1
-    raise SyntaxError(
-        f"No matching endfunction() for function() at line {commands[start].line}"
+    ctx.raise_syntax_error(
+        "No matching endfunction() for function()", commands[start].line
     )
+    return -1  # unreachable
 
 
 def find_else_or_elseif(
@@ -438,7 +449,7 @@ def process_commands(
         match cmd.name:
             case "if":
                 # Find matching endif
-                endif_idx = find_matching_endif(commands, i)
+                endif_idx = find_matching_endif(commands, i, ctx)
                 # Find elseif/else blocks
                 blocks = find_else_or_elseif(commands, i, endif_idx)
 
@@ -496,16 +507,16 @@ def process_commands(
             case "endif" | "else" | "elseif":
                 # These should only be encountered when processing top-level commands
                 # and indicate mismatched if/endif
-                raise SyntaxError(f"Unexpected {cmd.name}() at line {cmd.line}")
+                ctx.raise_syntax_error(f"Unexpected {cmd.name}()", cmd.line)
 
             case "foreach":
                 if not args:
-                    raise SyntaxError(
-                        f"foreach() requires at least a loop variable at line {cmd.line}"
+                    ctx.raise_syntax_error(
+                        "foreach() requires at least a loop variable", cmd.line
                     )
 
                 # Find matching endforeach
-                endforeach_idx = find_matching_endforeach(commands, i)
+                endforeach_idx = find_matching_endforeach(commands, i, ctx)
                 body = commands[i + 1 : endforeach_idx]
 
                 loop_var = cmd.args[0]  # Use unexpanded for variable name
@@ -554,14 +565,14 @@ def process_commands(
                 continue
 
             case "endforeach":
-                raise SyntaxError(f"Unexpected endforeach() at line {cmd.line}")
+                ctx.raise_syntax_error("Unexpected endforeach()", cmd.line)
 
             case "function":
                 if not args:
-                    raise SyntaxError(f"function() requires a name at line {cmd.line}")
+                    ctx.raise_syntax_error("function() requires a name", cmd.line)
 
                 # Find matching endfunction
-                endfunction_idx = find_matching_endfunction(commands, i)
+                endfunction_idx = find_matching_endfunction(commands, i, ctx)
                 body = commands[i + 1 : endfunction_idx]
 
                 func_name = cmd.args[0].lower()  # CMake functions are case-insensitive
@@ -579,7 +590,7 @@ def process_commands(
                 continue
 
             case "endfunction":
-                raise SyntaxError(f"Unexpected endfunction() at line {cmd.line}")
+                ctx.raise_syntax_error("Unexpected endfunction()", cmd.line)
 
             case "return":
                 # Exit from current function early

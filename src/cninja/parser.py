@@ -69,11 +69,13 @@ def tokenize(content: str) -> list[tuple[str, int]]:
     return tokens
 
 
-def parse(content: str) -> list[Command]:
+def parse(content: str, filename: str = "CMakeLists.txt") -> list[Command]:
     """Parse CMake content into a list of commands."""
     tokens = tokenize(content)
     commands: list[Command] = []
     i = 0
+
+    lines = content.splitlines()
 
     while i < len(tokens):
         # Expect command name
@@ -85,7 +87,10 @@ def parse(content: str) -> list[Command]:
 
         # Expect opening paren
         if i >= len(tokens) or tokens[i][0] != "(":
-            raise SyntaxError(f"Expected '(' after command '{name}' at line {line}")
+            raise SyntaxError(
+                f"Expected '(' after command '{name}'",
+                (filename, line, 0, lines[line - 1] if line <= len(lines) else ""),
+            )
         i += 1
 
         # Collect arguments until closing paren
@@ -103,7 +108,10 @@ def parse(content: str) -> list[Command]:
             i += 1
 
         if i >= len(tokens):
-            raise SyntaxError(f"Expected ')' for command '{name}' at line {line}")
+            raise SyntaxError(
+                f"Expected ')' for command '{name}'",
+                (filename, line, 0, lines[line - 1] if line <= len(lines) else ""),
+            )
         i += 1  # Skip closing paren
 
         commands.append(
@@ -116,4 +124,4 @@ def parse(content: str) -> list[Command]:
 def parse_file(path: Path) -> list[Command]:
     """Parse a CMakeLists.txt file."""
     content = path.read_text()
-    return parse(content)
+    return parse(content, filename=str(path))
