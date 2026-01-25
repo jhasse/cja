@@ -1016,11 +1016,31 @@ def process_commands(
                         "CheckCCompilerFlag",
                         "CheckCXXSymbolExists",
                         "FetchContent",
+                        "GNUInstallDirs",
                     }
                     if module_name == "CTest":
                         # CTest sets BUILD_TESTING to ON by default
                         if "BUILD_TESTING" not in ctx.variables:
                             ctx.variables["BUILD_TESTING"] = "ON"
+                    elif module_name == "GNUInstallDirs":
+                        ctx.variables["CMAKE_INSTALL_BINDIR"] = "bin"
+                        ctx.variables["CMAKE_INSTALL_SBINDIR"] = "sbin"
+                        ctx.variables["CMAKE_INSTALL_LIBEXECDIR"] = "libexec"
+                        ctx.variables["CMAKE_INSTALL_SYSCONFDIR"] = "etc"
+                        ctx.variables["CMAKE_INSTALL_SHAREDSTATEDIR"] = "com"
+                        ctx.variables["CMAKE_INSTALL_LOCALSTATEDIR"] = "var"
+                        ctx.variables["CMAKE_INSTALL_LIBDIR"] = "lib"
+                        ctx.variables["CMAKE_INSTALL_INCLUDEDIR"] = "include"
+                        ctx.variables["CMAKE_INSTALL_OLDINCLUDEDIR"] = "/usr/include"
+                        ctx.variables["CMAKE_INSTALL_DATAROOTDIR"] = "share"
+                        ctx.variables["CMAKE_INSTALL_DATADIR"] = "share"
+                        ctx.variables["CMAKE_INSTALL_INFODIR"] = "share/info"
+                        ctx.variables["CMAKE_INSTALL_LOCALEDIR"] = "share/locale"
+                        ctx.variables["CMAKE_INSTALL_MANDIR"] = "share/man"
+                        project_name = ctx.variables.get("PROJECT_NAME", "")
+                        ctx.variables["CMAKE_INSTALL_DOCDIR"] = (
+                            f"share/doc/{project_name}"
+                        )
                     elif module_name.endswith(".cmake") or "/" in module_name:
                         inc_file = Path(module_name)
                         if not inc_file.is_absolute():
@@ -1868,6 +1888,9 @@ int main() {{
                                 f"could not find package: {package_name}", cmd.line
                             )
                             raise SystemExit(1)
+
+            case "mark_as_advanced":
+                pass # stub
 
             case "message":
                 if args:
