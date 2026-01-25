@@ -585,6 +585,12 @@ def process_commands(
                     ctx.project_name = args[0]
                     ctx.variables["PROJECT_NAME"] = args[0]
                     ctx.variables["CMAKE_PROJECT_NAME"] = args[0]
+                    ctx.variables["CMAKE_C_FLAGS"] = (
+                        ""  # TODO: Only set when C is enabled
+                    )
+                    ctx.variables["CMAKE_CXX_FLAGS"] = (
+                        ""  # TODO: Only set when CXX is enabled
+                    )
                     ctx.variables["PROJECT_SOURCE_DIR"] = str(ctx.current_source_dir)
                     ctx.variables["PROJECT_BINARY_DIR"] = str(ctx.build_dir)
                     ctx.variables[f"{args[0]}_SOURCE_DIR"] = str(ctx.current_source_dir)
@@ -1854,9 +1860,14 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
 
         # Compile rules - include build type flags
         base_cflags = f"-fdiagnostics-color {build_type_flags}".strip()
+        c_flags = ctx.variables.get("CMAKE_C_FLAGS", "")
+        cxx_flags = ctx.variables.get("CMAKE_CXX_FLAGS", "")
+
         n.rule(
             "cc",
-            command=f"$cc -MMD -MF $out.d {base_cflags} $cflags -c $in -o $out",
+            command=f"$cc -MMD -MF $out.d {base_cflags} {c_flags} $cflags -c $in -o $out".replace(
+                "  ", " "
+            ).strip(),
             depfile="$out.d",
             description="CC $out",
         )
@@ -1864,7 +1875,9 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
 
         n.rule(
             "cxx",
-            command=f"$cxx -MMD -MF $out.d {base_cflags} $cflags -c $in -o $out",
+            command=f"$cxx -MMD -MF $out.d {base_cflags} {cxx_flags} $cflags -c $in -o $out".replace(
+                "  ", " "
+            ).strip(),
             depfile="$out.d",
             description="CXX $out",
         )
