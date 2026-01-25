@@ -113,6 +113,7 @@ class BuildContext:
 
     source_dir: Path
     build_dir: Path
+    current_source_dir: Path = field(init=False)
     project_name: str = ""
     variables: dict[str, str] = field(default_factory=dict)
     cache_variables: set[str] = field(default_factory=set)  # Variables from -D flags
@@ -140,6 +141,9 @@ class BuildContext:
         default_factory=dict
     )  # For PARENT_SCOPE in functions
 
+    def __post_init__(self) -> None:
+        self.current_source_dir = self.source_dir
+
     def get_library(self, name: str) -> Library | None:
         for lib in self.libraries:
             if lib.name == name:
@@ -151,6 +155,13 @@ class BuildContext:
             if exe.name == name:
                 return exe
         return None
+
+    def resolve_path(self, path: str) -> str:
+        """Resolve a path against current_source_dir and make it relative to source_dir."""
+        p = Path(path)
+        if not p.is_absolute():
+            p = self.current_source_dir / p
+        return make_relative(str(p), self.source_dir)
 
 
 def expand_variables(
@@ -556,10 +567,56 @@ def process_commands(
                     ctx.project_name = args[0]
                     ctx.variables["PROJECT_NAME"] = args[0]
                     ctx.variables["CMAKE_PROJECT_NAME"] = args[0]
-                    ctx.variables["PROJECT_SOURCE_DIR"] = str(ctx.source_dir)
+                    ctx.variables["PROJECT_SOURCE_DIR"] = str(ctx.current_source_dir)
                     ctx.variables["PROJECT_BINARY_DIR"] = str(ctx.build_dir)
-                    ctx.variables[f"{args[0]}_SOURCE_DIR"] = str(ctx.source_dir)
+                    ctx.variables[f"{args[0]}_SOURCE_DIR"] = str(ctx.current_source_dir)
                     ctx.variables[f"{args[0]}_BINARY_DIR"] = str(ctx.build_dir)
+
+            case "add_subdirectory":
+                if args:
+                    sub_dir_name = args[0]
+                    sub_source_dir = ctx.current_source_dir / sub_dir_name
+                    if not sub_source_dir.exists():
+                        # Try relative to the root source dir as well?
+                        # CMake usually expects it relative to current source dir.
+                        pass
+
+                    sub_cmakelists = sub_source_dir / "CMakeLists.txt"
+                    if sub_cmakelists.exists():
+                        from .parser import parse_file
+
+                        sub_commands = parse_file(sub_cmakelists)
+
+                        # Save current state
+                        saved_current_source_dir = ctx.current_source_dir
+                        saved_vars = ctx.variables.copy()
+                        ctx.parent_scope_vars = {}
+
+                        # Update current_source_dir for the subdirectory
+                        ctx.current_source_dir = sub_source_dir
+                        ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = str(sub_source_dir)
+                        # For now, CMAKE_CURRENT_BINARY_DIR is the same as CMAKE_BINARY_DIR
+                        # since we don't support separate binary dirs for subdirectories yet
+                        ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(ctx.build_dir)
+
+                        try:
+                            process_commands(sub_commands, ctx, trace, strict)
+                        finally:
+                            # Apply PARENT_SCOPE changes
+                            parent_scope_updates = ctx.parent_scope_vars
+
+                            # Restore state
+                            ctx.current_source_dir = saved_current_source_dir
+                            ctx.variables = saved_vars
+                            for var, val in parent_scope_updates.items():
+                                ctx.variables[var] = val
+                    elif strict:
+                        error_label = colored("error:", "red", attrs=["bold"])
+                        print(
+                            f'CMakeLists.txt:{cmd.line}: {error_label} add_subdirectory given source "{sub_dir_name}" which does not exist.',
+                            file=sys.stderr,
+                        )
+                        sys.exit(1)
 
             case "set":
                 if args:
@@ -913,7 +970,7 @@ int main() {{
                     if sources and sources[0] in ("STATIC", "SHARED", "OBJECT"):
                         lib_type = sources[0]
                         sources = sources[1:]
-                    sources = [make_relative(s, ctx.source_dir) for s in sources]
+                    sources = [ctx.resolve_path(s) for s in sources]
                     ctx.libraries.append(
                         Library(
                             name=name,
@@ -924,7 +981,7 @@ int main() {{
 
             case "add_executable":
                 if len(args) >= 2:
-                    sources = [make_relative(s, ctx.source_dir) for s in args[1:]]
+                    sources = [ctx.resolve_path(s) for s in args[1:]]
                     ctx.executables.append(Executable(name=args[0], sources=sources))
 
             case "target_link_libraries":
@@ -951,7 +1008,7 @@ int main() {{
                         for s in sources
                         if s not in ("PUBLIC", "PRIVATE", "INTERFACE")
                     ]
-                    sources = [make_relative(s, ctx.source_dir) for s in sources]
+                    sources = [ctx.resolve_path(s) for s in sources]
                     # Add sources to library or executable
                     lib = ctx.get_library(target_name)
                     if lib:
@@ -1018,7 +1075,7 @@ int main() {{
                                 arg, ctx.variables, strict, cmd.line
                             )
                             if not Path(expanded).is_absolute():
-                                expanded = str(ctx.source_dir / expanded)
+                                expanded = str(ctx.current_source_dir / expanded)
                             if visibility == "PUBLIC":
                                 public_dirs.append(expanded)
                                 target_dirs.append(expanded)
@@ -1091,7 +1148,7 @@ int main() {{
                                 matched = py_glob.glob(expanded_pattern)
                             else:
                                 matched = py_glob.glob(
-                                    str(ctx.source_dir / expanded_pattern)
+                                    str(ctx.current_source_dir / expanded_pattern)
                                 )
                             matched.sort()
                             matched_files.extend(matched)
@@ -1139,7 +1196,7 @@ int main() {{
                             # Make relative to build_dir or source_dir
                             rel = make_relative(arg, ctx.build_dir)
                             if rel == arg:
-                                rel = make_relative(arg, ctx.source_dir)
+                                rel = ctx.resolve_path(arg)
                             outputs.append(rel)
                         elif current_section == "COMMAND":
                             command_list[-1].append(arg)
@@ -1147,13 +1204,13 @@ int main() {{
                             # Make relative to build_dir or source_dir
                             rel = make_relative(arg, ctx.build_dir)
                             if rel == arg:
-                                rel = make_relative(arg, ctx.source_dir)
+                                rel = ctx.resolve_path(arg)
                             depends.append(rel)
                         elif current_section == "MAIN_DEPENDENCY":
                             # Make relative to build_dir or source_dir
                             rel = make_relative(arg, ctx.build_dir)
                             if rel == arg:
-                                rel = make_relative(arg, ctx.source_dir)
+                                rel = ctx.resolve_path(arg)
                             main_dependency = rel
                         elif current_section == "WORKING_DIRECTORY":
                             working_directory = arg
@@ -1212,7 +1269,9 @@ int main() {{
                             filename, ctx.variables, strict, cmd.line
                         )
                         if not Path(expanded_filename).is_absolute():
-                            expanded_filename = str(ctx.source_dir / expanded_filename)
+                            expanded_filename = str(
+                                ctx.current_source_dir / expanded_filename
+                            )
 
                         if expanded_filename not in ctx.source_file_properties:
                             ctx.source_file_properties[expanded_filename] = (
@@ -1239,13 +1298,13 @@ int main() {{
                                 if prop_name == "OBJECT_DEPENDS":
                                     for v in expanded_values:
                                         if not Path(v).is_absolute():
-                                            v = str(ctx.source_dir / v)
+                                            v = str(ctx.current_source_dir / v)
                                         v = make_relative(v, ctx.source_dir)
                                         file_props.object_depends.append(v)
                                 elif prop_name == "INCLUDE_DIRECTORIES":
                                     for v in expanded_values:
                                         if not Path(v).is_absolute():
-                                            v = str(ctx.source_dir / v)
+                                            v = str(ctx.current_source_dir / v)
                                         v = make_relative(v, ctx.source_dir)
                                         file_props.include_directories.append(v)
                                 elif prop_name == "COMPILE_DEFINITIONS":
@@ -2088,6 +2147,8 @@ def configure(
     # Set up standard CMake variables
     ctx.variables["CMAKE_SOURCE_DIR"] = str(ctx.source_dir)
     ctx.variables["CMAKE_BINARY_DIR"] = str(ctx.build_dir)
+    ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = str(ctx.source_dir)
+    ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(ctx.build_dir)
 
     process_commands(commands, ctx, trace, strict)
 
