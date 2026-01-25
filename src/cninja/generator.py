@@ -1,6 +1,7 @@
 """Ninja build file generator."""
 
 import hashlib
+import os
 import platform
 import re
 import shlex
@@ -248,7 +249,29 @@ def is_truthy(value: str) -> bool:
     upper = value.upper()
     if upper in false_values or upper.endswith("-NOTFOUND"):
         return False
+    # Numbers other than 0 are true
+    try:
+        return float(value) != 0
+    except ValueError:
+        pass
+    # These are explicitly true
+    if upper in ("1", "ON", "YES", "TRUE", "Y"):
+        return True
+    # For anything else, it's true if it's not a false constant
+    # (This is used for variable values)
     return True
+
+
+def is_constant_truthy(value: str) -> bool:
+    """Check if a literal constant is truthy."""
+    upper = value.upper()
+    if upper in ("1", "ON", "YES", "TRUE", "Y"):
+        return True
+    try:
+        return float(value) != 0
+    except ValueError:
+        pass
+    return False
 
 
 def compile_feature_to_flag(feature: str) -> str | None:
@@ -270,76 +293,129 @@ def evaluate_condition(args: list[str], variables: dict[str, str]) -> bool:
     if not args:
         return False
 
-    # Handle NOT
-    if args[0] == "NOT":
-        return not evaluate_condition(args[1:], variables)
+    i = 0
 
-    # Handle DEFINED
-    if args[0] == "DEFINED" and len(args) >= 2:
-        return args[1] in variables
+    def parse_or() -> bool:
+        nonlocal i
+        left = parse_and()
+        while i < len(args) and args[i] == "OR":
+            i += 1
+            right = parse_and()
+            left = left or right
+        return left
 
-    # Helper to get value (expand variable if it exists)
-    def get_value(s: str) -> str:
-        return variables.get(s, s)
+    def parse_and() -> bool:
+        nonlocal i
+        left = parse_not()
+        while i < len(args) and args[i] == "AND":
+            i += 1
+            right = parse_not()
+            left = left and right
+        return left
 
-    # Handle binary operators
-    if len(args) >= 3:
-        left = args[0]
-        op = args[1]
-        right = args[2]
+    def parse_not() -> bool:
+        nonlocal i
+        if i < len(args) and args[i] == "NOT":
+            i += 1
+            return not parse_not()
+        return parse_atom()
 
-        # Handle AND/OR with remaining args
-        if op == "AND":
-            return evaluate_condition([left], variables) and evaluate_condition(
-                args[2:], variables
-            )
-        if op == "OR":
-            return evaluate_condition([left], variables) or evaluate_condition(
-                args[2:], variables
-            )
+    def parse_atom() -> bool:
+        nonlocal i
+        if i >= len(args):
+            return False
 
-        # For comparisons, expand variables
-        left_val = get_value(left)
-        right_val = get_value(right)
+        if args[i] == "(":
+            i += 1
+            res = parse_or()
+            if i < len(args) and args[i] == ")":
+                i += 1
+            return res
 
-        # String comparisons
-        if op == "STREQUAL":
-            return left_val == right_val
-        if op == "STRLESS":
-            return left_val < right_val
-        if op == "STRGREATER":
-            return left_val > right_val
-        if op == "MATCHES":
-            return bool(re.search(right_val, left_val))
+        # Handle other unary operators
+        if args[i] in ("DEFINED", "EXISTS", "COMMAND"):
+            op = args[i]
+            i += 1
+            if i < len(args):
+                val = args[i]
+                i += 1
+                if op == "DEFINED":
+                    return val in variables
+                if op == "EXISTS":
+                    return Path(val).exists()
+                if op == "COMMAND":
+                    # For now, just return False as we don't track all commands yet
+                    return False
+            return False
 
-        # Numeric comparisons
-        if op == "EQUAL":
-            try:
-                return int(left_val) == int(right_val)
-            except ValueError:
-                return False
-        if op == "LESS":
-            try:
-                return int(left_val) < int(right_val)
-            except ValueError:
-                return False
-        if op == "GREATER":
-            try:
-                return int(left_val) > int(right_val)
-            except ValueError:
-                return False
+        # Handle binary operators/comparisons
+        left = args[i]
+        i += 1
+        if i < len(args) and args[i] in (
+            "STREQUAL",
+            "STRLESS",
+            "STRGREATER",
+            "EQUAL",
+            "LESS",
+            "GREATER",
+            "MATCHES",
+            "VERSION_EQUAL",
+            "VERSION_LESS",
+            "VERSION_GREATER",
+        ):
+            op = args[i]
+            i += 1
+            if i < len(args):
+                right = args[i]
+                i += 1
 
-    # Single value - check if variable is defined and truthy
-    if len(args) == 1:
-        var_name = args[0]
-        # In CMake, if(VAR) checks if VAR is defined and truthy
-        # Undefined variables evaluate to false
-        if var_name in variables:
-            return is_truthy(variables[var_name])
-        # If not a defined variable, treat as false (undefined = false in CMake)
-        return False
+                left_val = variables.get(left, left)
+                right_val = variables.get(right, right)
 
-    return False
+                if op == "STREQUAL":
+                    return left_val == right_val
+                if op == "STRLESS":
+                    return left_val < right_val
+                if op == "STRGREATER":
+                    return left_val > right_val
+                if op == "MATCHES":
+                    return bool(re.search(right_val, left_val))
+                if op in ("EQUAL", "LESS", "GREATER"):
+                    try:
+                        l_num = int(left_val)
+                        r_num = int(right_val)
+                        if op == "EQUAL":
+                            return l_num == r_num
+                        if op == "LESS":
+                            return l_num < r_num
+                        if op == "GREATER":
+                            return l_num > r_num
+                    except ValueError:
+                        return False
+                if op.startswith("VERSION_"):
+                    # Simple version comparison by splitting on dots
+                    def ver_to_tuple(v: str) -> tuple[int, ...]:
+                        try:
+                            return tuple(int(x) for x in re.split(r"[^0-9]", v) if x)
+                        except ValueError:
+                            return (0,)
+
+                    l_ver = ver_to_tuple(left_val)
+                    r_ver = ver_to_tuple(right_val)
+                    if op == "VERSION_EQUAL":
+                        return l_ver == r_ver
+                    if op == "VERSION_LESS":
+                        return l_ver < r_ver
+                    if op == "VERSION_GREATER":
+                        return l_ver > r_ver
+            return False
+
+        # Single value
+        if left in variables:
+            return is_truthy(variables[left])
+        return is_constant_truthy(left)
+
+    return parse_or()
 
 
 def find_matching_endif(commands: list[Command], start: int, ctx: BuildContext) -> int:
@@ -1241,6 +1317,48 @@ int main() {{
                                     f"set_target_properties: property '{prop_name}' not yet supported",
                                     cmd.line,
                                 )
+
+            case "get_filename_component":
+                if len(args) >= 3:
+                    var_name = args[0]
+                    filename = args[1]
+                    mode = args[2]
+
+                    # Optional BASE_DIR
+                    base_dir = str(ctx.current_source_dir)
+                    if "BASE_DIR" in args:
+                        try:
+                            idx = args.index("BASE_DIR")
+                            if idx + 1 < len(args):
+                                base_dir = args[idx + 1]
+                        except ValueError:
+                            pass
+
+                    result = ""
+                    if mode in ("DIRECTORY", "PATH"):
+                        result = os.path.dirname(filename)
+                    elif mode == "NAME":
+                        result = os.path.basename(filename)
+                    elif mode == "EXT":
+                        _, ext = os.path.splitext(filename)
+                        result = ext
+                    elif mode == "NAME_WE":
+                        basename = os.path.basename(filename)
+                        name_we, _ = os.path.splitext(basename)
+                        result = name_we
+                    elif mode in ("ABSOLUTE", "REALPATH"):
+                        p = Path(filename)
+                        if not p.is_absolute():
+                            p = Path(base_dir) / p
+                        if mode == "REALPATH":
+                            result = str(p.resolve())
+                        else:
+                            # ABSOLUTE in CMake just expands to full path without necessarily resolving symlinks,
+                            # but resolve() is safer and usually what people want.
+                            # Actually, resolve() resolves symlinks. absolute() doesn't.
+                            result = str(p.absolute())
+
+                    ctx.variables[var_name] = result
 
             case "target_link_libraries":
                 if len(args) >= 2:

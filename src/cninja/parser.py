@@ -116,11 +116,20 @@ def parse(content: str, filename: str = "CMakeLists.txt") -> list[Command]:
             )
         i += 1
 
-        # Collect arguments until closing paren
+        # Collect arguments until the matching closing paren
         args: list[str] = []
         is_quoted: list[bool] = []
-        while i < len(tokens) and tokens[i][0] != ")":
-            arg = tokens[i][0]
+        depth = 1
+        while i < len(tokens):
+            token, token_line = tokens[i]
+            if token == "(":
+                depth += 1
+            elif token == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+
+            arg = token
             quoted = False
             # Strip quotes from quoted strings
             if arg.startswith('"') and arg.endswith('"'):
@@ -130,7 +139,7 @@ def parse(content: str, filename: str = "CMakeLists.txt") -> list[Command]:
             is_quoted.append(quoted)
             i += 1
 
-        if i >= len(tokens):
+        if i >= len(tokens) or tokens[i][0] != ")":
             raise SyntaxError(
                 f"Expected ')' for command '{name}'",
                 (filename, line, 0, lines[line - 1] if line <= len(lines) else ""),
