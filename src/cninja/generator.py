@@ -1,11 +1,15 @@
 """Ninja build file generator."""
 
+import hashlib
 import platform
 import re
 import shlex
 import shutil
 import subprocess
 import sys
+import tarfile
+import urllib.request
+import zipfile
 import glob as py_glob
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -108,6 +112,14 @@ class CustomCommand:
 
 
 @dataclass
+class FetchContentInfo:
+    """Information for FetchContent_Declare."""
+
+    name: str
+    args: list[str]
+
+
+@dataclass
 class BuildContext:
     """Context for processing CMake commands."""
 
@@ -140,6 +152,9 @@ class BuildContext:
     parent_scope_vars: dict[str, str] = field(
         default_factory=dict
     )  # For PARENT_SCOPE in functions
+    fetched_content: dict[str, FetchContentInfo] = field(
+        default_factory=dict
+    )  # For FetchContent
 
     def __post_init__(self) -> None:
         self.current_source_dir = self.source_dir
@@ -618,6 +633,136 @@ def process_commands(
                         )
                         sys.exit(1)
 
+            case "fetchcontent_declare":
+                if len(args) >= 2:
+                    name = args[0]
+                    ctx.fetched_content[name.lower()] = FetchContentInfo(
+                        name=name, args=args[1:]
+                    )
+
+            case "fetchcontent_makeavailable":
+                for name in args:
+                    info = ctx.fetched_content.get(name.lower())
+                    if not info:
+                        if strict:
+                            error_label = colored("error:", "red", attrs=["bold"])
+                            print(
+                                f"CMakeLists.txt:{cmd.line}: {error_label} FetchContent_MakeAvailable called for undeclared content: {name}",
+                                file=sys.stderr,
+                            )
+                            sys.exit(1)
+                        continue
+
+                    # Process declaration arguments
+                    url = None
+                    url_hash = None
+
+                    arg_idx = 0
+                    while arg_idx < len(info.args):
+                        if info.args[arg_idx] == "URL" and arg_idx + 1 < len(info.args):
+                            url = info.args[arg_idx + 1]
+                            arg_idx += 2
+                        elif info.args[arg_idx] == "URL_HASH" and arg_idx + 1 < len(
+                            info.args
+                        ):
+                            url_hash = info.args[arg_idx + 1]
+                            arg_idx += 2
+                        else:
+                            arg_idx += 1
+
+                    if url:
+                        # Download and extract
+                        deps_dir = ctx.build_dir / "_deps"
+                        deps_dir.mkdir(parents=True, exist_ok=True)
+
+                        src_dir = deps_dir / f"{name.lower()}-src"
+
+                        if not src_dir.exists():
+                            # Download
+                            print(f"Downloading {name} from {url}...")
+                            download_file = deps_dir / Path(url).name
+
+                            urllib.request.urlretrieve(url, download_file)
+
+                            # Verify hash
+                            if url_hash:
+                                algo, expected = url_hash.split("=")
+                                h = hashlib.new(algo.lower())
+                                h.update(download_file.read_bytes())
+                                actual = h.hexdigest()
+                                if actual.lower() != expected.lower():
+                                    raise RuntimeError(
+                                        f"Hash mismatch for {url}: expected {expected}, got {actual}"
+                                    )
+
+                            # Extract
+                            src_dir.mkdir(parents=True, exist_ok=True)
+                            if url.endswith(".zip"):
+                                with zipfile.ZipFile(download_file, "r") as zip_ref:
+                                    zip_ref.extractall(src_dir)
+                            elif url.endswith(
+                                (".tar.gz", ".tgz", ".tar.xz", ".tar.bz2")
+                            ):
+                                with tarfile.open(download_file, "r:*") as tar_ref:
+                                    tar_ref.extractall(src_dir)
+
+                        # Set variables
+                        ctx.variables[f"{name.lower()}_SOURCE_DIR"] = str(src_dir)
+                        ctx.variables[f"{name.lower()}_BINARY_DIR"] = str(
+                            ctx.build_dir / "_deps" / f"{name.lower()}-build"
+                        )
+                        ctx.variables[f"{name.lower()}_POPULATED"] = "TRUE"
+
+                        # Resolve the actual source dir (some archives have a top-level folder)
+                        actual_src_dir = src_dir
+                        contents = [
+                            p for p in src_dir.iterdir() if not p.name.startswith(".")
+                        ]
+                        if len(contents) == 1 and contents[0].is_dir():
+                            actual_src_dir = contents[0]
+
+                        # Set variables
+                        ctx.variables[f"{name.lower()}_SOURCE_DIR"] = str(
+                            actual_src_dir
+                        )
+                        ctx.variables[f"{name.lower()}_BINARY_DIR"] = str(
+                            ctx.build_dir / "_deps" / f"{name.lower()}-build"
+                        )
+                        ctx.variables[f"{name.lower()}_POPULATED"] = "TRUE"
+
+                        sub_cmakelists = actual_src_dir / "CMakeLists.txt"
+
+                        if sub_cmakelists.exists():
+                            from .parser import parse_file
+
+                            sub_commands = parse_file(sub_cmakelists)
+
+                            # Save current state
+                            saved_current_source_dir = ctx.current_source_dir
+                            saved_vars = ctx.variables.copy()
+                            ctx.parent_scope_vars = {}
+
+                            # Update current_source_dir for the subdirectory
+                            ctx.current_source_dir = actual_src_dir
+                            ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = str(
+                                actual_src_dir
+                            )
+                            ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(
+                                ctx.build_dir
+                            )
+
+                            try:
+                                process_commands(sub_commands, ctx, trace, strict)
+                            finally:
+                                # Apply PARENT_SCOPE changes
+                                parent_scope_updates = ctx.parent_scope_vars
+
+                                # Restore state
+                                ctx.current_source_dir = saved_current_source_dir
+                                ctx.variables = saved_vars
+                                for var, val in parent_scope_updates.items():
+                                    ctx.variables[var] = val
+
             case "set":
                 if args:
                     var_name = args[0]
@@ -733,6 +878,7 @@ def process_commands(
                         "CheckCXXCompilerFlag",
                         "CheckCCompilerFlag",
                         "CheckCXXSymbolExists",
+                        "FetchContent",
                     }
                     if module_name == "CTest":
                         # CTest sets BUILD_TESTING to ON by default
