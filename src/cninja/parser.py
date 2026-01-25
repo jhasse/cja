@@ -34,6 +34,29 @@ def tokenize(content: str) -> list[tuple[str, int]]:
 
         # Skip comments
         if content[i] == "#":
+            i += 1
+            # Check for bracket comment: #[[...]] or #[==[...]==]
+            if i < len(content) and content[i] == "[":
+                bracket_start = i
+                i += 1
+                while i < len(content) and content[i] == "=":
+                    i += 1
+                if i < len(content) and content[i] == "[":
+                    # It is a bracket comment
+                    num_equals = i - bracket_start - 1
+                    i += 1
+                    closing = "]" + "=" * num_equals + "]"
+                    closing_idx = content.find(closing, i)
+                    if closing_idx != -1:
+                        comment_content = content[i:closing_idx]
+                        line += comment_content.count("\n")
+                        i = closing_idx + len(closing)
+                    else:
+                        # Unterminated bracket comment
+                        i = len(content)
+                    continue
+
+            # Regular line comment
             while i < len(content) and content[i] != "\n":
                 i += 1
             continue
