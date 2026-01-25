@@ -1,6 +1,5 @@
 """Tests for add_subdirectory command."""
 
-import pytest
 from pathlib import Path
 from cninja.generator import BuildContext, process_commands
 from cninja.parser import Command
@@ -65,7 +64,7 @@ def test_add_subdirectory_ninja(tmp_path: Path) -> None:
 
     from cninja.generator import configure
 
-    ctx = configure(source_dir, "build")
+    configure(source_dir, "build")
 
     ninja_file = source_dir / "build.ninja"
     assert ninja_file.exists()

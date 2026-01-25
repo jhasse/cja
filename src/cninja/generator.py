@@ -893,6 +893,31 @@ def process_commands(
                         # CTest sets BUILD_TESTING to ON by default
                         if "BUILD_TESTING" not in ctx.variables:
                             ctx.variables["BUILD_TESTING"] = "ON"
+                    elif module_name.endswith(".cmake") or "/" in module_name:
+                        inc_file = Path(module_name)
+                        if not inc_file.is_absolute():
+                            inc_file = ctx.current_source_dir / inc_file
+
+                        if inc_file.exists():
+                            from .parser import parse_file
+
+                            inc_commands = parse_file(inc_file)
+                            saved_list_file = ctx.current_list_file
+                            ctx.current_list_file = inc_file
+                            ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(inc_file)
+                            try:
+                                process_commands(inc_commands, ctx, trace, strict)
+                            finally:
+                                ctx.current_list_file = saved_list_file
+                                ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(
+                                    saved_list_file
+                                )
+                        elif strict:
+                            ctx.print_error(
+                                f"include() could not find file: {module_name}",
+                                cmd.line,
+                            )
+                            sys.exit(1)
                     elif module_name not in known_modules:
                         if strict:
                             ctx.print_error(f"unknown module: {module_name}", cmd.line)
@@ -1644,7 +1669,7 @@ int main() {{
 
             case "enable_testing":
                 assert len(args) == 0
-                pass # stub
+                pass  # stub
 
             case "execute_process":
                 # Parse execute_process arguments

@@ -2,8 +2,6 @@
 
 import pytest
 from pathlib import Path
-from cninja.generator import BuildContext, process_commands
-from cninja.parser import Command
 
 
 def test_cmake_current_list_file(tmp_path: Path) -> None:
