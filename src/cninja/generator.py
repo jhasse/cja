@@ -17,10 +17,10 @@ from pathlib import Path
 
 from rich.progress import (
     Progress,
-    TextColumn,
-    BarColumn,
     DownloadColumn,
     TransferSpeedColumn,
+    BarColumn,
+    TextColumn,
     TimeRemainingColumn,
 )
 from termcolor import colored
@@ -717,6 +717,9 @@ def process_commands(
                         ctx.current_list_file = sub_cmakelists
                         ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = str(sub_source_dir)
                         ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(sub_cmakelists)
+                        ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
+                            sub_cmakelists.parent
+                        )
                         # For now, CMAKE_CURRENT_BINARY_DIR is the same as CMAKE_BINARY_DIR
                         # since we don't support separate binary dirs for subdirectories yet
                         ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(ctx.build_dir)
@@ -878,6 +881,9 @@ def process_commands(
                             ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(
                                 sub_cmakelists
                             )
+                            ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
+                                sub_cmakelists.parent
+                            )
                             ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(
                                 ctx.build_dir
                             )
@@ -1027,12 +1033,18 @@ def process_commands(
                             saved_list_file = ctx.current_list_file
                             ctx.current_list_file = inc_file
                             ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(inc_file)
+                            ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
+                                inc_file.parent
+                            )
                             try:
                                 process_commands(inc_commands, ctx, trace, strict)
                             finally:
                                 ctx.current_list_file = saved_list_file
                                 ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(
                                     saved_list_file
+                                )
+                                ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
+                                    saved_list_file.parent
                                 )
                         elif strict:
                             ctx.print_error(
@@ -1679,11 +1691,9 @@ int main() {{
                                         expanded_values
                                     )
                             else:
-                                warning_label = colored(
-                                    "warning:", "magenta", attrs=["bold"]
-                                )
-                                print(
-                                    f"CMakeLists.txt:{cmd.line}: {warning_label} property '{prop_name}' has no value",
+                                ctx.print_warning(
+                                    f"property '{prop_name}' has no value",
+                                    cmd.line,
                                 )
 
             case "find_program":
@@ -2512,6 +2522,7 @@ def configure(
     ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = str(ctx.source_dir)
     ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(ctx.build_dir)
     ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(ctx.current_list_file)
+    ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(ctx.current_list_file.parent)
 
     if platform.system() == "Darwin":
         ctx.variables["CMAKE_SYSTEM_NAME"] = "Darwin"
