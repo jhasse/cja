@@ -126,6 +126,7 @@ class BuildContext:
     source_dir: Path
     build_dir: Path
     current_source_dir: Path = field(init=False)
+    current_list_file: Path = field(init=False)
     project_name: str = ""
     variables: dict[str, str] = field(default_factory=dict)
     cache_variables: set[str] = field(default_factory=set)  # Variables from -D flags
@@ -158,6 +159,7 @@ class BuildContext:
 
     def __post_init__(self) -> None:
         self.current_source_dir = self.source_dir
+        self.current_list_file = self.source_dir / "CMakeLists.txt"
 
     def get_library(self, name: str) -> Library | None:
         for lib in self.libraries:
@@ -181,13 +183,15 @@ class BuildContext:
     def print_warning(self, message: str, line: int = 0) -> None:
         """Print a warning message."""
         warning_label = colored("warning:", "magenta", attrs=["bold"])
-        location = f"CMakeLists.txt:{line}: " if line > 0 else ""
+        rel_file = make_relative(str(self.current_list_file), self.source_dir)
+        location = f"{rel_file}:{line}: " if line > 0 else ""
         print(f"{location}{warning_label} {message}", file=sys.stderr)
 
     def print_error(self, message: str, line: int = 0) -> None:
         """Print an error message."""
         error_label = colored("error:", "red", attrs=["bold"])
-        location = f"CMakeLists.txt:{line}: " if line > 0 else ""
+        rel_file = make_relative(str(self.current_list_file), self.source_dir)
+        location = f"{rel_file}:{line}: " if line > 0 else ""
         print(f"{location}{error_label} {message}", file=sys.stderr)
 
     def expand_variables(self, value: str, strict: bool = False, line: int = 0) -> str:
@@ -603,12 +607,15 @@ def process_commands(
 
                         # Save current state
                         saved_current_source_dir = ctx.current_source_dir
+                        saved_current_list_file = ctx.current_list_file
                         saved_vars = ctx.variables.copy()
                         ctx.parent_scope_vars = {}
 
                         # Update current_source_dir for the subdirectory
                         ctx.current_source_dir = sub_source_dir
+                        ctx.current_list_file = sub_cmakelists
                         ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = str(sub_source_dir)
+                        ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(sub_cmakelists)
                         # For now, CMAKE_CURRENT_BINARY_DIR is the same as CMAKE_BINARY_DIR
                         # since we don't support separate binary dirs for subdirectories yet
                         ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(ctx.build_dir)
@@ -621,6 +628,7 @@ def process_commands(
 
                             # Restore state
                             ctx.current_source_dir = saved_current_source_dir
+                            ctx.current_list_file = saved_current_list_file
                             ctx.variables = saved_vars
                             for var, val in parent_scope_updates.items():
                                 ctx.variables[var] = val
@@ -728,7 +736,6 @@ def process_commands(
                         ctx.variables[f"{name.lower()}_POPULATED"] = "TRUE"
 
                         sub_cmakelists = actual_src_dir / "CMakeLists.txt"
-
                         if sub_cmakelists.exists():
                             from .parser import parse_file
 
@@ -736,13 +743,18 @@ def process_commands(
 
                             # Save current state
                             saved_current_source_dir = ctx.current_source_dir
+                            saved_current_list_file = ctx.current_list_file
                             saved_vars = ctx.variables.copy()
                             ctx.parent_scope_vars = {}
 
                             # Update current_source_dir for the subdirectory
                             ctx.current_source_dir = actual_src_dir
+                            ctx.current_list_file = sub_cmakelists
                             ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = str(
                                 actual_src_dir
+                            )
+                            ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(
+                                sub_cmakelists
                             )
                             ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(
                                 ctx.build_dir
@@ -756,7 +768,9 @@ def process_commands(
 
                                 # Restore state
                                 ctx.current_source_dir = saved_current_source_dir
+                                ctx.current_list_file = saved_current_list_file
                                 ctx.variables = saved_vars
+
                                 for var, val in parent_scope_updates.items():
                                     ctx.variables[var] = val
 
@@ -2261,6 +2275,7 @@ def configure(
     ctx.variables["CMAKE_BINARY_DIR"] = str(ctx.build_dir)
     ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = str(ctx.source_dir)
     ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(ctx.build_dir)
+    ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(ctx.current_list_file)
 
     process_commands(commands, ctx, trace, strict)
 
