@@ -1642,6 +1642,10 @@ int main() {{
                     else:
                         print(message)
 
+            case "enable_testing":
+                assert len(args) == 0
+                pass # stub
+
             case "execute_process":
                 # Parse execute_process arguments
                 commands_list: list[list[str]] = []
@@ -2276,6 +2280,11 @@ def configure(
     ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = str(ctx.source_dir)
     ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(ctx.build_dir)
     ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(ctx.current_list_file)
+
+    if platform.system() == "Darwin":
+        ctx.variables["CMAKE_SYSTEM_NAME"] = "Darwin"
+    else:
+        ctx.variables["CMAKE_SYSTEM_NAME"] = "Linux"
 
     process_commands(commands, ctx, trace, strict)
 
