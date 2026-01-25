@@ -179,6 +179,20 @@ class BuildContext:
         return make_relative(str(p), self.source_dir)
 
 
+def print_warning(message: str, line: int = 0) -> None:
+    """Print a warning message."""
+    warning_label = colored("warning:", "magenta", attrs=["bold"])
+    location = f"CMakeLists.txt:{line}: " if line > 0 else ""
+    print(f"{location}{warning_label} {message}", file=sys.stderr)
+
+
+def print_error(message: str, line: int = 0) -> None:
+    """Print an error message."""
+    error_label = colored("error:", "red", attrs=["bold"])
+    location = f"CMakeLists.txt:{line}: " if line > 0 else ""
+    print(f"{location}{error_label} {message}", file=sys.stderr)
+
+
 def expand_variables(
     value: str, variables: dict[str, str], strict: bool = False, line: int = 0
 ) -> str:
@@ -187,18 +201,9 @@ def expand_variables(
     def replace(match: re.Match[str]) -> str:
         var_name = match.group(1)
         if var_name not in variables:
-            warning_label = colored("warning:", "magenta", attrs=["bold"])
-            location = f"CMakeLists.txt:{line}: " if line > 0 else ""
-            print(
-                f"{location}{warning_label} undefined variable referenced: {var_name}",
-                file=sys.stderr,
-            )
+            level = print_error if strict else print_warning
+            level(f"undefined variable referenced: {var_name}", line)
             if strict:
-                error_label = colored("error:", "red", attrs=["bold"])
-                print(
-                    f"{location}{error_label} undefined variable in strict mode: {var_name}",
-                    file=sys.stderr,
-                )
                 sys.exit(1)
             return ""
         return variables.get(var_name, "")
@@ -626,10 +631,9 @@ def process_commands(
                             for var, val in parent_scope_updates.items():
                                 ctx.variables[var] = val
                     elif strict:
-                        error_label = colored("error:", "red", attrs=["bold"])
-                        print(
-                            f'CMakeLists.txt:{cmd.line}: {error_label} add_subdirectory given source "{sub_dir_name}" which does not exist.',
-                            file=sys.stderr,
+                        print_error(
+                            f'add_subdirectory given source "{sub_dir_name}" which does not exist.',
+                            cmd.line,
                         )
                         sys.exit(1)
 
@@ -645,10 +649,9 @@ def process_commands(
                     info = ctx.fetched_content.get(name.lower())
                     if not info:
                         if strict:
-                            error_label = colored("error:", "red", attrs=["bold"])
-                            print(
-                                f"CMakeLists.txt:{cmd.line}: {error_label} FetchContent_MakeAvailable called for undeclared content: {name}",
-                                file=sys.stderr,
+                            print_error(
+                                f"FetchContent_MakeAvailable called for undeclared content: {name}",
+                                cmd.line,
                             )
                             sys.exit(1)
                         continue
@@ -862,11 +865,7 @@ def process_commands(
                             ctx.variables[var_name] = str(int(result))
                     except Exception as e:
                         if strict:
-                            error_label = colored("error:", "red", attrs=["bold"])
-                            print(
-                                f"CMakeLists.txt:{cmd.line}: {error_label} math(EXPR) evaluation error: {e}",
-                                file=sys.stderr,
-                            )
+                            print_error(f"math(EXPR) evaluation error: {e}", cmd.line)
                             sys.exit(1)
 
             case "include":
@@ -886,11 +885,7 @@ def process_commands(
                             ctx.variables["BUILD_TESTING"] = "ON"
                     elif module_name not in known_modules:
                         if strict:
-                            error_label = colored("error:", "red", attrs=["bold"])
-                            print(
-                                f"CMakeLists.txt:{cmd.line}: {error_label} unknown module: {module_name}",
-                                file=sys.stderr,
-                            )
+                            print_error(f"unknown module: {module_name}", cmd.line)
                             sys.exit(1)
 
             case "check_ipo_supported":
@@ -1635,24 +1630,12 @@ int main() {{
                     message = " ".join(message_parts)
 
                     if mode == "FATAL_ERROR":
-                        error_label = colored("error:", "red", attrs=["bold"])
-                        print(
-                            f"CMakeLists.txt:{cmd.line}: {error_label} {message}",
-                            file=sys.stderr,
-                        )
+                        print_error(message, cmd.line)
                         raise SystemExit(1)
                     elif mode == "SEND_ERROR":
-                        error_label = colored("error:", "red", attrs=["bold"])
-                        print(
-                            f"CMakeLists.txt:{cmd.line}: {error_label} {message}",
-                            file=sys.stderr,
-                        )
+                        print_error(message, cmd.line)
                     elif mode in ("WARNING", "AUTHOR_WARNING", "DEPRECATION"):
-                        warning_label = colored("warning:", "magenta", attrs=["bold"])
-                        print(
-                            f"CMakeLists.txt:{cmd.line}: {warning_label} {message}",
-                            file=sys.stderr,
-                        )
+                        print_warning(message, cmd.line)
                     elif mode == "STATUS":
                         print(f"{message}")
                     else:
@@ -1797,11 +1780,7 @@ int main() {{
                     # Restore variables
                     ctx.variables = saved_vars
                 elif strict:
-                    error_label = colored("error:", "red", attrs=["bold"])
-                    print(
-                        f"CMakeLists.txt:{cmd.line}: {error_label} unsupported command: {cmd.name}()",
-                        file=sys.stderr,
-                    )
+                    print_error(f"unsupported command: {cmd.name}()", cmd.line)
                     sys.exit(1)
                 # Ignore unknown commands by default
 

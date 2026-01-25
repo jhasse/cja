@@ -38,6 +38,5 @@ def test_undefined_variable_strict_mode(capsys) -> None:
 
     captured = capsys.readouterr()
     assert "CMakeLists.txt:1:" in captured.err
-    assert "warning:" in captured.err
     assert "error:" in captured.err
-    assert "undefined variable in strict mode: UNDEFINED_VAR" in captured.err
+    assert "undefined variable referenced: UNDEFINED_VAR" in captured.err
