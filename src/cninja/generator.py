@@ -14,6 +14,14 @@ import glob as py_glob
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from rich.progress import (
+    Progress,
+    TextColumn,
+    BarColumn,
+    DownloadColumn,
+    TransferSpeedColumn,
+    TimeRemainingColumn,
+)
 from termcolor import colored
 
 from .ninja_syntax import Writer
@@ -690,10 +698,31 @@ def process_commands(
 
                         if not src_dir.exists():
                             # Download
-                            print(f"Downloading {name} from {url}...")
+                            print(f"Downloading {name} from {url}")
                             download_file = deps_dir / Path(url).name
 
-                            urllib.request.urlretrieve(url, download_file)
+                            with Progress(
+                                TextColumn("[bold blue]{task.description}"),
+                                BarColumn(),
+                                DownloadColumn(),
+                                TransferSpeedColumn(),
+                                "•",
+                                TimeRemainingColumn(),
+                            ) as progress:
+                                task_id = progress.add_task(description="", total=None)
+
+                                with urllib.request.urlopen(url) as response:
+                                    total_size = response.info().get("Content-Length")
+                                    if total_size:
+                                        progress.update(task_id, total=int(total_size))
+
+                                    with open(download_file, "wb") as f:
+                                        while True:
+                                            chunk = response.read(16384)
+                                            if not chunk:
+                                                break
+                                            f.write(chunk)
+                                            progress.update(task_id, advance=len(chunk))
 
                             # Verify hash
                             if url_hash:
