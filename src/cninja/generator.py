@@ -178,37 +178,32 @@ class BuildContext:
             p = self.current_source_dir / p
         return make_relative(str(p), self.source_dir)
 
+    def print_warning(self, message: str, line: int = 0) -> None:
+        """Print a warning message."""
+        warning_label = colored("warning:", "magenta", attrs=["bold"])
+        location = f"CMakeLists.txt:{line}: " if line > 0 else ""
+        print(f"{location}{warning_label} {message}", file=sys.stderr)
 
-def print_warning(message: str, line: int = 0) -> None:
-    """Print a warning message."""
-    warning_label = colored("warning:", "magenta", attrs=["bold"])
-    location = f"CMakeLists.txt:{line}: " if line > 0 else ""
-    print(f"{location}{warning_label} {message}", file=sys.stderr)
+    def print_error(self, message: str, line: int = 0) -> None:
+        """Print an error message."""
+        error_label = colored("error:", "red", attrs=["bold"])
+        location = f"CMakeLists.txt:{line}: " if line > 0 else ""
+        print(f"{location}{error_label} {message}", file=sys.stderr)
 
+    def expand_variables(self, value: str, strict: bool = False, line: int = 0) -> str:
+        """Expand ${VAR} references in a string."""
 
-def print_error(message: str, line: int = 0) -> None:
-    """Print an error message."""
-    error_label = colored("error:", "red", attrs=["bold"])
-    location = f"CMakeLists.txt:{line}: " if line > 0 else ""
-    print(f"{location}{error_label} {message}", file=sys.stderr)
+        def replace(match: re.Match[str]) -> str:
+            var_name = match.group(1)
+            if var_name not in self.variables:
+                level = self.print_error if strict else self.print_warning
+                level(f"undefined variable referenced: {var_name}", line)
+                if strict:
+                    sys.exit(1)
+                return ""
+            return self.variables.get(var_name, "")
 
-
-def expand_variables(
-    value: str, variables: dict[str, str], strict: bool = False, line: int = 0
-) -> str:
-    """Expand ${VAR} references in a string."""
-
-    def replace(match: re.Match[str]) -> str:
-        var_name = match.group(1)
-        if var_name not in variables:
-            level = print_error if strict else print_warning
-            level(f"undefined variable referenced: {var_name}", line)
-            if strict:
-                sys.exit(1)
-            return ""
-        return variables.get(var_name, "")
-
-    return re.sub(r"\$\{(\w+)\}", replace, value)
+        return re.sub(r"\$\{(\w+)\}", replace, value)
 
 
 def is_header(filename: str) -> bool:
@@ -415,7 +410,7 @@ def process_commands(
         cmd = commands[i]
         expanded_args: list[str] = []
         for idx, arg in enumerate(cmd.args):
-            expanded = expand_variables(arg, ctx.variables, strict, cmd.line)
+            expanded = ctx.expand_variables(arg, strict, cmd.line)
             # In CMake, unquoted arguments are split on semicolons
             quoted = cmd.is_quoted[idx] if idx < len(cmd.is_quoted) else False
             if ";" in expanded and not quoted:
@@ -441,8 +436,7 @@ def process_commands(
 
                 # Check the if condition
                 if_args = [
-                    expand_variables(arg, ctx.variables, strict, cmd.line)
-                    for arg in cmd.args
+                    ctx.expand_variables(arg, strict, cmd.line) for arg in cmd.args
                 ]
                 if evaluate_condition(if_args, ctx.variables):
                     # Execute commands from if to first elseif/else or endif
@@ -458,8 +452,8 @@ def process_commands(
                             break
                         if block_type == "elseif":
                             elseif_args = [
-                                expand_variables(
-                                    arg, ctx.variables, strict, commands[block_idx].line
+                                ctx.expand_variables(
+                                    arg, strict, commands[block_idx].line
                                 )
                                 for arg in block_args
                             ]
@@ -631,7 +625,7 @@ def process_commands(
                             for var, val in parent_scope_updates.items():
                                 ctx.variables[var] = val
                     elif strict:
-                        print_error(
+                        ctx.print_error(
                             f'add_subdirectory given source "{sub_dir_name}" which does not exist.',
                             cmd.line,
                         )
@@ -649,7 +643,7 @@ def process_commands(
                     info = ctx.fetched_content.get(name.lower())
                     if not info:
                         if strict:
-                            print_error(
+                            ctx.print_error(
                                 f"FetchContent_MakeAvailable called for undeclared content: {name}",
                                 cmd.line,
                             )
@@ -865,7 +859,9 @@ def process_commands(
                             ctx.variables[var_name] = str(int(result))
                     except Exception as e:
                         if strict:
-                            print_error(f"math(EXPR) evaluation error: {e}", cmd.line)
+                            ctx.print_error(
+                                f"math(EXPR) evaluation error: {e}", cmd.line
+                            )
                             sys.exit(1)
 
             case "include":
@@ -885,7 +881,7 @@ def process_commands(
                             ctx.variables["BUILD_TESTING"] = "ON"
                     elif module_name not in known_modules:
                         if strict:
-                            print_error(f"unknown module: {module_name}", cmd.line)
+                            ctx.print_error(f"unknown module: {module_name}", cmd.line)
                             sys.exit(1)
 
             case "check_ipo_supported":
@@ -1212,9 +1208,7 @@ int main() {{
                             pass
                         else:
                             # Expand variables and resolve relative paths
-                            expanded = expand_variables(
-                                arg, ctx.variables, strict, cmd.line
-                            )
+                            expanded = ctx.expand_variables(arg, strict, cmd.line)
                             if not Path(expanded).is_absolute():
                                 expanded = str(ctx.current_source_dir / expanded)
                             if visibility == "PUBLIC":
@@ -1252,9 +1246,7 @@ int main() {{
                             visibility = "PRIVATE"
                         else:
                             # Expand variables
-                            expanded = expand_variables(
-                                arg, ctx.variables, strict, cmd.line
-                            )
+                            expanded = ctx.expand_variables(arg, strict, cmd.line)
                             if visibility == "PUBLIC":
                                 public_defs.append(expanded)
                                 target_defs.append(expanded)
@@ -1282,8 +1274,8 @@ int main() {{
                         patterns = args[2:]
                         matched_files: list[str] = []
                         for pattern in patterns:
-                            expanded_pattern = expand_variables(
-                                pattern, ctx.variables, strict, cmd.line
+                            expanded_pattern = ctx.expand_variables(
+                                pattern, strict, cmd.line
                             )
                             if Path(expanded_pattern).is_absolute():
                                 matched = py_glob.glob(expanded_pattern)
@@ -1298,13 +1290,13 @@ int main() {{
             case "add_compile_options":
                 # add_compile_options adds flags to all targets
                 for arg in args:
-                    expanded = expand_variables(arg, ctx.variables, strict, cmd.line)
+                    expanded = ctx.expand_variables(arg, strict, cmd.line)
                     ctx.compile_options.append(expanded)
 
             case "add_compile_definitions":
                 # add_compile_definitions adds preprocessor definitions to all targets
                 for arg in args:
-                    expanded = expand_variables(arg, ctx.variables, strict, cmd.line)
+                    expanded = ctx.expand_variables(arg, strict, cmd.line)
                     ctx.compile_definitions.append(expanded)
 
             case "add_custom_command":
@@ -1332,7 +1324,7 @@ int main() {{
                     elif arg == "VERBATIM":
                         verbatim = True
                     else:
-                        arg = expand_variables(arg, ctx.variables, strict, cmd.line)
+                        arg = ctx.expand_variables(arg, strict, cmd.line)
                         if current_section == "OUTPUT":
                             # Make relative to build_dir or source_dir
                             rel = make_relative(arg, ctx.build_dir)
@@ -1377,23 +1369,18 @@ int main() {{
                     test_command = []
                     if args[0] == "NAME":
                         # NAME ... COMMAND ...
-                        test_name = expand_variables(
-                            args[1], ctx.variables, strict, cmd.line
-                        )
+                        test_name = ctx.expand_variables(args[1], strict, cmd.line)
                         if "COMMAND" in args:
                             cmd_idx = args.index("COMMAND")
                             test_command = [
-                                expand_variables(a, ctx.variables, strict, cmd.line)
+                                ctx.expand_variables(a, strict, cmd.line)
                                 for a in args[cmd_idx + 1 :]
                             ]
                     else:
                         # <name> <command> ...
-                        test_name = expand_variables(
-                            args[0], ctx.variables, strict, cmd.line
-                        )
+                        test_name = ctx.expand_variables(args[0], strict, cmd.line)
                         test_command = [
-                            expand_variables(a, ctx.variables, strict, cmd.line)
-                            for a in args[1:]
+                            ctx.expand_variables(a, strict, cmd.line) for a in args[1:]
                         ]
 
                     if test_name and test_command:
@@ -1406,8 +1393,8 @@ int main() {{
                     props = args[prop_idx + 1 :]
 
                     for filename in files:
-                        expanded_filename = expand_variables(
-                            filename, ctx.variables, strict, cmd.line
+                        expanded_filename = ctx.expand_variables(
+                            filename, strict, cmd.line
                         )
                         if not Path(expanded_filename).is_absolute():
                             expanded_filename = str(
@@ -1432,7 +1419,7 @@ int main() {{
                                 # Handle semicolon-separated lists in CMake
                                 values = prop_value.split(";")
                                 expanded_values = [
-                                    expand_variables(v, ctx.variables, strict, cmd.line)
+                                    ctx.expand_variables(v, strict, cmd.line)
                                     for v in values
                                 ]
 
@@ -1511,8 +1498,8 @@ int main() {{
                     while i < len(args):
                         if args[i] == "DESTINATION":
                             if i + 1 < len(args):
-                                destination = expand_variables(
-                                    args[i + 1], ctx.variables, strict, cmd.line
+                                destination = ctx.expand_variables(
+                                    args[i + 1], strict, cmd.line
                                 )
                                 i += 2
                             else:
@@ -1630,12 +1617,12 @@ int main() {{
                     message = " ".join(message_parts)
 
                     if mode == "FATAL_ERROR":
-                        print_error(message, cmd.line)
+                        ctx.print_error(message, cmd.line)
                         raise SystemExit(1)
                     elif mode == "SEND_ERROR":
-                        print_error(message, cmd.line)
+                        ctx.print_error(message, cmd.line)
                     elif mode in ("WARNING", "AUTHOR_WARNING", "DEPRECATION"):
-                        print_warning(message, cmd.line)
+                        ctx.print_warning(message, cmd.line)
                     elif mode == "STATUS":
                         print(f"{message}")
                     else:
@@ -1662,8 +1649,8 @@ int main() {{
                     elif arg == "WORKING_DIRECTORY":
                         arg_idx += 1
                         if arg_idx < len(args):
-                            working_directory = expand_variables(
-                                args[arg_idx], ctx.variables, strict, cmd.line
+                            working_directory = ctx.expand_variables(
+                                args[arg_idx], strict, cmd.line
                             )
                     elif arg == "RESULT_VARIABLE":
                         arg_idx += 1
@@ -1698,7 +1685,7 @@ int main() {{
                     else:
                         # Part of current command
                         current_command.append(
-                            expand_variables(arg, ctx.variables, strict, cmd.line)
+                            ctx.expand_variables(arg, strict, cmd.line)
                         )
                     arg_idx += 1
 
@@ -1780,7 +1767,7 @@ int main() {{
                     # Restore variables
                     ctx.variables = saved_vars
                 elif strict:
-                    print_error(f"unsupported command: {cmd.name}()", cmd.line)
+                    ctx.print_error(f"unsupported command: {cmd.name}()", cmd.line)
                     sys.exit(1)
                 # Ignore unknown commands by default
 
