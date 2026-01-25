@@ -1195,6 +1195,42 @@ int main() {{
                     sources = [ctx.resolve_path(s) for s in args[1:]]
                     ctx.executables.append(Executable(name=args[0], sources=sources))
 
+            case "set_target_properties":
+                if len(args) >= 3 and "PROPERTIES" in args:
+                    props_idx = args.index("PROPERTIES")
+                    target_names = args[:props_idx]
+                    prop_args = args[props_idx + 1 :]
+
+                    # Parse property-value pairs
+                    properties: dict[str, str] = {}
+                    for j in range(0, len(prop_args), 2):
+                        if j + 1 < len(prop_args):
+                            properties[prop_args[j]] = prop_args[j + 1]
+
+                    for target_name in target_names:
+                        lib = ctx.get_library(target_name)
+                        exe = ctx.get_executable(target_name)
+
+                        for prop_name, prop_value in properties.items():
+                            if prop_name == "INTERFACE_INCLUDE_DIRECTORIES":
+                                # Split semicolon-separated list
+                                dirs = prop_value.split(";")
+                                for d in dirs:
+                                    expanded = ctx.expand_variables(d, strict, cmd.line)
+                                    if not Path(expanded).is_absolute():
+                                        expanded = str(
+                                            ctx.current_source_dir / expanded
+                                        )
+                                    if lib:
+                                        lib.public_include_directories.append(expanded)
+                                    elif exe:
+                                        exe.include_directories.append(expanded)
+                            elif strict:
+                                ctx.print_warning(
+                                    f"set_target_properties: property '{prop_name}' not yet supported",
+                                    cmd.line,
+                                )
+
             case "target_link_libraries":
                 if len(args) >= 2:
                     target_name = args[0]
