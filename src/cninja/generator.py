@@ -1847,7 +1847,10 @@ int main() {{
                             ctx.variables["GTest_FOUND"] = "FALSE"
                             ctx.variables["GTEST_FOUND"] = "FALSE"
                             if required:
-                                raise FileNotFoundError("Could not find package: GTest")
+                                ctx.print_error(
+                                    "could not find package: GTest", cmd.line
+                                )
+                                raise SystemExit(1)
                     elif package_name == "Threads":
                         # Threads is always available on Unix-like systems
                         ctx.variables["Threads_FOUND"] = "TRUE"
@@ -1861,9 +1864,10 @@ int main() {{
                         # Unknown package
                         ctx.variables[f"{package_name}_FOUND"] = "FALSE"
                         if required:
-                            raise FileNotFoundError(
-                                f"Could not find package: {package_name}"
+                            ctx.print_error(
+                                f"could not find package: {package_name}", cmd.line
                             )
+                            raise SystemExit(1)
 
             case "message":
                 if args:

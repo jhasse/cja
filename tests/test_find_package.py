@@ -45,10 +45,13 @@ def test_find_package_unknown() -> None:
 def test_find_package_unknown_required() -> None:
     """Test find_package with REQUIRED for unknown package."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
-    commands = [Command(name="find_package", args=["UnknownPackage123", "REQUIRED"], line=1)]
+    commands = [
+        Command(name="find_package", args=["UnknownPackage123", "REQUIRED"], line=1)
+    ]
 
-    with pytest.raises(FileNotFoundError, match="Could not find package"):
+    with pytest.raises(SystemExit) as exc_info:
         process_commands(commands, ctx)
+    assert exc_info.value.code == 1
 
 
 def test_find_package_gtest_with_if() -> None:
@@ -89,7 +92,9 @@ def test_find_package_threads_link() -> None:
     commands = [
         Command(name="find_package", args=["Threads"], line=1),
         Command(name="add_executable", args=["myapp", "main.c"], line=2),
-        Command(name="target_link_libraries", args=["myapp", "Threads::Threads"], line=3),
+        Command(
+            name="target_link_libraries", args=["myapp", "Threads::Threads"], line=3
+        ),
     ]
     process_commands(commands, ctx)
 
