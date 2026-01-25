@@ -1372,6 +1372,25 @@ int main() {{
 
                     ctx.variables[var_name] = result
 
+            case "get_target_property":
+                if len(args) >= 3:
+                    var_name = args[0]
+                    target_name = args[1]
+                    prop_name = args[2]
+
+                    lib = ctx.get_library(target_name)
+                    exe = ctx.get_executable(target_name)
+
+                    if prop_name == "TYPE":
+                        if lib:
+                            ctx.variables[var_name] = f"{lib.lib_type}_LIBRARY"
+                        elif exe:
+                            ctx.variables[var_name] = "EXECUTABLE"
+                        else:
+                            ctx.variables[var_name] = f"{var_name}-NOTFOUND"
+                    else:
+                        ctx.variables[var_name] = f"{var_name}-NOTFOUND"
+
             case "target_link_libraries":
                 if len(args) >= 2:
                     target_name = args[0]

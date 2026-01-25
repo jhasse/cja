@@ -1,6 +1,5 @@
 """Tests for get_filename_component command."""
 
-import pytest
 from pathlib import Path
 from cninja.generator import configure
 
