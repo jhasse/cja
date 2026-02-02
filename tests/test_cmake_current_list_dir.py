@@ -1,6 +1,5 @@
 """Tests for CMAKE_CURRENT_LIST_DIR variable."""
 
-import pytest
 from pathlib import Path
 from cninja.generator import configure
 

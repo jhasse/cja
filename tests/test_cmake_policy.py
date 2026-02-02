@@ -1,8 +1,6 @@
 """Tests for CMAKE_POLICY_DEFAULT and cmake_policy handling."""
 
 from pathlib import Path
-from io import StringIO
-import sys
 
 from cninja.generator import BuildContext, process_commands
 from cninja.parser import Command

@@ -1170,7 +1170,7 @@ def process_commands(
                         except ValueError:
                             if strict:
                                 ctx.print_error(
-                                    f"list(INSERT) index must be an integer", cmd.line
+                                    "list(INSERT) index must be an integer", cmd.line
                                 )
                                 sys.exit(1)
 
@@ -1875,7 +1875,7 @@ int main() {{
                     # Common properties: EP_BASE, INCLUDE_DIRECTORIES, etc.
                     if strict:
                         ctx.print_warning(
-                            f"set_property(DIRECTORY) is not yet fully supported",
+                            "set_property(DIRECTORY) is not yet fully supported",
                             cmd.line,
                         )
 
@@ -2592,6 +2592,7 @@ int main() {{
                         found_all = True
                         all_cflags = []
                         all_libs = []
+                        all_lib_dirs = []
 
                         for module in modules:
                             try:
@@ -2616,6 +2617,15 @@ int main() {{
                                     text=True,
                                 )
                                 all_libs.append(libs_res.stdout.strip())
+
+                                lib_dirs_res = subprocess.run(
+                                    ["pkg-config", "--libs-only-L", module],
+                                    capture_output=True,
+                                    text=True,
+                                )
+                                for entry in shlex.split(lib_dirs_res.stdout.strip()):
+                                    if entry.startswith("-L"):
+                                        all_lib_dirs.append(entry[2:])
                             except FileNotFoundError:
                                 found_all = False
                                 break
@@ -2632,6 +2642,9 @@ int main() {{
                             ctx.variables[f"{prefix}_INCLUDE_DIRS"] = cflags
                             ctx.variables[f"{prefix}_LIBRARIES"] = link_libs
                             ctx.variables[f"{prefix}_LINK_LIBRARIES"] = link_libs
+                            ctx.variables[f"{prefix}_LIBRARY_DIRS"] = ";".join(
+                                all_lib_dirs
+                            )
                             ctx.variables[f"{prefix}_CFLAGS"] = cflags
                             ctx.variables[f"{prefix}_LDFLAGS"] = libs
 

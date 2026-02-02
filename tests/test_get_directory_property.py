@@ -1,7 +1,6 @@
 """Tests for get_directory_property command."""
 
 from pathlib import Path
-import os
 
 from cninja.generator import BuildContext, process_commands
 from cninja.parser import Command

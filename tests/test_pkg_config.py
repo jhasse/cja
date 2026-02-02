@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import subprocess
+import pytest
 
 from cninja.generator import BuildContext, process_commands
 from cninja.parser import Command
@@ -48,6 +49,53 @@ def test_pkg_check_modules_link_libraries() -> None:
     if ctx.variables.get("ZLIB_FOUND") == "1":
         assert "ZLIB_LINK_LIBRARIES" in ctx.variables
         assert ctx.variables["ZLIB_LINK_LIBRARIES"] != ""
+
+
+def test_pkg_check_modules_library_dirs() -> None:
+    """Test that pkg_check_modules sets _LIBRARY_DIRS."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="find_package", args=["PkgConfig"], line=1),
+        Command(name="pkg_check_modules", args=["ZLIB", "zlib"], line=2),
+    ]
+    process_commands(commands, ctx)
+
+    if ctx.variables.get("ZLIB_FOUND") == "1":
+        assert "ZLIB_LIBRARY_DIRS" in ctx.variables
+
+
+def has_pkg_config_openssl() -> bool:
+    """Check if pkg-config can find openssl."""
+    try:
+        result = subprocess.run(
+            ["pkg-config", "--exists", "openssl"],
+            capture_output=True,
+        )
+        return result.returncode == 0
+    except FileNotFoundError:
+        return False
+
+
+@pytest.mark.skipif(
+    not has_pkg_config_openssl(), reason="openssl not found via pkg-config"
+)
+def test_pkg_check_modules_library_dirs_openssl() -> None:
+    """Test that pkg_check_modules sets _LIBRARY_DIRS with actual paths for openssl."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="find_package", args=["PkgConfig"], line=1),
+        Command(name="pkg_check_modules", args=["OPENSSL", "openssl"], line=2),
+    ]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["OPENSSL_FOUND"] == "1"
+    # Openssl usually has a library dir on macOS (Homebrew) or some Linux distros
+    # We at least check if it's set.
+    assert "OPENSSL_LIBRARY_DIRS" in ctx.variables
+    # On this machine we saw it had a path, let's verify if it's not empty if found
+    lib_dirs = ctx.variables["OPENSSL_LIBRARY_DIRS"]
+    if lib_dirs:
+        assert Path(lib_dirs.split(";")[0]).exists()
 
 
 def test_pkg_check_modules_imported_target() -> None:
