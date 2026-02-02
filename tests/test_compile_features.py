@@ -2,7 +2,12 @@
 
 from pathlib import Path
 
-from cninja.generator import BuildContext, compile_feature_to_flag, process_commands
+from cninja.generator import (
+    BuildContext,
+    compile_feature_to_flag,
+    generate_ninja,
+    process_commands,
+)
 from cninja.parser import Command
 
 
@@ -102,3 +107,25 @@ def test_target_compile_features_private_does_not_propagate() -> None:
     assert lib is not None
     assert "cxx_std_20" in lib.compile_features
     assert "cxx_std_20" not in lib.public_compile_features
+
+
+def test_cxx_std_not_applied_to_c_sources(tmp_path: Path) -> None:
+    """Test cxx_std flags only apply to C++ sources."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="add_executable", args=["myapp", "main.c", "main.cpp"], line=1),
+        Command(name="target_compile_features", args=["myapp", "PUBLIC", "cxx_std_20"], line=2),
+    ]
+    process_commands(commands, ctx)
+
+    ninja_path = tmp_path / "build.ninja"
+    generate_ninja(ctx, ninja_path, "build")
+    lines = ninja_path.read_text().splitlines()
+
+    c_line_idx = next(i for i, line in enumerate(lines) if " main.c" in line)
+    c_line_block = "\n".join(lines[c_line_idx : c_line_idx + 2])
+    assert "-std=c++20" not in c_line_block
+
+    cxx_line_idx = next(i for i, line in enumerate(lines) if " main.cpp" in line)
+    cxx_line_block = "\n".join(lines[cxx_line_idx : cxx_line_idx + 2])
+    assert "-std=c++20" in cxx_line_block

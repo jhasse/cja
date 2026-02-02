@@ -2355,6 +2355,19 @@ def generate_ninja(
                         else:
                             source_depends.append(d)
 
+                if rule == "cc":
+                    source_compile_flags = [
+                        flag
+                        for flag in source_compile_flags
+                        if not flag.startswith("-std=c++")
+                    ]
+                else:
+                    source_compile_flags = [
+                        flag
+                        for flag in source_compile_flags
+                        if not (flag.startswith("-std=c") and not flag.startswith("-std=c++"))
+                    ]
+
                 source_vars: dict[str, str | list[str] | None] | None = None
                 if source_compile_flags:
                     source_vars = cast(
@@ -2478,6 +2491,19 @@ def generate_ninja(
                             source_depends.append(f"$builddir/{d}")
                         else:
                             source_depends.append(d)
+
+                if rule == "cc":
+                    source_compile_flags = [
+                        flag
+                        for flag in source_compile_flags
+                        if not flag.startswith("-std=c++")
+                    ]
+                else:
+                    source_compile_flags = [
+                        flag
+                        for flag in source_compile_flags
+                        if not (flag.startswith("-std=c") and not flag.startswith("-std=c++"))
+                    ]
 
                 source_vars: dict[str, str | list[str] | None] | None = None
                 if source_compile_flags:
