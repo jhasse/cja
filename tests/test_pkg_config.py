@@ -98,6 +98,44 @@ def test_pkg_check_modules_library_dirs_openssl() -> None:
         assert Path(lib_dirs.split(";")[0]).exists()
 
 
+def has_pkg_config_vorbisfile() -> bool:
+    """Check if pkg-config can find vorbisfile."""
+    try:
+        result = subprocess.run(
+            ["pkg-config", "--exists", "vorbisfile"],
+            capture_output=True,
+        )
+        return result.returncode == 0
+    except FileNotFoundError:
+        return False
+
+
+@pytest.mark.skipif(
+    not has_pkg_config_vorbisfile(), reason="vorbisfile not found via pkg-config"
+)
+def test_pkg_check_modules_vorbisfile_library_dirs() -> None:
+    """Test that pkg_check_modules sets _LIBRARY_DIRS for vorbisfile."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="find_package", args=["PkgConfig"], line=1),
+        Command(
+            name="pkg_check_modules",
+            args=["VorbisFile", "REQUIRED", "vorbisfile"],
+            line=2,
+        ),
+    ]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["VorbisFile_FOUND"] == "1"
+    assert "VorbisFile_LIBRARY_DIRS" in ctx.variables
+    # Ensure it's a semicolon separated list and doesn't contain -L
+    lib_dirs = ctx.variables["VorbisFile_LIBRARY_DIRS"]
+    if lib_dirs:
+        assert "-L" not in lib_dirs
+        for d in lib_dirs.split(";"):
+            assert Path(d).is_absolute()
+
+
 def test_pkg_check_modules_imported_target() -> None:
     """Test pkg_check_modules with IMPORTED_TARGET."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))

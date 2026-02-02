@@ -2609,13 +2609,42 @@ int main() {{
                         ctx.variables["PkgConfig_FOUND"] = "TRUE"
                         ctx.variables["PKG_CONFIG_EXECUTABLE"] = "pkg-config"
                     else:
-                        # Unknown package
-                        ctx.variables[f"{package_name}_FOUND"] = "FALSE"
-                        if required:
-                            ctx.print_error(
-                                f"could not find package: {package_name}", cmd.line
-                            )
-                            raise SystemExit(1)
+                        # Search for Find<PackageName>.cmake in CMAKE_MODULE_PATH
+                        module_path = ctx.variables.get("CMAKE_MODULE_PATH", "")
+                        search_dirs = module_path.split(";") if module_path else []
+
+                        found_file = None
+                        for d in search_dirs:
+                            # Resolve relative paths relative to current source dir or root?
+                            # CMake usually expects them relative to root or absolute.
+                            p = Path(d)
+                            if not p.is_absolute():
+                                p = ctx.source_dir / d
+
+                            candidate = p / f"Find{package_name}.cmake"
+                            if candidate.exists():
+                                found_file = candidate
+                                break
+
+                        if found_file:
+                            from .parser import parse_file
+
+                            find_commands = parse_file(found_file)
+
+                            saved_list_file = ctx.current_list_file
+                            ctx.current_list_file = found_file
+                            try:
+                                process_commands(find_commands, ctx, trace, strict)
+                            finally:
+                                ctx.current_list_file = saved_list_file
+                        else:
+                            # Unknown package
+                            ctx.variables[f"{package_name}_FOUND"] = "FALSE"
+                            if required:
+                                ctx.print_error(
+                                    f"could not find package: {package_name}", cmd.line
+                                    )
+                                raise SystemExit(1)
 
             case "pkg_check_modules":
                 if args:
@@ -2642,7 +2671,9 @@ int main() {{
                         found_all = True
                         all_cflags = []
                         all_libs = []
+                        all_include_dirs = []
                         all_lib_dirs = []
+                        all_libraries = []
 
                         for module in modules:
                             try:
@@ -2659,23 +2690,25 @@ int main() {{
                                     capture_output=True,
                                     text=True,
                                 )
-                                all_cflags.append(cflags_res.stdout.strip())
+                                cflags_out = cflags_res.stdout.strip()
+                                all_cflags.append(cflags_out)
+                                for entry in shlex.split(cflags_out):
+                                    if entry.startswith("-I"):
+                                        all_include_dirs.append(entry[2:])
 
                                 libs_res = subprocess.run(
                                     ["pkg-config", "--libs", module],
                                     capture_output=True,
                                     text=True,
                                 )
-                                all_libs.append(libs_res.stdout.strip())
-
-                                lib_dirs_res = subprocess.run(
-                                    ["pkg-config", "--libs-only-L", module],
-                                    capture_output=True,
-                                    text=True,
-                                )
-                                for entry in shlex.split(lib_dirs_res.stdout.strip()):
-                                    if entry.startswith("-L"):
+                                libs_out = libs_res.stdout.strip()
+                                all_libs.append(libs_out)
+                                for entry in shlex.split(libs_out):
+                                    if entry.startswith("-l"):
+                                        all_libraries.append(entry[2:])
+                                    elif entry.startswith("-L"):
                                         all_lib_dirs.append(entry[2:])
+
                             except FileNotFoundError:
                                 found_all = False
                                 break
@@ -2685,15 +2718,17 @@ int main() {{
                             cflags = " ".join(all_cflags)
                             libs = " ".join(all_libs)
 
-                            # Split libs into individual flags for LINK_LIBRARIES
-                            lib_flags = shlex.split(libs)
-                            link_libs = ";".join(lib_flags)
-
-                            ctx.variables[f"{prefix}_INCLUDE_DIRS"] = cflags
-                            ctx.variables[f"{prefix}_LIBRARIES"] = link_libs
-                            ctx.variables[f"{prefix}_LINK_LIBRARIES"] = link_libs
+                            ctx.variables[f"{prefix}_INCLUDE_DIRS"] = ";".join(
+                                list(dict.fromkeys(all_include_dirs))
+                            )
+                            ctx.variables[f"{prefix}_LIBRARIES"] = ";".join(
+                                list(dict.fromkeys(all_libraries))
+                            )
+                            ctx.variables[f"{prefix}_LINK_LIBRARIES"] = ";".join(
+                                shlex.split(libs)
+                            )
                             ctx.variables[f"{prefix}_LIBRARY_DIRS"] = ";".join(
-                                all_lib_dirs
+                                list(dict.fromkeys(all_lib_dirs))
                             )
                             ctx.variables[f"{prefix}_CFLAGS"] = cflags
                             ctx.variables[f"{prefix}_LDFLAGS"] = libs
