@@ -142,6 +142,7 @@ class BuildContext:
     global_properties: dict[str, str] = field(
         default_factory=dict
     )  # Global properties set via set_property(GLOBAL ...)
+    parent_directory: str = ""  # Path to parent directory (if in subdirectory)
 
     def __post_init__(self) -> None:
         self.current_source_dir = self.source_dir
@@ -749,12 +750,14 @@ def process_commands(
                         # Save current state
                         saved_current_source_dir = ctx.current_source_dir
                         saved_current_list_file = ctx.current_list_file
+                        saved_parent_directory = ctx.parent_directory
                         saved_vars = ctx.variables.copy()
                         ctx.parent_scope_vars = {}
 
                         # Update current_source_dir for the subdirectory
                         ctx.current_source_dir = sub_source_dir
                         ctx.current_list_file = sub_cmakelists
+                        ctx.parent_directory = str(saved_current_source_dir)
                         ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = str(sub_source_dir)
                         ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(sub_cmakelists)
                         ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
@@ -773,6 +776,7 @@ def process_commands(
                             # Restore state
                             ctx.current_source_dir = saved_current_source_dir
                             ctx.current_list_file = saved_current_list_file
+                            ctx.parent_directory = saved_parent_directory
                             ctx.variables = saved_vars
                             for var, val in parent_scope_updates.items():
                                 ctx.variables[var] = val
@@ -2011,6 +2015,34 @@ int main() {{
                         ctx.variables[var_name] = "0"
                     else:
                         ctx.variables[var_name] = ""
+
+            case "get_directory_property":
+                # get_directory_property(<variable> [DIRECTORY <dir>] <prop>)
+                if len(args) < 2:
+                    if strict:
+                        ctx.print_error(
+                            "get_directory_property() requires at least a variable and property name",
+                            cmd.line,
+                        )
+                        sys.exit(1)
+                    i += 1
+                    continue
+
+                var_name = args[0]
+                # Last argument is the property name
+                prop_name = args[-1]
+
+                if prop_name == "PARENT_DIRECTORY":
+                    # For now, we don't support DIRECTORY <dir> argument properly,
+                    # just return parent of current directory
+                    ctx.variables[var_name] = ctx.parent_directory
+                else:
+                    if strict:
+                        ctx.print_warning(
+                            f"get_directory_property: property '{prop_name}' not yet supported",
+                            cmd.line,
+                        )
+                    ctx.variables[var_name] = ""
 
             case "get_filename_component":
                 if len(args) >= 3:
