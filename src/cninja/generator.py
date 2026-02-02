@@ -1001,7 +1001,7 @@ int main() {{
                         ctx.variables[var_name] = f"{var_name}-NOTFOUND"
 
             case "target_link_libraries":
-                handle_target_link_libraries(ctx, args)
+                handle_target_link_libraries(ctx, cmd, args)
 
             case "target_link_directories":
                 handle_target_link_directories(ctx, cmd, args, strict)

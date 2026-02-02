@@ -62,6 +62,7 @@ def handle_project(
 
 def handle_target_link_libraries(
     ctx: BuildContext,
+    cmd: Command,
     args: list[str],
 ) -> None:
     """Handle target_link_libraries() command."""
@@ -79,6 +80,17 @@ def handle_target_link_libraries(
                 visibility = "PRIVATE"
             else:
                 # It's a library name
+                if "$<" in arg:
+                    from .utils import strip_generator_expressions
+
+                    ctx.print_warning(
+                        f"generator expressions in target_link_libraries are not yet supported: {arg}",
+                        cmd.line,
+                    )
+                    arg = strip_generator_expressions(arg)
+                    if not arg:
+                        continue
+
                 lib = ctx.get_library(target_name)
                 if lib:
                     # For libraries, we track linked libraries but don't use them yet
@@ -119,7 +131,13 @@ def handle_target_link_directories(
             else:
                 # Expand variables and resolve relative paths
                 expanded = ctx.expand_variables(arg, strict, cmd.line)
+                if "$<" in expanded:
+                    ctx.print_warning(
+                        f"generator expressions in target_compile_definitions are not yet supported: {arg}",
+                        cmd.line,
+                    )
                 expanded = strip_generator_expressions(expanded)
+
                 if not expanded:
                     continue
                 if not Path(expanded).is_absolute():
@@ -230,6 +248,11 @@ def handle_target_include_directories(
             else:
                 # Expand variables and resolve relative paths
                 expanded = ctx.expand_variables(arg, strict, cmd.line)
+                if "$<" in expanded:
+                    ctx.print_warning(
+                        f"generator expressions in target_include_directories are not yet supported: {arg}",
+                        cmd.line,
+                    )
                 expanded = strip_generator_expressions(expanded)
                 if not expanded:
                     continue
@@ -276,9 +299,15 @@ def handle_target_compile_definitions(
             elif arg == "PRIVATE":
                 visibility = "PRIVATE"
             else:
-                # Expand variables
+                # Expand variables and resolve relative paths
                 expanded = ctx.expand_variables(arg, strict, cmd.line)
+                if "$<" in expanded:
+                    ctx.print_warning(
+                        f"generator expressions in target_include_directories are not yet supported: {arg}",
+                        cmd.line,
+                    )
                 expanded = strip_generator_expressions(expanded)
+
                 if not expanded:
                     continue
                 if visibility == "PUBLIC":

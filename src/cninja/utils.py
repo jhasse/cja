@@ -54,6 +54,11 @@ def strip_generator_expressions(value: str) -> str:
     # Handle $<INSTALL_INTERFACE:xxx> -> empty
     value = re.sub(r"\$<INSTALL_INTERFACE:[^>]*>", "", value)
     # Handle $<TARGET_FILE:target> -> target (we'll fix this later if needed)
-    # Handle others by stripping them
-    value = re.sub(r"\$<[^>]+>", "", value)
+
+    # Handle nested expressions by repeatedly stripping the innermost ones
+    while "$<" in value:
+        new_value = re.sub(r"\$<[^<>]+>", "", value)
+        if new_value == value:
+            break
+        value = new_value
     return value

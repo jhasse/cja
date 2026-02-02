@@ -131,3 +131,32 @@ def test_static_private_link_only_propagation(tmp_path):
             assert "$builddir/liblib2.a" in full_build_stmt
             break
     assert found_app_link, "Could not find build statement for app"
+
+
+def test_generator_expression_stripping(tmp_path, capsys):
+    """Test that complex generator expressions in target_link_libraries are stripped."""
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+
+    genex = "$<$<AND:$<CXX_COMPILER_ID:GNU>,$<VERSION_LESS:$<CXX_COMPILER_VERSION>,9.0>>:stdc++fs>"
+    commands = [
+        Command(name="add_executable", args=["app", "main.cpp"], line=1),
+        Command(name="target_link_libraries", args=["app", "PRIVATE", genex], line=2),
+    ]
+
+    process_commands(commands, ctx)
+
+    # Generate ninja
+    ninja_file = tmp_path / "build.ninja"
+    generate_ninja(ctx, ninja_file, "build")
+
+    content = ninja_file.read_text()
+    # Check that genex is NOT in the ninja file
+    assert "stdc++fs" not in content
+    assert "$<" not in content
+
+    # Check for warning
+    captured = capsys.readouterr()
+    assert (
+        "generator expressions in target_link_libraries are not yet supported"
+        in captured.err
+    )
