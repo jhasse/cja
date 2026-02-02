@@ -4,7 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from cninja.generator import BuildContext, evaluate_condition, process_commands
+from cninja.build_context import BuildContext
+from cninja.generator import process_commands
+from cninja.syntax import evaluate_condition
 from cninja.parser import Command
 
 
