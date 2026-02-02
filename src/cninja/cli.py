@@ -228,18 +228,21 @@ def main() -> int:
         # Actually, if it's the default (configure), we don't expect ninja_args.
         pass
 
-    if args.E:
-        return cmd_command_mode(args.E)
+    try:
+        if args.E:
+            return cmd_command_mode(args.E)
 
-    if args.command == "build":
-        return cmd_build(args)
-    elif args.command == "test":
-        return cmd_test(args)
-    elif args.command == "run":
-        return cmd_run(args)
-    else:
-        # Default: configure only
-        return cmd_configure(args)
+        if args.command == "build":
+            return cmd_build(args)
+        elif args.command == "test":
+            return cmd_test(args)
+        elif args.command == "run":
+            return cmd_run(args)
+        else:
+            # Default: configure only
+            return cmd_configure(args)
+    except KeyboardInterrupt:
+        return 130
 
 
 if __name__ == "__main__":
