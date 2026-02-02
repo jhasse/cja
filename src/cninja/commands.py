@@ -700,6 +700,7 @@ def handle_get_filename_component(
 
 def handle_add_library(
     ctx: BuildContext,
+    cmd: Command,
     args: list[str],
 ) -> None:
     """Handle add_library() command."""
@@ -731,6 +732,8 @@ def handle_add_library(
                         public_link_directories=lib.public_link_directories,
                         is_alias=True,
                         alias_for=target_name,
+                        defined_file=ctx.current_list_file,
+                        defined_line=cmd.line,
                     )
                 )
             return
@@ -747,18 +750,28 @@ def handle_add_library(
                 name=name,
                 sources=sources,
                 lib_type=lib_type,
+                defined_file=ctx.current_list_file,
+                defined_line=cmd.line,
             )
         )
 
 
 def handle_add_executable(
     ctx: BuildContext,
+    cmd: Command,
     args: list[str],
 ) -> None:
     """Handle add_executable() command."""
     if len(args) >= 2:
         sources = [ctx.resolve_path(s) for s in args[1:]]
-        ctx.executables.append(Executable(name=args[0], sources=sources))
+        ctx.executables.append(
+            Executable(
+                name=args[0],
+                sources=sources,
+                defined_file=ctx.current_list_file,
+                defined_line=cmd.line,
+            )
+        )
 
 
 def handle_list(

@@ -22,6 +22,8 @@ class CustomCommand:
     main_dependency: str | None = None
     working_directory: str | None = None
     verbatim: bool = False
+    defined_file: Path | None = None
+    defined_line: int = 0
 
 
 @dataclass

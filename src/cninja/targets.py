@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from pathlib import Path
 
 
 @dataclass
@@ -8,6 +9,8 @@ class Library:
     name: str
     sources: list[str]
     lib_type: str = "STATIC"  # STATIC, SHARED, or OBJECT
+    defined_file: Path | None = None
+    defined_line: int = 0
     compile_features: list[str] = field(default_factory=list)  # PRIVATE features
     public_compile_features: list[str] = field(default_factory=list)  # PUBLIC features
     include_directories: list[str] = field(default_factory=list)  # PRIVATE includes
@@ -35,6 +38,8 @@ class Executable:
 
     name: str
     sources: list[str]
+    defined_file: Path | None = None
+    defined_line: int = 0
     link_libraries: list[str] = field(default_factory=list)
     compile_features: list[str] = field(default_factory=list)
     include_directories: list[str] = field(default_factory=list)

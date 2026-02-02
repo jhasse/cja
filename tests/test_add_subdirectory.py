@@ -72,7 +72,7 @@ def test_add_subdirectory_ninja(tmp_path: Path) -> None:
     ninja_content = ninja_file.read_text()
     # Source path should be relative to the ninja file (which is in source_dir)
     # So it should be subdir/main.c
-    assert "build $builddir/sub_exe_main.o: cc subdir/main.c" in ninja_content
+    assert "build $builddir/subdir/sub_exe_main.o: cc subdir/main.c" in ninja_content
 
 
 def test_add_subdirectory_current_dir(tmp_path: Path) -> None:
