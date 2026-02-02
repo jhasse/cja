@@ -35,12 +35,13 @@ def test_add_test(tmp_path: Path) -> None:
 
     # Check for test rule
     assert "rule test_run" in ninja_content
+    assert "command = cd $builddir && $cmd" in ninja_content
     assert "pool = console" in ninja_content
 
     # Check for individual test build statements
     assert "build test_mytest: test_run" in ninja_content
-    # It should have resolved 'myapp' to '$builddir/myapp'
-    assert "$builddir/myapp --arg" in ninja_content
+    # It should have resolved 'myapp' to './myapp' (since we cd to $builddir)
+    assert "./myapp --arg" in ninja_content
     assert (
         "implicit = $builddir/myapp" in ninja_content
         or "| $builddir/myapp" in ninja_content

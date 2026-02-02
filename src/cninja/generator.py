@@ -2710,7 +2710,7 @@ def generate_ninja(
         if ctx.tests:
             n.rule(
                 "test_run",
-                command="$cmd",
+                command="cd $builddir && $cmd",
                 description="TEST $name",
                 pool="console",
             )
@@ -2723,7 +2723,10 @@ def generate_ninja(
                 depends = []
                 if cmd[0] in exe_outputs:
                     target_exe = exe_outputs[cmd[0]]
-                    cmd[0] = target_exe
+                    if target_exe.startswith("$builddir/"):
+                        cmd[0] = "./" + target_exe[len("$builddir/") :]
+                    else:
+                        cmd[0] = target_exe
                     depends.append(target_exe)
 
                 test_target = f"test_{test.name}"
