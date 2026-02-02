@@ -2666,8 +2666,10 @@ def configure(
 
     if platform.system() == "Darwin":
         ctx.variables["CMAKE_SYSTEM_NAME"] = "Darwin"
+        ctx.variables["UNIX"] = "TRUE"
     else:
         ctx.variables["CMAKE_SYSTEM_NAME"] = "Linux"
+        ctx.variables["UNIX"] = "TRUE"
 
     process_commands(commands, ctx, trace, strict)
 
