@@ -2503,6 +2503,103 @@ int main() {{
                                 f"Could not find program: {' or '.join(names)}"
                             )
 
+            case "find_path":
+                if len(args) >= 2:
+                    var_name = args[0]
+                    names: list[str] = []
+                    paths: list[str] = []
+                    hints: list[str] = []
+                    suffixes: list[str] = []
+                    required = False
+
+                    i = 1
+                    while i < len(args):
+                        arg = args[i]
+                        if arg == "NAMES":
+                            i += 1
+                            while i < len(args) and args[i] not in (
+                                "PATHS",
+                                "HINTS",
+                                "PATH_SUFFIXES",
+                                "REQUIRED",
+                            ):
+                                names.append(args[i])
+                                i += 1
+                            continue
+                        elif arg == "PATHS":
+                            i += 1
+                            while i < len(args) and args[i] not in (
+                                "NAMES",
+                                "HINTS",
+                                "PATH_SUFFIXES",
+                                "REQUIRED",
+                            ):
+                                paths.append(args[i])
+                                i += 1
+                            continue
+                        elif arg == "HINTS":
+                            i += 1
+                            while i < len(args) and args[i] not in (
+                                "NAMES",
+                                "PATHS",
+                                "PATH_SUFFIXES",
+                                "REQUIRED",
+                            ):
+                                hints.append(args[i])
+                                i += 1
+                            continue
+                        elif arg == "PATH_SUFFIXES":
+                            i += 1
+                            while i < len(args) and args[i] not in (
+                                "NAMES",
+                                "PATHS",
+                                "HINTS",
+                                "REQUIRED",
+                            ):
+                                suffixes.append(args[i])
+                                i += 1
+                            continue
+                        elif arg == "REQUIRED":
+                            required = True
+                        else:
+                            if not names:
+                                names.append(arg)
+                            else:
+                                paths.append(arg)
+                        i += 1
+
+                    search_dirs = []
+                    # HINTS come first
+                    search_dirs.extend(hints)
+                    # Then PATHS
+                    search_dirs.extend(paths)
+                    # Standard system paths if none found?
+                    # For now just use provided paths
+
+                    found_dir = None
+                    for name in names:
+                        # Check each search dir
+                        for d in search_dirs:
+                            # Try with suffixes
+                            for suffix in [""] + suffixes:
+                                base_path = Path(d) / suffix
+                                if (base_path / name).exists():
+                                    found_dir = str(base_path.absolute())
+                                    break
+                            if found_dir:
+                                break
+                        if found_dir:
+                            break
+
+                    if found_dir:
+                        ctx.variables[var_name] = found_dir
+                    else:
+                        ctx.variables[var_name] = f"{var_name}-NOTFOUND"
+                        if required:
+                            raise FileNotFoundError(
+                                f"Could not find path for: {', '.join(names)}"
+                            )
+
             case "install":
                 if len(args) >= 2 and args[0] == "TARGETS":
                     targets = []
