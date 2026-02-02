@@ -48,6 +48,15 @@ class FunctionDef:
 
 
 @dataclass
+class MacroDef:
+    """A CMake macro definition."""
+
+    name: str
+    params: list[str]
+    body: list  # list[Command] - forward reference
+
+
+@dataclass
 class SourceFileProperties:
     """Properties for a source file."""
 
@@ -116,6 +125,7 @@ class BuildContext:
     functions: dict[str, FunctionDef] = field(
         default_factory=dict
     )  # User-defined functions
+    macros: dict[str, MacroDef] = field(default_factory=dict)  # User-defined macros
     tests: list[Test] = field(default_factory=list)  # Test definitions
     install_targets: list[InstallTarget] = field(
         default_factory=list
@@ -441,6 +451,24 @@ def find_matching_endfunction(
     return -1  # unreachable
 
 
+def find_matching_endmacro(
+    commands: list[Command], start: int, ctx: BuildContext
+) -> int:
+    """Find the index of the endmacro() matching the macro() at start."""
+    depth = 1
+    i = start + 1
+    while i < len(commands):
+        if commands[i].name == "macro":
+            depth += 1
+        elif commands[i].name == "endmacro":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    ctx.raise_syntax_error("No matching endmacro() for macro()", commands[start].line)
+    return -1  # unreachable
+
+
 def find_else_or_elseif(
     commands: list[Command], start: int, end: int
 ) -> list[tuple[str, int, list[str]]]:
@@ -634,6 +662,31 @@ def process_commands(
 
             case "endfunction":
                 ctx.raise_syntax_error("Unexpected endfunction()", cmd.line)
+
+            case "macro":
+                if not args:
+                    ctx.raise_syntax_error("macro() requires a name", cmd.line)
+
+                # Find matching endmacro
+                endmacro_idx = find_matching_endmacro(commands, i, ctx)
+                body = commands[i + 1 : endmacro_idx]
+
+                macro_name = cmd.args[0].lower()  # CMake macros are case-insensitive
+                macro_params = cmd.args[1:]  # Parameter names
+
+                # Store the macro definition
+                ctx.macros[macro_name] = MacroDef(
+                    name=macro_name,
+                    params=macro_params,
+                    body=body,
+                )
+
+                # Skip to after endmacro
+                i = endmacro_idx + 1
+                continue
+
+            case "endmacro":
+                ctx.raise_syntax_error("Unexpected endmacro()", cmd.line)
 
             case "return":
                 # Exit from current function early
@@ -2571,10 +2624,10 @@ int main() {{
                             ctx.variables[result_variable] = "1"
 
             case _:
-                # Check if this is a user-defined function call
-                func_name = cmd.name.lower()
-                if func_name in ctx.functions:
-                    func_def = ctx.functions[func_name]
+                # Check if this is a user-defined function or macro call
+                name = cmd.name.lower()
+                if name in ctx.functions:
+                    func_def = ctx.functions[name]
                     # Save current variables for function scope
                     saved_vars = ctx.variables.copy()
 
@@ -2613,6 +2666,81 @@ int main() {{
 
                     # Restore variables
                     ctx.variables = saved_vars
+                elif name in ctx.macros:
+                    macro_def = ctx.macros[name]
+                    # Macros don't create a new scope - they operate in the caller's scope
+                    # Save the special variables so we can restore them after
+                    saved_argc = ctx.variables.get("ARGC", "")
+                    saved_argv = ctx.variables.get("ARGV", "")
+                    saved_argn = ctx.variables.get("ARGN", "")
+                    saved_argv_vars = {}
+                    saved_params = {}
+
+                    # Save existing ARGVn variables
+                    for idx in range(100):  # Reasonable upper limit
+                        key = f"ARGV{idx}"
+                        if key in ctx.variables:
+                            saved_argv_vars[key] = ctx.variables[key]
+                        else:
+                            break
+
+                    # Save existing parameter values
+                    for param in macro_def.params:
+                        if param in ctx.variables:
+                            saved_params[param] = ctx.variables[param]
+
+                    # Set up macro arguments
+                    # ARGC = number of arguments
+                    ctx.variables["ARGC"] = str(len(args))
+                    # ARGV = all arguments as semicolon-separated list
+                    ctx.variables["ARGV"] = ";".join(args)
+                    # ARGVn = individual arguments
+                    for idx, arg in enumerate(args):
+                        ctx.variables[f"ARGV{idx}"] = arg
+                    # Named parameters
+                    for idx, param in enumerate(macro_def.params):
+                        if idx < len(args):
+                            ctx.variables[param] = args[idx]
+                        else:
+                            ctx.variables[param] = ""
+                    # ARGN = arguments after named parameters
+                    extra_args = args[len(macro_def.params) :]
+                    ctx.variables["ARGN"] = ";".join(extra_args)
+
+                    # Execute macro body (no try/catch for ReturnFromFunction)
+                    # Macros can't use return()
+                    process_commands(macro_def.body, ctx, trace, strict)
+
+                    # Restore the special variables
+                    if saved_argc:
+                        ctx.variables["ARGC"] = saved_argc
+                    else:
+                        ctx.variables.pop("ARGC", None)
+
+                    if saved_argv:
+                        ctx.variables["ARGV"] = saved_argv
+                    else:
+                        ctx.variables.pop("ARGV", None)
+
+                    if saved_argn:
+                        ctx.variables["ARGN"] = saved_argn
+                    else:
+                        ctx.variables.pop("ARGN", None)
+
+                    # Restore ARGVn variables
+                    for idx in range(len(args)):
+                        key = f"ARGV{idx}"
+                        if key in saved_argv_vars:
+                            ctx.variables[key] = saved_argv_vars[key]
+                        else:
+                            ctx.variables.pop(key, None)
+
+                    # Restore parameter variables
+                    for param in macro_def.params:
+                        if param in saved_params:
+                            ctx.variables[param] = saved_params[param]
+                        else:
+                            ctx.variables.pop(param, None)
                 elif strict:
                     ctx.print_error(f"unsupported command: {cmd.name}()", cmd.line)
                     sys.exit(1)
