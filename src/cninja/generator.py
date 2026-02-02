@@ -969,6 +969,337 @@ def process_commands(
                             )
                             sys.exit(1)
 
+            case "list":
+                # list(SUBCOMMAND <list_var> ...)
+                if len(args) < 2:
+                    if strict:
+                        ctx.print_error(
+                            "list() requires at least a subcommand and variable name",
+                            cmd.line,
+                        )
+                        sys.exit(1)
+                    i += 1
+                    continue
+
+                subcommand = args[0].upper()
+
+                if subcommand == "LENGTH":
+                    # list(LENGTH <list> <output variable>)
+                    if len(args) < 3:
+                        if strict:
+                            ctx.print_error(
+                                "list(LENGTH) requires list and output variable",
+                                cmd.line,
+                            )
+                            sys.exit(1)
+                    else:
+                        list_name = args[1]
+                        out_var = args[2]
+                        list_val = ctx.variables.get(list_name, "")
+                        if list_val:
+                            items = list_val.split(";")
+                            ctx.variables[out_var] = str(len(items))
+                        else:
+                            ctx.variables[out_var] = "0"
+
+                elif subcommand == "GET":
+                    # list(GET <list> <element index> [<element index> ...] <output variable>)
+                    if len(args) < 4:
+                        if strict:
+                            ctx.print_error(
+                                "list(GET) requires list, indices, and output variable",
+                                cmd.line,
+                            )
+                            sys.exit(1)
+                    else:
+                        list_name = args[1]
+                        indices = args[2:-1]
+                        out_var = args[-1]
+                        list_val = ctx.variables.get(list_name, "")
+                        items = list_val.split(";") if list_val else []
+                        result = []
+                        for idx_str in indices:
+                            try:
+                                idx = int(idx_str)
+                                if -len(items) <= idx < len(items):
+                                    result.append(items[idx])
+                            except (ValueError, IndexError):
+                                pass
+                        ctx.variables[out_var] = ";".join(result)
+
+                elif subcommand == "APPEND":
+                    # list(APPEND <list> [<element> ...])
+                    list_name = args[1]
+                    elements = args[2:]
+                    list_val = ctx.variables.get(list_name, "")
+                    if list_val:
+                        items = list_val.split(";")
+                        items.extend(elements)
+                        ctx.variables[list_name] = ";".join(items)
+                    elif elements:
+                        ctx.variables[list_name] = ";".join(elements)
+
+                elif subcommand == "PREPEND":
+                    # list(PREPEND <list> [<element> ...])
+                    list_name = args[1]
+                    elements = args[2:]
+                    list_val = ctx.variables.get(list_name, "")
+                    if list_val:
+                        items = list_val.split(";")
+                        items = elements + items
+                        ctx.variables[list_name] = ";".join(items)
+                    elif elements:
+                        ctx.variables[list_name] = ";".join(elements)
+
+                elif subcommand == "INSERT":
+                    # list(INSERT <list> <element_index> <element> [<element> ...])
+                    if len(args) < 4:
+                        if strict:
+                            ctx.print_error(
+                                "list(INSERT) requires list, index, and at least one element",
+                                cmd.line,
+                            )
+                            sys.exit(1)
+                    else:
+                        list_name = args[1]
+                        try:
+                            index = int(args[2])
+                            elements = args[3:]
+                            list_val = ctx.variables.get(list_name, "")
+                            items = list_val.split(";") if list_val else []
+                            # Insert elements at index
+                            for i_offset, elem in enumerate(elements):
+                                items.insert(index + i_offset, elem)
+                            ctx.variables[list_name] = ";".join(items)
+                        except ValueError:
+                            if strict:
+                                ctx.print_error(
+                                    f"list(INSERT) index must be an integer", cmd.line
+                                )
+                                sys.exit(1)
+
+                elif subcommand == "REMOVE_ITEM":
+                    # list(REMOVE_ITEM <list> <value> [<value> ...])
+                    list_name = args[1]
+                    values_to_remove = args[2:]
+                    list_val = ctx.variables.get(list_name, "")
+                    if list_val:
+                        items = list_val.split(";")
+                        items = [item for item in items if item not in values_to_remove]
+                        ctx.variables[list_name] = ";".join(items)
+
+                elif subcommand == "REMOVE_AT":
+                    # list(REMOVE_AT <list> <index> [<index> ...])
+                    if len(args) < 3:
+                        if strict:
+                            ctx.print_error(
+                                "list(REMOVE_AT) requires list and at least one index",
+                                cmd.line,
+                            )
+                            sys.exit(1)
+                    else:
+                        list_name = args[1]
+                        indices = args[2:]
+                        list_val = ctx.variables.get(list_name, "")
+                        if list_val:
+                            items = list_val.split(";")
+                            # Convert indices and sort in reverse to remove from end
+                            idx_set = set()
+                            for idx_str in indices:
+                                try:
+                                    idx = int(idx_str)
+                                    # Handle negative indices
+                                    if idx < 0:
+                                        idx = len(items) + idx
+                                    if 0 <= idx < len(items):
+                                        idx_set.add(idx)
+                                except ValueError:
+                                    pass
+                            items = [
+                                item for i, item in enumerate(items) if i not in idx_set
+                            ]
+                            ctx.variables[list_name] = ";".join(items)
+
+                elif subcommand == "REMOVE_DUPLICATES":
+                    # list(REMOVE_DUPLICATES <list>)
+                    list_name = args[1]
+                    list_val = ctx.variables.get(list_name, "")
+                    if list_val:
+                        items = list_val.split(";")
+                        seen = set()
+                        unique_items = []
+                        for item in items:
+                            if item not in seen:
+                                seen.add(item)
+                                unique_items.append(item)
+                        ctx.variables[list_name] = ";".join(unique_items)
+
+                elif subcommand == "REVERSE":
+                    # list(REVERSE <list>)
+                    list_name = args[1]
+                    list_val = ctx.variables.get(list_name, "")
+                    if list_val:
+                        items = list_val.split(";")
+                        items.reverse()
+                        ctx.variables[list_name] = ";".join(items)
+
+                elif subcommand == "SORT":
+                    # list(SORT <list> [COMPARE <compare>] [CASE <case>] [ORDER <order>])
+                    list_name = args[1]
+                    list_val = ctx.variables.get(list_name, "")
+                    if list_val:
+                        items = list_val.split(";")
+                        # Parse options (simplified - ignoring COMPARE, CASE, ORDER for now)
+                        items.sort()
+                        ctx.variables[list_name] = ";".join(items)
+
+                elif subcommand == "FIND":
+                    # list(FIND <list> <value> <output variable>)
+                    if len(args) < 4:
+                        if strict:
+                            ctx.print_error(
+                                "list(FIND) requires list, value, and output variable",
+                                cmd.line,
+                            )
+                            sys.exit(1)
+                    else:
+                        list_name = args[1]
+                        value = args[2]
+                        out_var = args[3]
+                        list_val = ctx.variables.get(list_name, "")
+                        if list_val:
+                            items = list_val.split(";")
+                            try:
+                                idx = items.index(value)
+                                ctx.variables[out_var] = str(idx)
+                            except ValueError:
+                                ctx.variables[out_var] = "-1"
+                        else:
+                            ctx.variables[out_var] = "-1"
+
+                elif subcommand == "JOIN":
+                    # list(JOIN <list> <glue> <output variable>)
+                    if len(args) < 4:
+                        if strict:
+                            ctx.print_error(
+                                "list(JOIN) requires list, glue, and output variable",
+                                cmd.line,
+                            )
+                            sys.exit(1)
+                    else:
+                        list_name = args[1]
+                        glue = args[2]
+                        out_var = args[3]
+                        list_val = ctx.variables.get(list_name, "")
+                        if list_val:
+                            items = list_val.split(";")
+                            ctx.variables[out_var] = glue.join(items)
+                        else:
+                            ctx.variables[out_var] = ""
+
+                elif subcommand == "SUBLIST":
+                    # list(SUBLIST <list> <begin> <length> <output variable>)
+                    if len(args) < 5:
+                        if strict:
+                            ctx.print_error(
+                                "list(SUBLIST) requires list, begin, length, and output variable",
+                                cmd.line,
+                            )
+                            sys.exit(1)
+                    else:
+                        list_name = args[1]
+                        try:
+                            begin = int(args[2])
+                            length = int(args[3])
+                            out_var = args[4]
+                            list_val = ctx.variables.get(list_name, "")
+                            if list_val:
+                                items = list_val.split(";")
+                                # Handle negative length (means all remaining)
+                                if length < 0:
+                                    sublist = items[begin:]
+                                else:
+                                    sublist = items[begin : begin + length]
+                                ctx.variables[out_var] = ";".join(sublist)
+                            else:
+                                ctx.variables[out_var] = ""
+                        except ValueError:
+                            if strict:
+                                ctx.print_error(
+                                    "list(SUBLIST) begin and length must be integers",
+                                    cmd.line,
+                                )
+                                sys.exit(1)
+
+                elif subcommand == "TRANSFORM":
+                    # list(TRANSFORM <list> <ACTION> [<SELECTOR>] [OUTPUT_VARIABLE <output variable>])
+                    # Simplified implementation - just handle basic TOUPPER/TOLOWER/STRIP
+                    if len(args) < 3:
+                        if strict:
+                            ctx.print_error(
+                                "list(TRANSFORM) requires list and action", cmd.line
+                            )
+                            sys.exit(1)
+                    else:
+                        list_name = args[1]
+                        action = args[2].upper()
+                        # Check for OUTPUT_VARIABLE
+                        out_var = list_name
+                        if "OUTPUT_VARIABLE" in args:
+                            idx = args.index("OUTPUT_VARIABLE")
+                            if idx + 1 < len(args):
+                                out_var = args[idx + 1]
+
+                        list_val = ctx.variables.get(list_name, "")
+                        if list_val:
+                            items = list_val.split(";")
+                            if action == "TOUPPER":
+                                items = [item.upper() for item in items]
+                            elif action == "TOLOWER":
+                                items = [item.lower() for item in items]
+                            elif action == "STRIP":
+                                items = [item.strip() for item in items]
+                            ctx.variables[out_var] = ";".join(items)
+
+                elif subcommand == "FILTER":
+                    # list(FILTER <list> <INCLUDE|EXCLUDE> REGEX <regex>)
+                    if len(args) < 5:
+                        if strict:
+                            ctx.print_error(
+                                "list(FILTER) requires list, mode, REGEX, and pattern",
+                                cmd.line,
+                            )
+                            sys.exit(1)
+                    else:
+                        list_name = args[1]
+                        mode = args[2].upper()
+                        if args[3].upper() == "REGEX" and len(args) >= 5:
+                            pattern = args[4]
+                            list_val = ctx.variables.get(list_name, "")
+                            if list_val:
+                                items = list_val.split(";")
+                                import re as regex_module
+
+                                if mode == "INCLUDE":
+                                    items = [
+                                        item
+                                        for item in items
+                                        if regex_module.search(pattern, item)
+                                    ]
+                                elif mode == "EXCLUDE":
+                                    items = [
+                                        item
+                                        for item in items
+                                        if not regex_module.search(pattern, item)
+                                    ]
+                                ctx.variables[list_name] = ";".join(items)
+                else:
+                    if strict:
+                        ctx.print_error(
+                            f"list() unknown subcommand: {subcommand}", cmd.line
+                        )
+                        sys.exit(1)
+
             case "include":
                 if args:
                     module_name = args[0]
