@@ -1049,10 +1049,11 @@ def handle_set(
     ctx: BuildContext,
     cmd: Command,
     args: list[str],
+    strict: bool,
 ) -> None:
     """Handle set() command."""
     if args:
-        var_name = args[0]
+        var_name = ctx.expand_variables(args[0], strict, cmd.line)
         values = args[1:]
 
         # Handle CMAKE_POLICY_DEFAULT_CMPxxxx specially
@@ -1108,12 +1109,14 @@ def handle_set(
 
 def handle_unset(
     ctx: BuildContext,
+    cmd: Command,
     args: list[str],
+    strict: bool,
 ) -> None:
     """Handle unset() command."""
     if not args:
         return
-    var_name = args[0]
+    var_name = ctx.expand_variables(args[0], strict, cmd.line)
     scope = args[1].upper() if len(args) > 1 else ""
     if scope == "PARENT_SCOPE":
         # Signal caller to remove the variable

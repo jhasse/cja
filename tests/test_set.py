@@ -80,3 +80,14 @@ def test_unset_cache() -> None:
 
     assert "CACHED" not in ctx.cache_variables
     assert ctx.variables["CACHED"] == "1"
+
+
+def test_set_expands_variable_name() -> None:
+    """Test set with variable name expansion."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="set", args=["VAR_NAME", "FOO"], line=1),
+        Command(name="set", args=["${VAR_NAME}", "bar"], line=2),
+    ]
+    process_commands(commands, ctx)
+    assert ctx.variables["FOO"] == "bar"

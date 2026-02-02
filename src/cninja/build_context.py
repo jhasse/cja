@@ -122,7 +122,13 @@ class BuildContext:
                 return ""
             return self.variables.get(var_name, "")
 
-        return re.sub(r"\$\{(\w+)\}", replace, value)
+        result = value
+        for _ in range(10):
+            expanded = re.sub(r"\$\{(\w+)\}", replace, result)
+            if expanded == result:
+                break
+            result = expanded
+        return result
 
 
 def find_matching_endif(commands: list[Command], start: int, ctx: BuildContext) -> int:

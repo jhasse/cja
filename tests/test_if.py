@@ -120,6 +120,24 @@ class TestIfCommand:
         process_commands(commands, ctx)
         assert "X is 2" in capsys.readouterr().out
 
+    def test_nested_variable_expansion_in_condition(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+        commands = [
+            Command(name="set", args=["NAME", "foo"], line=1),
+            Command(name="set", args=["CPM_foo_SOURCE", "srcdir"], line=2),
+            Command(
+                name="if",
+                args=["NOT", "${CPM_${NAME}_SOURCE}", "STREQUAL", ""],
+                line=3,
+            ),
+            Command(name="message", args=["STATUS", "has source"], line=4),
+            Command(name="endif", args=[], line=5),
+        ]
+        process_commands(commands, ctx)
+        assert "has source" in capsys.readouterr().out
+
     def test_nested_if(self, capsys: pytest.CaptureFixture[str]) -> None:
         ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
         ctx.variables["A"] = "yes"

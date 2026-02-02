@@ -623,10 +623,10 @@ def process_commands(
                 continue
 
             case "set":
-                handle_set(ctx, cmd, args)
+                handle_set(ctx, cmd, args, strict)
 
             case "unset":
-                handle_unset(ctx, args)
+                handle_unset(ctx, cmd, args, strict)
 
             case "option":
                 handle_option(ctx, args)
