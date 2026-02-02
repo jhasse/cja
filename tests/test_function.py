@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from cninja.generator import BuildContext, process_commands
 from cninja.parser import Command
 
@@ -72,7 +74,9 @@ def test_function_scope() -> None:
     ctx.variables["OUTER"] = "original"
     commands = [
         Command(name="function", args=["scope_test"], line=1),
-        Command(name="set", args=["OUTER", "modified"], line=2),  # Should not affect outer
+        Command(
+            name="set", args=["OUTER", "modified"], line=2
+        ),  # Should not affect outer
         Command(name="set", args=["INNER", "value"], line=3),  # Should not leak out
         Command(name="endfunction", args=[], line=4),
         Command(name="scope_test", args=[], line=5),
@@ -112,3 +116,23 @@ def test_function_argv_indexed() -> None:
 
     assert ctx.variables["FIRST"] == "alpha"
     assert ctx.variables["SECOND"] == "beta"
+
+
+def test_function_error_uses_defining_file(capsys: pytest.CaptureFixture[str]) -> None:
+    """Errors inside functions should report the function's defining file."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    ctx.current_list_file = Path("defs/CMakeLists.txt")
+    commands = [
+        Command(name="function", args=["bad_func"], line=1),
+        Command(name="not_a_command", args=[], line=2),
+        Command(name="endfunction", args=[], line=3),
+    ]
+    process_commands(commands, ctx)
+
+    ctx.current_list_file = Path("caller/CMakeLists.txt")
+    with pytest.raises(SystemExit):
+        process_commands([Command(name="bad_func", args=[], line=10)], ctx, strict=True)
+
+    err = capsys.readouterr().err
+    assert "defs/CMakeLists.txt:2:" in err
+    assert "caller/CMakeLists.txt" not in err

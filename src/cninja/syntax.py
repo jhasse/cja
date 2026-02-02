@@ -21,6 +21,7 @@ class FunctionDef:
     name: str
     params: list[str]
     body: list  # list[Command] - forward reference
+    defining_file: Path
 
 
 @dataclass

@@ -1201,6 +1201,7 @@ def handle_function(
         name=func_name,
         params=func_params,
         body=body,
+        defining_file=ctx.current_list_file,
     )
 
     # Skip to after endfunction

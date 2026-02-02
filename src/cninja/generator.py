@@ -2157,6 +2157,7 @@ int main() {{
                     func_def = ctx.functions[name]
                     # Save current variables for function scope
                     saved_vars = ctx.variables.copy()
+                    saved_current_list_file = ctx.current_list_file
 
                     # Set up function arguments
                     # ARGC = number of arguments
@@ -2179,6 +2180,15 @@ int main() {{
                     # Clear parent_scope_vars before calling
                     ctx.parent_scope_vars.clear()
 
+                    # Use the function's defining list file for error reporting
+                    ctx.current_list_file = func_def.defining_file
+                    ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(
+                        func_def.defining_file
+                    )
+                    ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
+                        func_def.defining_file.parent
+                    )
+
                     # Execute function body
                     try:
                         process_commands(func_def.body, ctx, trace, strict)
@@ -2190,6 +2200,9 @@ int main() {{
                     for var_name, var_value in ctx.parent_scope_vars.items():
                         saved_vars[var_name] = var_value
                     ctx.parent_scope_vars.clear()
+
+                    # Restore list file context
+                    ctx.current_list_file = saved_current_list_file
 
                     # Restore variables
                     ctx.variables = saved_vars
