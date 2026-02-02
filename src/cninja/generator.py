@@ -500,9 +500,9 @@ def process_commands(
     """Process CMake commands and populate the build context."""
     # Ensure CMAKE_COMMAND is always set
     ctx.variables["CMAKE_COMMAND"] = "cninja"
-    i = 0
-    while i < len(commands):
-        cmd = commands[i]
+    program_counter = 0
+    while program_counter < len(commands):
+        cmd = commands[program_counter]
         expanded_args: list[str] = []
         for idx, arg in enumerate(cmd.args):
             expanded = ctx.expand_variables(arg, strict, cmd.line)
@@ -521,13 +521,13 @@ def process_commands(
         match cmd.name:
             case "if":
                 # Find matching endif
-                endif_idx = find_matching_endif(commands, i, ctx)
+                endif_idx = find_matching_endif(commands, program_counter, ctx)
                 # Find elseif/else blocks
-                blocks = find_else_or_elseif(commands, i, endif_idx)
+                blocks = find_else_or_elseif(commands, program_counter, endif_idx)
 
                 # Determine which block to execute
                 executed = False
-                block_start = i + 1
+                block_start = program_counter + 1
 
                 # Check the if condition
                 if_args = [
@@ -573,7 +573,7 @@ def process_commands(
                             executed = True
 
                 # Skip to after endif
-                i = endif_idx + 1
+                program_counter = endif_idx + 1
                 continue
 
             case "endif" | "else" | "elseif":
@@ -588,8 +588,8 @@ def process_commands(
                     )
 
                 # Find matching endforeach
-                endforeach_idx = find_matching_endforeach(commands, i, ctx)
-                body = commands[i + 1 : endforeach_idx]
+                endforeach_idx = find_matching_endforeach(commands, program_counter, ctx)
+                body = commands[program_counter + 1 : endforeach_idx]
 
                 loop_var = cmd.args[0]  # Use unexpanded for variable name
                 remaining = args[1:]  # Use expanded args for values
@@ -633,7 +633,7 @@ def process_commands(
                     process_commands(body, ctx, trace, strict)
 
                 # Skip to after endforeach
-                i = endforeach_idx + 1
+                program_counter = endforeach_idx + 1
                 continue
 
             case "endforeach":
@@ -644,8 +644,8 @@ def process_commands(
                     ctx.raise_syntax_error("function() requires a name", cmd.line)
 
                 # Find matching endfunction
-                endfunction_idx = find_matching_endfunction(commands, i, ctx)
-                body = commands[i + 1 : endfunction_idx]
+                endfunction_idx = find_matching_endfunction(commands, program_counter, ctx)
+                body = commands[program_counter + 1 : endfunction_idx]
 
                 func_name = cmd.args[0].lower()  # CMake functions are case-insensitive
                 func_params = cmd.args[1:]  # Parameter names
@@ -658,7 +658,7 @@ def process_commands(
                 )
 
                 # Skip to after endfunction
-                i = endfunction_idx + 1
+                program_counter = endfunction_idx + 1
                 continue
 
             case "endfunction":
@@ -669,8 +669,8 @@ def process_commands(
                     ctx.raise_syntax_error("macro() requires a name", cmd.line)
 
                 # Find matching endmacro
-                endmacro_idx = find_matching_endmacro(commands, i, ctx)
-                body = commands[i + 1 : endmacro_idx]
+                endmacro_idx = find_matching_endmacro(commands, program_counter, ctx)
+                body = commands[program_counter + 1 : endmacro_idx]
 
                 macro_name = cmd.args[0].lower()  # CMake macros are case-insensitive
                 macro_params = cmd.args[1:]  # Parameter names
@@ -683,7 +683,7 @@ def process_commands(
                 )
 
                 # Skip to after endmacro
-                i = endmacro_idx + 1
+                program_counter = endmacro_idx + 1
                 continue
 
             case "endmacro":
@@ -710,7 +710,7 @@ def process_commands(
                         ctx.variables[var_name] = "NEW"
                     elif subcommand in ("PUSH", "POP", "VERSION"):
                         pass
-                i += 1
+                program_counter += 1
                 continue
 
             case "cmake_minimum_required":
@@ -963,7 +963,7 @@ def process_commands(
                             )
                         # For NEW, silently accept (this is what we want)
                         # Don't actually set the variable, just acknowledge it
-                        i += 1
+                        program_counter += 1
                         continue
 
                     # Filter out CACHE, PARENT_SCOPE, and track FORCE
@@ -1074,7 +1074,7 @@ def process_commands(
                             cmd.line,
                         )
                         sys.exit(1)
-                    i += 1
+                    program_counter += 1
                     continue
 
                 subcommand = args[0].upper()
@@ -1212,7 +1212,7 @@ def process_commands(
                                 except ValueError:
                                     pass
                             items = [
-                                item for i, item in enumerate(items) if i not in idx_set
+                                item for program_counter, item in enumerate(items) if program_counter not in idx_set
                             ]
                             ctx.variables[list_name] = ";".join(items)
 
@@ -1729,7 +1729,7 @@ int main() {{
                             cmd.line,
                         )
                         sys.exit(1)
-                    i += 1
+                    program_counter += 1
                     continue
 
                 scope_type = args[0].upper()
@@ -1741,7 +1741,7 @@ int main() {{
                             "set_property() requires PROPERTY keyword", cmd.line
                         )
                         sys.exit(1)
-                    i += 1
+                    program_counter += 1
                     continue
 
                 prop_idx = args.index("PROPERTY")
@@ -1768,7 +1768,7 @@ int main() {{
                             cmd.line,
                         )
                         sys.exit(1)
-                    i += 1
+                    program_counter += 1
                     continue
 
                 prop_name = args[prop_idx + 1]
@@ -1903,7 +1903,7 @@ int main() {{
                             cmd.line,
                         )
                         sys.exit(1)
-                    i += 1
+                    program_counter += 1
                     continue
 
                 var_name = args[0]
@@ -1916,7 +1916,7 @@ int main() {{
                             "get_property() requires PROPERTY keyword", cmd.line
                         )
                         sys.exit(1)
-                    i += 1
+                    program_counter += 1
                     continue
 
                 prop_idx = args.index("PROPERTY")
@@ -1929,7 +1929,7 @@ int main() {{
                             cmd.line,
                         )
                         sys.exit(1)
-                    i += 1
+                    program_counter += 1
                     continue
 
                 prop_name = args[prop_idx + 1]
@@ -2025,7 +2025,7 @@ int main() {{
                             cmd.line,
                         )
                         sys.exit(1)
-                    i += 1
+                    program_counter += 1
                     continue
 
                 var_name = args[0]
@@ -3130,7 +3130,7 @@ int main() {{
                     sys.exit(1)
                 # Ignore unknown commands by default
 
-        i += 1
+        program_counter += 1
 
 
 def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
