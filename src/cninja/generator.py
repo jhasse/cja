@@ -1,5 +1,6 @@
 """Ninja build file generator."""
 
+from dataclasses import dataclass, field
 import hashlib
 import platform
 import shlex
@@ -11,7 +12,7 @@ import urllib.request
 import zipfile
 import glob as py_glob
 from pathlib import Path
-from typing import cast
+from typing import Callable, cast
 
 from .utils import make_relative
 from .syntax import (
@@ -69,6 +70,21 @@ class ReturnFromFunction(Exception):
     """Exception raised to exit early from a function."""
 
     pass
+
+
+@dataclass
+class Frame:
+    commands: list[Command] | None
+    pc: int = 0
+    on_exit: Callable[[], None] | None = None
+    kind: str = "commands"
+    foreach_items: list[str] = field(default_factory=list)
+    foreach_index: int = 0
+    foreach_loop_var: str = ""
+    foreach_body: list[Command] | None = None
+    fetchcontent_names: list[str] = field(default_factory=list)
+    fetchcontent_index: int = 0
+    fetchcontent_cmd: Command | None = None
 
 
 def is_header(filename: str) -> bool:
@@ -155,22 +171,19 @@ def handle_add_subdirectory(
             sys.exit(1)
 
 
-def handle_if(
+def select_if_block(
     ctx: BuildContext,
     commands: list[Command],
     pc: int,
-    trace: bool,
     strict: bool,
-) -> int:
-    """Handle if() command."""
+) -> tuple[int, tuple[int, int] | None]:
+    """Select the if/elseif/else block to execute."""
     cmd = commands[pc]
     # Find matching endif
     endif_idx = find_matching_endif(commands, pc, ctx)
     # Find elseif/else blocks
     blocks = find_else_or_elseif(commands, pc, endif_idx)
 
-    # Determine which block to execute
-    executed = False
     block_start = pc + 1
 
     # Check the if condition
@@ -178,45 +191,33 @@ def handle_if(
     if evaluate_condition(if_args, ctx.variables):
         # Execute commands from if to first elseif/else or endif
         block_end = blocks[0][1] if blocks else endif_idx
-        process_commands(commands[block_start:block_end], ctx, trace, strict)
-        executed = True
-    else:
-        # Check elseif/else blocks
-        for j, (block_type, block_idx, block_args) in enumerate(blocks):
-            if executed:
-                break
-            if block_type == "elseif":
-                elseif_args = [
-                    ctx.expand_variables(arg, strict, commands[block_idx].line)
-                    for arg in block_args
-                ]
-                if evaluate_condition(elseif_args, ctx.variables):
-                    # Execute this elseif block
-                    block_start = block_idx + 1
-                    block_end = blocks[j + 1][1] if j + 1 < len(blocks) else endif_idx
-                    process_commands(
-                        commands[block_start:block_end], ctx, trace, strict
-                    )
-                    executed = True
-            elif block_type == "else":
-                # Execute else block
+        return endif_idx, (block_start, block_end)
+
+    # Check elseif/else blocks
+    for j, (block_type, block_idx, block_args) in enumerate(blocks):
+        if block_type == "elseif":
+            elseif_args = [
+                ctx.expand_variables(arg, strict, commands[block_idx].line)
+                for arg in block_args
+            ]
+            if evaluate_condition(elseif_args, ctx.variables):
                 block_start = block_idx + 1
-                process_commands(commands[block_start:endif_idx], ctx, trace, strict)
-                executed = True
+                block_end = blocks[j + 1][1] if j + 1 < len(blocks) else endif_idx
+                return endif_idx, (block_start, block_end)
+        elif block_type == "else":
+            block_start = block_idx + 1
+            return endif_idx, (block_start, endif_idx)
 
-    # Return next command index
-    return endif_idx + 1
+    return endif_idx, None
 
 
-def handle_foreach(
+def build_foreach_info(
     ctx: BuildContext,
     commands: list[Command],
     pc: int,
     args: list[str],
-    trace: bool,
-    strict: bool,
-) -> int:
-    """Handle foreach() command."""
+) -> tuple[int, str, list[str], list[Command]]:
+    """Build foreach() iteration info."""
     cmd = commands[pc]
     if not args:
         ctx.raise_syntax_error("foreach() requires at least a loop variable", cmd.line)
@@ -261,13 +262,7 @@ def handle_foreach(
         # foreach(var item1 item2 ...)
         items = remaining
 
-    # Execute body for each item
-    for item in items:
-        ctx.variables[loop_var] = item
-        process_commands(body, ctx, trace, strict)
-
-    # Return next command index
-    return endforeach_idx + 1
+    return endforeach_idx, loop_var, items, body
 
 
 def process_commands(
@@ -279,13 +274,167 @@ def process_commands(
     """Process CMake commands and populate the build context."""
     # Ensure CMAKE_COMMAND is always set
     ctx.variables["CMAKE_COMMAND"] = "cninja"
-    program_counter = 0
-    while program_counter < len(commands):
-        cmd = commands[program_counter]
+    stack: list[Frame] = [Frame(commands=commands, pc=0, kind="commands")]
+    while stack:
+        frame = stack[-1]
+        if frame.kind == "foreach":
+            if frame.foreach_index >= len(frame.foreach_items):
+                if frame.on_exit:
+                    frame.on_exit()
+                stack.pop()
+                continue
+            ctx.variables[frame.foreach_loop_var] = frame.foreach_items[
+                frame.foreach_index
+            ]
+            frame.foreach_index += 1
+            stack.append(Frame(commands=frame.foreach_body, pc=0, kind="commands"))
+            continue
+        if frame.kind == "fetchcontent":
+            if frame.fetchcontent_index >= len(frame.fetchcontent_names):
+                if frame.on_exit:
+                    frame.on_exit()
+                stack.pop()
+                continue
+            name = frame.fetchcontent_names[frame.fetchcontent_index]
+            frame.fetchcontent_index += 1
+            info = ctx.fetched_content.get(name.lower())
+            if not info:
+                if strict:
+                    cmd_line = (
+                        frame.fetchcontent_cmd.line if frame.fetchcontent_cmd else 0
+                    )
+                    ctx.print_error(
+                        f"FetchContent_MakeAvailable called for undeclared content: {name}",
+                        cmd_line,
+                    )
+                    sys.exit(1)
+                continue
+
+            url = None
+            url_hash = None
+            arg_idx = 0
+            while arg_idx < len(info.args):
+                if info.args[arg_idx] == "URL" and arg_idx + 1 < len(info.args):
+                    url = info.args[arg_idx + 1]
+                    arg_idx += 2
+                elif info.args[arg_idx] == "URL_HASH" and arg_idx + 1 < len(info.args):
+                    url_hash = info.args[arg_idx + 1]
+                    arg_idx += 2
+                else:
+                    arg_idx += 1
+
+            if url:
+                deps_dir = ctx.build_dir / "_deps"
+                deps_dir.mkdir(parents=True, exist_ok=True)
+
+                src_dir = deps_dir / f"{name.lower()}-src"
+
+                if not src_dir.exists():
+                    print(f"Downloading {name} from {url}")
+                    download_file = deps_dir / Path(url).name
+
+                    with Progress(
+                        TextColumn("[bold blue]{task.description}"),
+                        BarColumn(),
+                        DownloadColumn(),
+                        TransferSpeedColumn(),
+                        "•",
+                        TimeRemainingColumn(),
+                    ) as progress:
+                        task_id = progress.add_task(description="", total=None)
+
+                        with urllib.request.urlopen(url) as response:
+                            total_size = response.info().get("Content-Length")
+                            if total_size:
+                                progress.update(task_id, total=int(total_size))
+
+                            with open(download_file, "wb") as f:
+                                while True:
+                                    chunk = response.read(16384)
+                                    if not chunk:
+                                        break
+                                    f.write(chunk)
+                                    progress.update(task_id, advance=len(chunk))
+
+                    if url_hash:
+                        algo, expected = url_hash.split("=")
+                        h = hashlib.new(algo.lower())
+                        h.update(download_file.read_bytes())
+                        actual = h.hexdigest()
+                        if actual.lower() != expected.lower():
+                            raise RuntimeError(
+                                f"Hash mismatch for {url}: expected {expected}, got {actual}"
+                            )
+
+                    src_dir.mkdir(parents=True, exist_ok=True)
+                    if url.endswith(".zip"):
+                        with zipfile.ZipFile(download_file, "r") as zip_ref:
+                            zip_ref.extractall(src_dir)
+                    elif url.endswith((".tar.gz", ".tgz", ".tar.xz", ".tar.bz2")):
+                        with tarfile.open(download_file, "r:*") as tar_ref:
+                            tar_ref.extractall(src_dir)
+
+                ctx.variables[f"{name.lower()}_SOURCE_DIR"] = str(src_dir)
+                ctx.variables[f"{name.lower()}_BINARY_DIR"] = str(
+                    ctx.build_dir / "_deps" / f"{name.lower()}-build"
+                )
+                ctx.variables[f"{name.lower()}_POPULATED"] = "TRUE"
+
+                actual_src_dir = src_dir
+                contents = [p for p in src_dir.iterdir() if not p.name.startswith(".")]
+                if len(contents) == 1 and contents[0].is_dir():
+                    actual_src_dir = contents[0]
+
+                ctx.variables[f"{name.lower()}_SOURCE_DIR"] = str(actual_src_dir)
+                ctx.variables[f"{name.lower()}_BINARY_DIR"] = str(
+                    ctx.build_dir / "_deps" / f"{name.lower()}-build"
+                )
+                ctx.variables[f"{name.lower()}_POPULATED"] = "TRUE"
+
+                sub_cmakelists = actual_src_dir / "CMakeLists.txt"
+                if sub_cmakelists.exists():
+                    from .parser import parse_file
+
+                    sub_commands = parse_file(sub_cmakelists)
+
+                    saved_current_source_dir = ctx.current_source_dir
+                    saved_current_list_file = ctx.current_list_file
+                    saved_vars = ctx.variables.copy()
+                    ctx.parent_scope_vars = {}
+
+                    ctx.current_source_dir = actual_src_dir
+                    ctx.current_list_file = sub_cmakelists
+                    ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = str(actual_src_dir)
+                    ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(sub_cmakelists)
+                    ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(sub_cmakelists.parent)
+                    ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(ctx.build_dir)
+
+                    def on_exit() -> None:
+                        parent_scope_updates = ctx.parent_scope_vars
+                        ctx.current_source_dir = saved_current_source_dir
+                        ctx.current_list_file = saved_current_list_file
+                        ctx.variables = saved_vars
+                        for var, val in parent_scope_updates.items():
+                            if val is None:
+                                ctx.variables.pop(var, None)
+                            else:
+                                ctx.variables[var] = val
+                        ctx.parent_scope_vars.clear()
+
+                    stack.append(Frame(commands=sub_commands, on_exit=on_exit))
+            continue
+
+        current_commands = cast(list[Command], frame.commands)
+        if frame.pc >= len(current_commands):
+            if frame.on_exit:
+                frame.on_exit()
+            stack.pop()
+            continue
+
+        cmd = current_commands[frame.pc]
         expanded_args: list[str] = []
         for idx, arg in enumerate(cmd.args):
             expanded = ctx.expand_variables(arg, strict, cmd.line)
-            # In CMake, unquoted arguments are split on semicolons
             quoted = cmd.is_quoted[idx] if idx < len(cmd.is_quoted) else False
             if ";" in expanded and not quoted:
                 expanded_args.extend(expanded.split(";"))
@@ -299,19 +448,33 @@ def process_commands(
 
         match cmd.name:
             case "if":
-                program_counter = handle_if(
-                    ctx, commands, program_counter, trace, strict
+                endif_idx, block = select_if_block(
+                    ctx, current_commands, frame.pc, strict
                 )
+                frame.pc = endif_idx + 1
+                if block:
+                    block_start, block_end = block
+                    stack.append(
+                        Frame(commands=current_commands[block_start:block_end])
+                    )
                 continue
 
             case "endif" | "else" | "elseif":
-                # These should only be encountered when processing top-level commands
-                # and indicate mismatched if/endif
                 ctx.raise_syntax_error(f"Unexpected {cmd.name}()", cmd.line)
 
             case "foreach":
-                program_counter = handle_foreach(
-                    ctx, commands, program_counter, args, trace, strict
+                endforeach_idx, loop_var, items, body = build_foreach_info(
+                    ctx, current_commands, frame.pc, args
+                )
+                frame.pc = endforeach_idx + 1
+                stack.append(
+                    Frame(
+                        commands=None,
+                        kind="foreach",
+                        foreach_items=items,
+                        foreach_loop_var=loop_var,
+                        foreach_body=body,
+                    )
                 )
                 continue
 
@@ -319,22 +482,35 @@ def process_commands(
                 ctx.raise_syntax_error("Unexpected endforeach()", cmd.line)
 
             case "function":
-                program_counter = handle_function(ctx, commands, program_counter, args)
+                frame.pc = handle_function(ctx, current_commands, frame.pc, args)
                 continue
 
             case "endfunction":
                 ctx.raise_syntax_error("Unexpected endfunction()", cmd.line)
 
             case "macro":
-                program_counter = handle_macro(ctx, commands, program_counter, args)
+                frame.pc = handle_macro(ctx, current_commands, frame.pc, args)
                 continue
 
             case "endmacro":
                 ctx.raise_syntax_error("Unexpected endmacro()", cmd.line)
 
             case "return":
-                # Exit from current function early
-                raise ReturnFromFunction()
+                func_index = next(
+                    (
+                        i
+                        for i in range(len(stack) - 1, -1, -1)
+                        if stack[i].kind == "function"
+                    ),
+                    None,
+                )
+                if func_index is None:
+                    raise ReturnFromFunction()
+                while len(stack) > func_index:
+                    popped = stack.pop()
+                    if popped.on_exit:
+                        popped.on_exit()
+                continue
 
             case "cmake_policy":
                 if args:
@@ -349,15 +525,14 @@ def process_commands(
                             )
                     elif subcommand == "GET" and len(args) >= 3:
                         var_name = args[2]
-                        # cninja always uses NEW behavior
                         ctx.variables[var_name] = "NEW"
                     elif subcommand in ("PUSH", "POP", "VERSION"):
                         pass
-                program_counter += 1
+                frame.pc += 1
                 continue
 
             case "cmake_minimum_required":
-                pass  # Just acknowledge it
+                pass
 
             case "project":
                 if args:
@@ -380,8 +555,6 @@ def process_commands(
                     sub_dir_name = args[0]
                     sub_source_dir = ctx.current_source_dir / sub_dir_name
                     if not sub_source_dir.exists():
-                        # Try relative to the root source dir as well?
-                        # CMake usually expects it relative to current source dir.
                         pass
 
                     sub_cmakelists = sub_source_dir / "CMakeLists.txt"
@@ -390,14 +563,12 @@ def process_commands(
 
                         sub_commands = parse_file(sub_cmakelists)
 
-                        # Save current state
                         saved_current_source_dir = ctx.current_source_dir
                         saved_current_list_file = ctx.current_list_file
                         saved_parent_directory = ctx.parent_directory
                         saved_vars = ctx.variables.copy()
                         ctx.parent_scope_vars = {}
 
-                        # Update current_source_dir for the subdirectory
                         ctx.current_source_dir = sub_source_dir
                         ctx.current_list_file = sub_cmakelists
                         ctx.parent_directory = str(saved_current_source_dir)
@@ -406,17 +577,10 @@ def process_commands(
                         ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
                             sub_cmakelists.parent
                         )
-                        # For now, CMAKE_CURRENT_BINARY_DIR is the same as CMAKE_BINARY_DIR
-                        # since we don't support separate binary dirs for subdirectories yet
                         ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(ctx.build_dir)
 
-                        try:
-                            process_commands(sub_commands, ctx, trace, strict)
-                        finally:
-                            # Apply PARENT_SCOPE changes
+                        def on_exit() -> None:
                             parent_scope_updates = ctx.parent_scope_vars
-
-                            # Restore state
                             ctx.current_source_dir = saved_current_source_dir
                             ctx.current_list_file = saved_current_list_file
                             ctx.parent_directory = saved_parent_directory
@@ -426,12 +590,17 @@ def process_commands(
                                     ctx.variables.pop(var, None)
                                 else:
                                     ctx.variables[var] = val
+                            ctx.parent_scope_vars.clear()
+
+                        stack.append(Frame(commands=sub_commands, on_exit=on_exit))
                     elif strict:
                         ctx.print_error(
                             f'add_subdirectory given source "{sub_dir_name}" which does not exist.',
                             cmd.line,
                         )
                         sys.exit(1)
+                frame.pc += 1
+                continue
 
             case "fetchcontent_declare":
                 if len(args) >= 2:
@@ -441,159 +610,16 @@ def process_commands(
                     )
 
             case "fetchcontent_makeavailable":
-                for name in args:
-                    info = ctx.fetched_content.get(name.lower())
-                    if not info:
-                        if strict:
-                            ctx.print_error(
-                                f"FetchContent_MakeAvailable called for undeclared content: {name}",
-                                cmd.line,
-                            )
-                            sys.exit(1)
-                        continue
-
-                    # Process declaration arguments
-                    url = None
-                    url_hash = None
-
-                    arg_idx = 0
-                    while arg_idx < len(info.args):
-                        if info.args[arg_idx] == "URL" and arg_idx + 1 < len(info.args):
-                            url = info.args[arg_idx + 1]
-                            arg_idx += 2
-                        elif info.args[arg_idx] == "URL_HASH" and arg_idx + 1 < len(
-                            info.args
-                        ):
-                            url_hash = info.args[arg_idx + 1]
-                            arg_idx += 2
-                        else:
-                            arg_idx += 1
-
-                    if url:
-                        # Download and extract
-                        deps_dir = ctx.build_dir / "_deps"
-                        deps_dir.mkdir(parents=True, exist_ok=True)
-
-                        src_dir = deps_dir / f"{name.lower()}-src"
-
-                        if not src_dir.exists():
-                            # Download
-                            print(f"Downloading {name} from {url}")
-                            download_file = deps_dir / Path(url).name
-
-                            with Progress(
-                                TextColumn("[bold blue]{task.description}"),
-                                BarColumn(),
-                                DownloadColumn(),
-                                TransferSpeedColumn(),
-                                "•",
-                                TimeRemainingColumn(),
-                            ) as progress:
-                                task_id = progress.add_task(description="", total=None)
-
-                                with urllib.request.urlopen(url) as response:
-                                    total_size = response.info().get("Content-Length")
-                                    if total_size:
-                                        progress.update(task_id, total=int(total_size))
-
-                                    with open(download_file, "wb") as f:
-                                        while True:
-                                            chunk = response.read(16384)
-                                            if not chunk:
-                                                break
-                                            f.write(chunk)
-                                            progress.update(task_id, advance=len(chunk))
-
-                            # Verify hash
-                            if url_hash:
-                                algo, expected = url_hash.split("=")
-                                h = hashlib.new(algo.lower())
-                                h.update(download_file.read_bytes())
-                                actual = h.hexdigest()
-                                if actual.lower() != expected.lower():
-                                    raise RuntimeError(
-                                        f"Hash mismatch for {url}: expected {expected}, got {actual}"
-                                    )
-
-                            # Extract
-                            src_dir.mkdir(parents=True, exist_ok=True)
-                            if url.endswith(".zip"):
-                                with zipfile.ZipFile(download_file, "r") as zip_ref:
-                                    zip_ref.extractall(src_dir)
-                            elif url.endswith(
-                                (".tar.gz", ".tgz", ".tar.xz", ".tar.bz2")
-                            ):
-                                with tarfile.open(download_file, "r:*") as tar_ref:
-                                    tar_ref.extractall(src_dir)
-
-                        # Set variables
-                        ctx.variables[f"{name.lower()}_SOURCE_DIR"] = str(src_dir)
-                        ctx.variables[f"{name.lower()}_BINARY_DIR"] = str(
-                            ctx.build_dir / "_deps" / f"{name.lower()}-build"
-                        )
-                        ctx.variables[f"{name.lower()}_POPULATED"] = "TRUE"
-
-                        # Resolve the actual source dir (some archives have a top-level folder)
-                        actual_src_dir = src_dir
-                        contents = [
-                            p for p in src_dir.iterdir() if not p.name.startswith(".")
-                        ]
-                        if len(contents) == 1 and contents[0].is_dir():
-                            actual_src_dir = contents[0]
-
-                        # Set variables
-                        ctx.variables[f"{name.lower()}_SOURCE_DIR"] = str(
-                            actual_src_dir
-                        )
-                        ctx.variables[f"{name.lower()}_BINARY_DIR"] = str(
-                            ctx.build_dir / "_deps" / f"{name.lower()}-build"
-                        )
-                        ctx.variables[f"{name.lower()}_POPULATED"] = "TRUE"
-
-                        sub_cmakelists = actual_src_dir / "CMakeLists.txt"
-                        if sub_cmakelists.exists():
-                            from .parser import parse_file
-
-                            sub_commands = parse_file(sub_cmakelists)
-
-                            # Save current state
-                            saved_current_source_dir = ctx.current_source_dir
-                            saved_current_list_file = ctx.current_list_file
-                            saved_vars = ctx.variables.copy()
-                            ctx.parent_scope_vars = {}
-
-                            # Update current_source_dir for the subdirectory
-                            ctx.current_source_dir = actual_src_dir
-                            ctx.current_list_file = sub_cmakelists
-                            ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = str(
-                                actual_src_dir
-                            )
-                            ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(
-                                sub_cmakelists
-                            )
-                            ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
-                                sub_cmakelists.parent
-                            )
-                            ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(
-                                ctx.build_dir
-                            )
-
-                            try:
-                                process_commands(sub_commands, ctx, trace, strict)
-                            finally:
-                                # Apply PARENT_SCOPE changes
-                                parent_scope_updates = ctx.parent_scope_vars
-
-                                # Restore state
-                                ctx.current_source_dir = saved_current_source_dir
-                                ctx.current_list_file = saved_current_list_file
-                                ctx.variables = saved_vars
-
-                                for var, val in parent_scope_updates.items():
-                                    if val is None:
-                                        ctx.variables.pop(var, None)
-                                    else:
-                                        ctx.variables[var] = val
+                stack.append(
+                    Frame(
+                        commands=None,
+                        kind="fetchcontent",
+                        fetchcontent_names=args,
+                        fetchcontent_cmd=cmd,
+                    )
+                )
+                frame.pc += 1
+                continue
 
             case "set":
                 handle_set(ctx, cmd, args)
@@ -622,7 +648,7 @@ def process_commands(
                             cmd.line,
                         )
                         sys.exit(1)
-                    program_counter += 1
+                    frame.pc += 1
                     continue
 
                 subcommand = args[0].upper()
@@ -977,9 +1003,8 @@ def process_commands(
                             ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
                                 inc_file.parent
                             )
-                            try:
-                                process_commands(inc_commands, ctx, trace, strict)
-                            finally:
+
+                            def on_exit() -> None:
                                 ctx.current_list_file = saved_list_file
                                 ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(
                                     saved_list_file
@@ -987,6 +1012,10 @@ def process_commands(
                                 ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
                                     saved_list_file.parent
                                 )
+
+                            stack.append(Frame(commands=inc_commands, on_exit=on_exit))
+                            frame.pc += 1
+                            continue
                         elif strict:
                             ctx.print_error(
                                 f"include() could not find file: {module_name}",
@@ -1887,10 +1916,13 @@ int main() {{
 
                             saved_list_file = ctx.current_list_file
                             ctx.current_list_file = found_file
-                            try:
-                                process_commands(find_commands, ctx, trace, strict)
-                            finally:
+
+                            def on_exit() -> None:
                                 ctx.current_list_file = saved_list_file
+
+                            stack.append(Frame(commands=find_commands, on_exit=on_exit))
+                            frame.pc += 1
+                            continue
                         else:
                             # Unknown package
                             ctx.variables[f"{package_name}_FOUND"] = "FALSE"
@@ -2177,27 +2209,20 @@ int main() {{
                     saved_current_list_file = ctx.current_list_file
 
                     # Set up function arguments
-                    # ARGC = number of arguments
                     ctx.variables["ARGC"] = str(len(args))
-                    # ARGV = all arguments as semicolon-separated list
                     ctx.variables["ARGV"] = ";".join(args)
-                    # ARGVn = individual arguments
                     for idx, arg in enumerate(args):
                         ctx.variables[f"ARGV{idx}"] = arg
-                    # Named parameters
                     for idx, param in enumerate(func_def.params):
                         if idx < len(args):
                             ctx.variables[param] = args[idx]
                         else:
                             ctx.variables[param] = ""
-                    # ARGN = arguments after named parameters
                     extra_args = args[len(func_def.params) :]
                     ctx.variables["ARGN"] = ";".join(extra_args)
 
-                    # Clear parent_scope_vars before calling
                     ctx.parent_scope_vars.clear()
 
-                    # Use the function's defining list file for error reporting
                     ctx.current_list_file = func_def.defining_file
                     ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(
                         func_def.defining_file
@@ -2206,26 +2231,21 @@ int main() {{
                         func_def.defining_file.parent
                     )
 
-                    # Execute function body
-                    try:
-                        process_commands(func_def.body, ctx, trace, strict)
-                    except ReturnFromFunction:
-                        # return() was called, exit function early
-                        pass
+                    def on_exit() -> None:
+                        for var_name, var_value in ctx.parent_scope_vars.items():
+                            if var_value is None:
+                                saved_vars.pop(var_name, None)
+                            else:
+                                saved_vars[var_name] = var_value
+                        ctx.parent_scope_vars.clear()
+                        ctx.current_list_file = saved_current_list_file
+                        ctx.variables = saved_vars
 
-                    # Apply PARENT_SCOPE changes to saved_vars
-                    for var_name, var_value in ctx.parent_scope_vars.items():
-                        if var_value is None:
-                            saved_vars.pop(var_name, None)
-                        else:
-                            saved_vars[var_name] = var_value
-                    ctx.parent_scope_vars.clear()
-
-                    # Restore list file context
-                    ctx.current_list_file = saved_current_list_file
-
-                    # Restore variables
-                    ctx.variables = saved_vars
+                    frame.pc += 1
+                    stack.append(
+                        Frame(commands=func_def.body, on_exit=on_exit, kind="function")
+                    )
+                    continue
                 elif name in ctx.macros:
                     macro_def = ctx.macros[name]
                     # Macros don't create a new scope - they operate in the caller's scope
@@ -2267,46 +2287,44 @@ int main() {{
                     extra_args = args[len(macro_def.params) :]
                     ctx.variables["ARGN"] = ";".join(extra_args)
 
-                    # Execute macro body (no try/catch for ReturnFromFunction)
-                    # Macros can't use return()
-                    process_commands(macro_def.body, ctx, trace, strict)
-
-                    # Restore the special variables
-                    if saved_argc:
-                        ctx.variables["ARGC"] = saved_argc
-                    else:
-                        ctx.variables.pop("ARGC", None)
-
-                    if saved_argv:
-                        ctx.variables["ARGV"] = saved_argv
-                    else:
-                        ctx.variables.pop("ARGV", None)
-
-                    if saved_argn:
-                        ctx.variables["ARGN"] = saved_argn
-                    else:
-                        ctx.variables.pop("ARGN", None)
-
-                    # Restore ARGVn variables
-                    for idx in range(len(args)):
-                        key = f"ARGV{idx}"
-                        if key in saved_argv_vars:
-                            ctx.variables[key] = saved_argv_vars[key]
+                    def on_exit() -> None:
+                        if saved_argc:
+                            ctx.variables["ARGC"] = saved_argc
                         else:
-                            ctx.variables.pop(key, None)
+                            ctx.variables.pop("ARGC", None)
 
-                    # Restore parameter variables
-                    for param in macro_def.params:
-                        if param in saved_params:
-                            ctx.variables[param] = saved_params[param]
+                        if saved_argv:
+                            ctx.variables["ARGV"] = saved_argv
                         else:
-                            ctx.variables.pop(param, None)
+                            ctx.variables.pop("ARGV", None)
+
+                        if saved_argn:
+                            ctx.variables["ARGN"] = saved_argn
+                        else:
+                            ctx.variables.pop("ARGN", None)
+
+                        for idx in range(len(args)):
+                            key = f"ARGV{idx}"
+                            if key in saved_argv_vars:
+                                ctx.variables[key] = saved_argv_vars[key]
+                            else:
+                                ctx.variables.pop(key, None)
+
+                        for param in macro_def.params:
+                            if param in saved_params:
+                                ctx.variables[param] = saved_params[param]
+                            else:
+                                ctx.variables.pop(param, None)
+
+                    frame.pc += 1
+                    stack.append(Frame(commands=macro_def.body, on_exit=on_exit))
+                    continue
                 elif strict:
                     ctx.print_error(f"unsupported command: {cmd.name}()", cmd.line)
                     sys.exit(1)
                 # Ignore unknown commands by default
 
-        program_counter += 1
+        frame.pc += 1
 
 
 def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
