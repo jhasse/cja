@@ -129,6 +129,9 @@ class BuildContext:
     fetched_content: dict[str, FetchContentInfo] = field(
         default_factory=dict
     )  # For FetchContent
+    global_properties: dict[str, str] = field(
+        default_factory=dict
+    )  # Global properties set via set_property(GLOBAL ...)
 
     def __post_init__(self) -> None:
         self.current_source_dir = self.source_dir
@@ -1624,6 +1627,302 @@ int main() {{
                                     f"set_target_properties: property '{prop_name}' not yet supported",
                                     cmd.line,
                                 )
+
+            case "set_property":
+                # set_property(scope_type [scope_args] [APPEND] [APPEND_STRING] PROPERTY prop_name [values...])
+                if len(args) < 3:
+                    if strict:
+                        ctx.print_error(
+                            "set_property() requires scope, PROPERTY keyword, and property name",
+                            cmd.line,
+                        )
+                        sys.exit(1)
+                    i += 1
+                    continue
+
+                scope_type = args[0].upper()
+
+                # Find PROPERTY keyword
+                if "PROPERTY" not in args:
+                    if strict:
+                        ctx.print_error(
+                            "set_property() requires PROPERTY keyword", cmd.line
+                        )
+                        sys.exit(1)
+                    i += 1
+                    continue
+
+                prop_idx = args.index("PROPERTY")
+                scope_args = args[1:prop_idx]
+
+                # Check for APPEND or APPEND_STRING
+                append_mode = False
+                append_string = False
+                filtered_scope_args = []
+                for arg in scope_args:
+                    if arg == "APPEND":
+                        append_mode = True
+                    elif arg == "APPEND_STRING":
+                        append_string = True
+                        append_mode = True
+                    else:
+                        filtered_scope_args.append(arg)
+                scope_args = filtered_scope_args
+
+                if prop_idx + 1 >= len(args):
+                    if strict:
+                        ctx.print_error(
+                            "set_property() requires property name after PROPERTY keyword",
+                            cmd.line,
+                        )
+                        sys.exit(1)
+                    i += 1
+                    continue
+
+                prop_name = args[prop_idx + 1]
+                prop_values = args[prop_idx + 2 :]
+
+                if scope_type == "GLOBAL":
+                    # Global property
+                    if prop_values:
+                        value = (
+                            " ".join(prop_values)
+                            if append_string
+                            else ";".join(prop_values)
+                        )
+                        if append_mode and prop_name in ctx.global_properties:
+                            separator = "" if append_string else ";"
+                            ctx.global_properties[prop_name] += separator + value
+                        else:
+                            ctx.global_properties[prop_name] = value
+                    else:
+                        # Empty value unsets the property
+                        ctx.global_properties.pop(prop_name, None)
+
+                elif scope_type == "TARGET":
+                    # Target property
+                    for target_name in scope_args:
+                        lib = ctx.get_library(target_name)
+                        exe = ctx.get_executable(target_name)
+
+                        if prop_name == "INTERFACE_INCLUDE_DIRECTORIES":
+                            for value in prop_values:
+                                expanded = ctx.expand_variables(value, strict, cmd.line)
+                                if not Path(expanded).is_absolute():
+                                    expanded = str(ctx.current_source_dir / expanded)
+                                if lib:
+                                    if append_mode:
+                                        lib.public_include_directories.append(expanded)
+                                    else:
+                                        lib.public_include_directories = [expanded]
+                                elif exe:
+                                    if append_mode:
+                                        exe.include_directories.append(expanded)
+                                    else:
+                                        exe.include_directories = [expanded]
+                        elif prop_name == "COMPILE_DEFINITIONS":
+                            if lib:
+                                if append_mode:
+                                    lib.compile_definitions.extend(prop_values)
+                                else:
+                                    lib.compile_definitions = list(prop_values)
+                            elif exe:
+                                # Executables don't have compile_definitions directly yet
+                                pass
+                        elif strict:
+                            ctx.print_warning(
+                                f"set_property(TARGET): property '{prop_name}' not yet supported",
+                                cmd.line,
+                            )
+
+                elif scope_type == "SOURCE":
+                    # Source file property
+                    for source_file in scope_args:
+                        expanded_filename = ctx.expand_variables(
+                            source_file, strict, cmd.line
+                        )
+                        if not Path(expanded_filename).is_absolute():
+                            expanded_filename = str(
+                                ctx.current_source_dir / expanded_filename
+                            )
+
+                        if expanded_filename not in ctx.source_file_properties:
+                            ctx.source_file_properties[expanded_filename] = (
+                                SourceFileProperties()
+                            )
+
+                        file_props = ctx.source_file_properties[expanded_filename]
+
+                        if prop_name == "COMPILE_DEFINITIONS":
+                            if append_mode:
+                                file_props.compile_definitions.extend(prop_values)
+                            else:
+                                file_props.compile_definitions = list(prop_values)
+                        elif prop_name == "INCLUDE_DIRECTORIES":
+                            for value in prop_values:
+                                expanded = ctx.expand_variables(value, strict, cmd.line)
+                                if not Path(expanded).is_absolute():
+                                    expanded = str(ctx.current_source_dir / expanded)
+                                if append_mode:
+                                    file_props.include_directories.append(expanded)
+                                else:
+                                    file_props.include_directories = [expanded]
+                        elif prop_name == "OBJECT_DEPENDS":
+                            if append_mode:
+                                file_props.object_depends.extend(prop_values)
+                            else:
+                                file_props.object_depends = list(prop_values)
+                        elif strict:
+                            ctx.print_warning(
+                                f"set_property(SOURCE): property '{prop_name}' not yet supported",
+                                cmd.line,
+                            )
+
+                elif scope_type == "DIRECTORY":
+                    # Directory property - for now, we'll just store it but not act on it
+                    # Common properties: EP_BASE, INCLUDE_DIRECTORIES, etc.
+                    if strict:
+                        ctx.print_warning(
+                            f"set_property(DIRECTORY) is not yet fully supported",
+                            cmd.line,
+                        )
+
+                elif scope_type in ("TEST", "CACHE", "INSTALL"):
+                    # These scopes are not commonly used in basic builds
+                    if strict:
+                        ctx.print_warning(
+                            f"set_property({scope_type}) is not yet supported",
+                            cmd.line,
+                        )
+                else:
+                    if strict:
+                        ctx.print_error(
+                            f"set_property() unknown scope type: {scope_type}",
+                            cmd.line,
+                        )
+                        sys.exit(1)
+
+            case "get_property":
+                # get_property(<variable> scope_type [scope_args] PROPERTY <prop_name> [SET|DEFINED|BRIEF_DOCS|FULL_DOCS])
+                if len(args) < 4:
+                    if strict:
+                        ctx.print_error(
+                            "get_property() requires variable, scope, PROPERTY keyword, and property name",
+                            cmd.line,
+                        )
+                        sys.exit(1)
+                    i += 1
+                    continue
+
+                var_name = args[0]
+                scope_type = args[1].upper()
+
+                # Find PROPERTY keyword
+                if "PROPERTY" not in args:
+                    if strict:
+                        ctx.print_error(
+                            "get_property() requires PROPERTY keyword", cmd.line
+                        )
+                        sys.exit(1)
+                    i += 1
+                    continue
+
+                prop_idx = args.index("PROPERTY")
+                scope_args = args[2:prop_idx]
+
+                if prop_idx + 1 >= len(args):
+                    if strict:
+                        ctx.print_error(
+                            "get_property() requires property name after PROPERTY keyword",
+                            cmd.line,
+                        )
+                        sys.exit(1)
+                    i += 1
+                    continue
+
+                prop_name = args[prop_idx + 1]
+
+                # Check for optional query type (SET, DEFINED, etc.)
+                query_type = None
+                if prop_idx + 2 < len(args):
+                    query_type = args[prop_idx + 2].upper()
+
+                if scope_type == "GLOBAL":
+                    # Global property
+                    if query_type == "DEFINED":
+                        ctx.variables[var_name] = (
+                            "1" if prop_name in ctx.global_properties else "0"
+                        )
+                    elif query_type == "SET":
+                        ctx.variables[var_name] = (
+                            "1"
+                            if (
+                                prop_name in ctx.global_properties
+                                and ctx.global_properties[prop_name]
+                            )
+                            else "0"
+                        )
+                    else:
+                        # Get the value
+                        ctx.variables[var_name] = ctx.global_properties.get(
+                            prop_name, ""
+                        )
+
+                elif scope_type == "TARGET":
+                    # Target property
+                    if scope_args:
+                        target_name = scope_args[0]
+                        lib = ctx.get_library(target_name)
+                        exe = ctx.get_executable(target_name)
+
+                        value = ""
+                        if prop_name == "INTERFACE_INCLUDE_DIRECTORIES" and lib:
+                            value = ";".join(lib.public_include_directories)
+                        elif prop_name == "COMPILE_DEFINITIONS" and lib:
+                            value = ";".join(lib.compile_definitions)
+
+                        if query_type == "DEFINED":
+                            ctx.variables[var_name] = "1" if value else "0"
+                        elif query_type == "SET":
+                            ctx.variables[var_name] = "1" if value else "0"
+                        else:
+                            ctx.variables[var_name] = value
+
+                elif scope_type == "SOURCE":
+                    # Source file property
+                    if scope_args:
+                        source_file = scope_args[0]
+                        expanded_filename = ctx.expand_variables(
+                            source_file, strict, cmd.line
+                        )
+                        if not Path(expanded_filename).is_absolute():
+                            expanded_filename = str(
+                                ctx.current_source_dir / expanded_filename
+                            )
+
+                        value = ""
+                        if expanded_filename in ctx.source_file_properties:
+                            file_props = ctx.source_file_properties[expanded_filename]
+                            if prop_name == "COMPILE_DEFINITIONS":
+                                value = ";".join(file_props.compile_definitions)
+                            elif prop_name == "INCLUDE_DIRECTORIES":
+                                value = ";".join(file_props.include_directories)
+                            elif prop_name == "OBJECT_DEPENDS":
+                                value = ";".join(file_props.object_depends)
+
+                        if query_type == "DEFINED":
+                            ctx.variables[var_name] = "1" if value else "0"
+                        elif query_type == "SET":
+                            ctx.variables[var_name] = "1" if value else "0"
+                        else:
+                            ctx.variables[var_name] = value
+
+                else:
+                    # For other scope types, just set empty
+                    if query_type in ("DEFINED", "SET"):
+                        ctx.variables[var_name] = "0"
+                    else:
+                        ctx.variables[var_name] = ""
 
             case "get_filename_component":
                 if len(args) >= 3:
