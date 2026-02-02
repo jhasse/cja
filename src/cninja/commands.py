@@ -83,8 +83,13 @@ def handle_target_link_libraries(
                 if lib:
                     # For libraries, we track linked libraries but don't use them yet
                     # (static libraries don't link, but they might need to propagate flags)
-                    # TODO: differentiate based on visibility
-                    pass
+                    if visibility == "PUBLIC":
+                        lib.link_libraries.append(arg)
+                        lib.public_link_libraries.append(arg)
+                    elif visibility == "INTERFACE":
+                        lib.public_link_libraries.append(arg)
+                    else:
+                        lib.link_libraries.append(arg)
                 else:
                     exe = ctx.get_executable(target_name)
                     if exe:

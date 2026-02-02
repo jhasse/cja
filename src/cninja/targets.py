@@ -28,6 +28,7 @@ class Library:
         default_factory=list
     )  # PUBLIC link directories
     link_libraries: list[str] = field(default_factory=list)
+    public_link_libraries: list[str] = field(default_factory=list)
     is_alias: bool = False
     alias_for: str | None = None
 

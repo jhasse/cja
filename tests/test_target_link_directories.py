@@ -74,3 +74,34 @@ def test_target_link_directories_propagation(tmp_path: Path) -> None:
 
     content = ninja_file.read_text()
     assert "-L/opt/mylib/lib" in content
+
+
+def test_target_link_libraries_public_propagates(tmp_path: Path) -> None:
+    """Test PUBLIC link libraries propagate to executables."""
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    (tmp_path / "libbar.c").write_text("void bar() {}")
+    (tmp_path / "libfoo.c").write_text("void bar(); void foo() { bar(); }")
+    (tmp_path / "main.c").write_text("void foo(); int main() { foo(); return 0; }")
+
+    commands = [
+        Command(name="add_library", args=["bar", "STATIC", "libbar.c"], line=1),
+        Command(name="add_library", args=["foo", "STATIC", "libfoo.c"], line=2),
+        Command(
+            name="target_link_libraries",
+            args=["foo", "PUBLIC", "bar"],
+            line=3,
+        ),
+        Command(name="add_executable", args=["myapp", "main.c"], line=4),
+        Command(name="target_link_libraries", args=["myapp", "foo"], line=5),
+    ]
+    process_commands(commands, ctx)
+
+    foo = ctx.get_library("foo")
+    assert foo is not None
+    assert "bar" in foo.public_link_libraries
+
+    ninja_file = tmp_path / "build.ninja"
+    generate_ninja(ctx, ninja_file, "build")
+
+    content = ninja_file.read_text()
+    assert "$builddir/libbar.a" in content

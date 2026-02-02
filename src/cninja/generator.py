@@ -2453,12 +2453,30 @@ def generate_ninja(
             if lib.is_alias and lib.alias_for in lib_outputs:
                 lib_outputs[lib.name] = lib_outputs[lib.alias_for]
 
+        def expand_public_link_libraries(initial: list[str]) -> list[str]:
+            expanded: list[str] = []
+            seen: set[str] = set()
+            queue = list(initial)
+            while queue:
+                name = queue.pop(0)
+                if name in seen:
+                    continue
+                seen.add(name)
+                expanded.append(name)
+                lib = ctx.get_library(name)
+                if lib:
+                    for dep in lib.public_link_libraries:
+                        if dep not in seen:
+                            queue.append(dep)
+            return expanded
+
         # Generate build statements for executables
         default_targets: list[str] = []
 
         for exe in ctx.executables:
             objects: list[str] = []
             uses_cxx = False
+            expanded_link_libraries = expand_public_link_libraries(exe.link_libraries)
 
             # Collect cflags from global options, compile definitions, compile features, include dirs, linked libraries, and imported targets
             compile_flags: list[str] = list(ctx.compile_options)
@@ -2472,7 +2490,7 @@ def generate_ninja(
                     compile_flags.append(flag)
             for inc_dir in exe.include_directories:
                 compile_flags.append(f"-I{strip_generator_expressions(inc_dir)}")
-            for lib_name in exe.link_libraries:
+            for lib_name in expanded_link_libraries:
                 # Check for public compile features from linked libraries
                 linked_lib = ctx.get_library(lib_name)
                 if linked_lib:
@@ -2581,7 +2599,7 @@ def generate_ninja(
             link_flags: list[str] = []
             for link_dir in exe.link_directories:
                 link_flags.append(f"-L{link_dir}")
-            for lib_name in exe.link_libraries:
+            for lib_name in expanded_link_libraries:
                 if lib_name in object_lib_objects:
                     # Object library: add object files directly
                     link_inputs.extend(object_lib_objects[lib_name])
