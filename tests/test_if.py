@@ -138,6 +138,31 @@ class TestIfCommand:
         process_commands(commands, ctx)
         assert "has source" in capsys.readouterr().out
 
+    def test_cpm_nested_source_condition(self, capsys: pytest.CaptureFixture[str]) -> None:
+        ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+        commands = [
+            Command(name="set", args=["CPM_ARGS_NAME", "libogg"], line=1),
+            Command(name="set", args=["CPM_ARGS_FORCE", "FALSE"], line=2),
+            Command(name="set", args=["CPM_libogg_SOURCE", "srcdir"], line=3),
+            Command(
+                name="if",
+                args=[
+                    "NOT",
+                    "CPM_ARGS_FORCE",
+                    "AND",
+                    "NOT",
+                    "${CPM_${CPM_ARGS_NAME}_SOURCE}",
+                    "STREQUAL",
+                    "",
+                ],
+                line=4,
+            ),
+            Command(name="message", args=["STATUS", "cpm source set"], line=5),
+            Command(name="endif", args=[], line=6),
+        ]
+        process_commands(commands, ctx)
+        assert "cpm source set" in capsys.readouterr().out
+
     def test_nested_if(self, capsys: pytest.CaptureFixture[str]) -> None:
         ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
         ctx.variables["A"] = "yes"

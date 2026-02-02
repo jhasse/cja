@@ -1157,7 +1157,7 @@ def handle_cmake_parse_arguments(
         quoted = cmd.is_quoted[idx] if idx < len(cmd.is_quoted) else False
         if idx < 4:
             expanded_args.append(expanded)
-        elif ";" in expanded and not quoted:
+        elif ";" in expanded and (not quoted or idx >= 4):
             expanded_args.extend(expanded.split(";"))
         else:
             expanded_args.append(expanded)
@@ -1172,10 +1172,36 @@ def handle_cmake_parse_arguments(
         return
 
     prefix = expanded_args[0]
-    options = expanded_args[1].split(";") if expanded_args[1] else []
-    one_value = expanded_args[2].split(";") if expanded_args[2] else []
-    multi_value = expanded_args[3].split(";") if expanded_args[3] else []
+    options_raw = expanded_args[1]
+    one_value_raw = expanded_args[2]
+    multi_value_raw = expanded_args[3]
     values = expanded_args[4:]
+
+    options = options_raw.split(";") if options_raw else []
+    one_value = one_value_raw.split(";") if one_value_raw else []
+    multi_value = multi_value_raw.split(";") if multi_value_raw else []
+
+    # Heuristic: allow missing OPTIONS list (common CPM.cmake pattern).
+    # Detect when "options" tokens are actually used like one-value keywords.
+    if expanded_args[3:] and options_raw and one_value_raw:
+        keyword_set = set(options + one_value + multi_value)
+        candidate_values = expanded_args[3:]
+        candidate_values_flat: list[str] = []
+        for raw in candidate_values:
+            if ";" in raw:
+                candidate_values_flat.extend(raw.split(";"))
+            else:
+                candidate_values_flat.append(raw)
+        treat_as_missing_options = False
+        for idx, token in enumerate(candidate_values_flat[:-1]):
+            if token in options and candidate_values_flat[idx + 1] not in keyword_set:
+                treat_as_missing_options = True
+                break
+        if treat_as_missing_options:
+            options = []
+            one_value = options_raw.split(";") if options_raw else []
+            multi_value = one_value_raw.split(";") if one_value_raw else []
+            values = candidate_values_flat
 
     keyword_set = set(options + one_value + multi_value)
 

@@ -205,6 +205,29 @@ def test_cmake_parse_arguments_unparsed_and_missing() -> None:
     assert ctx.variables["ARG_SOURCES"] == "a.cpp;EXTRA2"
 
 
+def test_cmake_parse_arguments_missing_options_list() -> None:
+    """Test cmake_parse_arguments with omitted options list (CPM.cmake style)."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(
+            name="cmake_parse_arguments",
+            args=[
+                "CPM_ARGS",
+                "NAME;FORCE;VERSION",
+                "URL;OPTIONS",
+                "NAME",
+                "libogg",
+                "URL",
+                "http://example.com/libogg.tar.gz",
+            ],
+            line=1,
+        ),
+    ]
+    process_commands(commands, ctx)
+    assert ctx.variables["CPM_ARGS_NAME"] == "libogg"
+    assert ctx.variables["CPM_ARGS_URL"] == "http://example.com/libogg.tar.gz"
+
+
 def test_unset_parent_scope() -> None:
     """Test unset(PARENT_SCOPE) clears variable in caller."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
