@@ -141,7 +141,13 @@ def evaluate_condition(args: list[str], variables: dict[str, str]) -> bool:
                 if op == "STRGREATER":
                     return left_val > right_val
                 if op == "MATCHES":
-                    return bool(re.search(right_val, left_val))
+                    match = re.search(right_val, left_val)
+                    if match:
+                        variables["CMAKE_MATCH_0"] = match.group(0)
+                        for idx, group in enumerate(match.groups(), start=1):
+                            variables[f"CMAKE_MATCH_{idx}"] = group
+                        return True
+                    return False
                 if op in ("EQUAL", "LESS", "GREATER"):
                     try:
                         l_num = int(left_val)

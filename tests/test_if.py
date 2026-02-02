@@ -66,6 +66,22 @@ class TestEvaluateCondition:
     def test_matches(self) -> None:
         variables = {"X": "hello world"}
         assert evaluate_condition(["X", "MATCHES", "wor.*"], variables) is True
+        assert variables["CMAKE_MATCH_0"] == "world"
+
+    def test_cmake_matches_sets_group(self) -> None:
+        variables = {"url": "http://example.com/libogg-1.3.5.tar.gz"}
+        assert (
+            evaluate_condition(
+                [
+                    "url",
+                    "MATCHES",
+                    r"[/\?]([a-zA-Z0-9_.-]+)\.(tar|tar\.gz|tar\.bz2|zip|ZIP)(\?|/|$)",
+                ],
+                variables,
+            )
+            is True
+        )
+        assert variables["CMAKE_MATCH_1"] == "libogg-1.3.5"
 
 
 class TestIfCommand:
