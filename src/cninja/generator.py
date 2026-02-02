@@ -2555,6 +2555,9 @@ int main() {{
                         ctx.imported_targets["Threads::Threads"] = ImportedTarget(
                             libs="-pthread"
                         )
+                    elif package_name == "PkgConfig":
+                        ctx.variables["PkgConfig_FOUND"] = "TRUE"
+                        ctx.variables["PKG_CONFIG_EXECUTABLE"] = "pkg-config"
                     else:
                         # Unknown package
                         ctx.variables[f"{package_name}_FOUND"] = "FALSE"
@@ -2563,6 +2566,89 @@ int main() {{
                                 f"could not find package: {package_name}", cmd.line
                             )
                             raise SystemExit(1)
+
+            case "pkg_check_modules":
+                if args:
+                    prefix = args[0]
+                    pkg_args = args[1:]
+
+                    is_required = "REQUIRED" in pkg_args
+                    is_imported_target = "IMPORTED_TARGET" in pkg_args
+
+                    modules = [
+                        arg
+                        for arg in pkg_args
+                        if arg
+                        not in (
+                            "REQUIRED",
+                            "QUIET",
+                            "NO_CMAKE_PATH",
+                            "NO_CMAKE_ENVIRONMENT_PATH",
+                            "IMPORTED_TARGET",
+                        )
+                    ]
+
+                    if modules:
+                        found_all = True
+                        all_cflags = []
+                        all_libs = []
+
+                        for module in modules:
+                            try:
+                                result = subprocess.run(
+                                    ["pkg-config", "--exists", module],
+                                    capture_output=True,
+                                )
+                                if result.returncode != 0:
+                                    found_all = False
+                                    break
+
+                                cflags_res = subprocess.run(
+                                    ["pkg-config", "--cflags", module],
+                                    capture_output=True,
+                                    text=True,
+                                )
+                                all_cflags.append(cflags_res.stdout.strip())
+
+                                libs_res = subprocess.run(
+                                    ["pkg-config", "--libs", module],
+                                    capture_output=True,
+                                    text=True,
+                                )
+                                all_libs.append(libs_res.stdout.strip())
+                            except FileNotFoundError:
+                                found_all = False
+                                break
+
+                        if found_all:
+                            ctx.variables[f"{prefix}_FOUND"] = "1"
+                            cflags = " ".join(all_cflags)
+                            libs = " ".join(all_libs)
+
+                            # Split libs into individual flags for LINK_LIBRARIES
+                            lib_flags = shlex.split(libs)
+                            link_libs = ";".join(lib_flags)
+
+                            ctx.variables[f"{prefix}_INCLUDE_DIRS"] = cflags
+                            ctx.variables[f"{prefix}_LIBRARIES"] = link_libs
+                            ctx.variables[f"{prefix}_LINK_LIBRARIES"] = link_libs
+                            ctx.variables[f"{prefix}_CFLAGS"] = cflags
+                            ctx.variables[f"{prefix}_LDFLAGS"] = libs
+
+                            if is_imported_target:
+                                # Create imported target PkgConfig::<prefix>
+                                ctx.imported_targets[f"PkgConfig::{prefix}"] = (
+                                    ImportedTarget(
+                                        cflags=cflags,
+                                        libs=libs,
+                                    )
+                                )
+                        else:
+                            ctx.variables[f"{prefix}_FOUND"] = "0"
+                            if is_required:
+                                raise FileNotFoundError(
+                                    f"could not find modules: {', '.join(modules)}"
+                                )
 
             case "message":
                 if args:
