@@ -2219,7 +2219,7 @@ def generate_ninja(
                 "  ", " "
             ).strip(),
             depfile="$out.d",
-            description="CC $out",
+            description="\x1b[32mCompiling $in\x1b[0m",
         )
         n.newline()
 
@@ -2229,7 +2229,7 @@ def generate_ninja(
                 "  ", " "
             ).strip(),
             depfile="$out.d",
-            description="CXX $out",
+            description="\x1b[32mCompiling $in\x1b[0m",
         )
         n.newline()
 
@@ -2237,7 +2237,7 @@ def generate_ninja(
         n.rule(
             "ar",
             command="$ar rcs $out $in",
-            description="AR $out",
+            description="\x1b[32;1mArchiving $out\x1b[0m",
         )
         n.newline()
 
@@ -2245,14 +2245,14 @@ def generate_ninja(
         n.rule(
             "link",
             command="$cc $in -o $out $libs",
-            description="LINK $out",
+            description="\x1b[32;1mLinking C library $out\x1b[0m",
         )
         n.newline()
 
         n.rule(
             "link_cxx",
             command="$cxx $in -o $out $libs",
-            description="LINK $out",
+            description="\x1b[32;1mLinking C++ library $out\x1b[0m",
         )
         n.newline()
 
