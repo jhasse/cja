@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
 
-from .targets import Library, Executable, ImportedTarget
+from .targets import Library, Executable, ImportedTarget, InstallTarget
 
 from rich.progress import (
     Progress,
@@ -71,14 +71,6 @@ class Test:
 
     name: str
     command: list[str]
-
-
-@dataclass
-class InstallTarget:
-    """An installation target."""
-
-    targets: list[str]
-    destination: str
 
 
 @dataclass

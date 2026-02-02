@@ -45,3 +45,11 @@ class ImportedTarget:
 
     cflags: str = ""  # Compile flags (e.g., -I/path/to/include)
     libs: str = ""  # Link flags (e.g., -lgtest -pthread)
+
+
+@dataclass
+class InstallTarget:
+    """An installation target."""
+
+    targets: list[str]
+    destination: str
