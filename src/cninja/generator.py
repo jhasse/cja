@@ -1412,6 +1412,7 @@ def process_commands(
                         "CheckCCompilerFlag",
                         "CheckCXXSymbolExists",
                         "FetchContent",
+                        "FindPackageHandleStandardArgs",
                     }
                     if module_name == "CTest":
                         # CTest sets BUILD_TESTING to ON by default
@@ -2723,6 +2724,56 @@ int main() {{
                                 f"Could not find library: {', '.join(names)}"
                             )
 
+            case "find_package_handle_standard_args":
+                if args:
+                    package_name = args[0]
+                    required_vars = []
+                    found_var = f"{package_name}_FOUND"
+
+                    if "REQUIRED_VARS" in args:
+                        # Extended signature
+                        idx = args.index("REQUIRED_VARS")
+                        for arg in args[idx + 1 :]:
+                            if arg in (
+                                "VERSION_VAR",
+                                "HANDLE_COMPONENTS",
+                                "CONFIG_MODE",
+                                "NAME_MISMATCH",
+                                "REASON_FAILURE_MESSAGE",
+                                "FOUND_VAR",
+                            ):
+                                break
+                            required_vars.append(arg)
+
+                        if "FOUND_VAR" in args:
+                            f_idx = args.index("FOUND_VAR")
+                            if f_idx + 1 < len(args):
+                                found_var = args[f_idx + 1]
+                    else:
+                        # Basic signature
+                        # args[1] is message, usually DEFAULT_MSG
+                        required_vars = args[2:]
+
+                    # Check if all required vars are set and not NOTFOUND
+                    all_found = True
+                    for var in required_vars:
+                        val = ctx.variables.get(var, "")
+                        if not val or val.endswith("-NOTFOUND") or val == "FALSE":
+                            all_found = False
+                            break
+
+                    if all_found:
+                        ctx.variables[found_var] = "TRUE"
+                    else:
+                        ctx.variables[found_var] = "FALSE"
+                        # Check if package was REQUIRED
+                        if ctx.variables.get(f"{package_name}_FIND_REQUIRED") == "TRUE":
+                            ctx.print_error(
+                                f"Could NOT find {package_name} (missing: {', '.join(required_vars)})",
+                                cmd.line,
+                            )
+                            sys.exit(1)
+
             case "install":
                 if len(args) >= 2 and args[0] == "TARGETS":
                     targets = []
@@ -2748,6 +2799,9 @@ int main() {{
                 if args:
                     package_name = args[0]
                     required = "REQUIRED" in args
+                    ctx.variables[f"{package_name}_FIND_REQUIRED"] = (
+                        "TRUE" if required else "FALSE"
+                    )
 
                     if package_name == "GTest":
                         # Try to find GTest using pkg-config
