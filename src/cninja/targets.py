@@ -18,6 +18,12 @@ class Library:
     public_compile_definitions: list[str] = field(
         default_factory=list
     )  # PUBLIC definitions
+    link_directories: list[str] = field(
+        default_factory=list
+    )  # PRIVATE link directories
+    public_link_directories: list[str] = field(
+        default_factory=list
+    )  # PUBLIC link directories
 
 
 @dataclass
@@ -30,6 +36,7 @@ class Executable:
     compile_features: list[str] = field(default_factory=list)
     include_directories: list[str] = field(default_factory=list)
     compile_definitions: list[str] = field(default_factory=list)
+    link_directories: list[str] = field(default_factory=list)
 
 
 @dataclass

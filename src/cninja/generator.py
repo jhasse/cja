@@ -2089,16 +2089,66 @@ int main() {{
             case "target_link_libraries":
                 if len(args) >= 2:
                     target_name = args[0]
-                    libs = args[1:]
-                    # Skip visibility keywords
-                    libs = [
-                        lib
-                        for lib in libs
-                        if lib not in ("PUBLIC", "PRIVATE", "INTERFACE")
-                    ]
-                    exe = ctx.get_executable(target_name)
-                    if exe:
-                        exe.link_libraries.extend(libs)
+                    # Parse libraries with visibility keywords
+                    # CMake supports: target_link_libraries(<target> <PRIVATE|PUBLIC|INTERFACE> <item>...)
+                    visibility = "PUBLIC"  # Default visibility
+                    for arg in args[1:]:
+                        if arg == "PUBLIC":
+                            visibility = "PUBLIC"
+                        elif arg == "INTERFACE":
+                            visibility = "INTERFACE"
+                        elif arg == "PRIVATE":
+                            visibility = "PRIVATE"
+                        else:
+                            # It's a library name
+                            lib = ctx.get_library(target_name)
+                            if lib:
+                                # For libraries, we track linked libraries but don't use them yet
+                                # (static libraries don't link, but they might need to propagate flags)
+                                # TODO: differentiate based on visibility
+                                pass
+                            else:
+                                exe = ctx.get_executable(target_name)
+                                if exe:
+                                    exe.link_libraries.append(arg)
+
+            case "target_link_directories":
+                if len(args) >= 2:
+                    target_name = args[0]
+                    # Parse directories with visibility keywords
+                    public_dirs: list[str] = []
+                    target_dirs: list[str] = []
+                    visibility = "PUBLIC"  # Default visibility
+                    for arg in args[1:]:
+                        if arg == "PUBLIC":
+                            visibility = "PUBLIC"
+                        elif arg == "INTERFACE":
+                            visibility = "INTERFACE"
+                        elif arg == "PRIVATE":
+                            visibility = "PRIVATE"
+                        else:
+                            # Expand variables and resolve relative paths
+                            expanded = ctx.expand_variables(arg, strict, cmd.line)
+                            if not Path(expanded).is_absolute():
+                                expanded = str(ctx.current_source_dir / expanded)
+                            if visibility == "PUBLIC":
+                                public_dirs.append(expanded)
+                                target_dirs.append(expanded)
+                            elif visibility == "INTERFACE":
+                                public_dirs.append(expanded)
+                            else:
+                                target_dirs.append(expanded)
+                    # Add directories to library or executable
+                    lib = ctx.get_library(target_name)
+                    if lib:
+                        lib.link_directories.extend(target_dirs)
+                        lib.public_link_directories.extend(public_dirs)
+                    else:
+                        exe = ctx.get_executable(target_name)
+                        if exe:
+                            # Executables don't propagate, so all dirs go to link_directories
+                            exe.link_directories.extend(target_dirs)
+                            exe.link_directories.extend(public_dirs)
 
             case "target_sources":
                 if len(args) >= 2:
@@ -3199,6 +3249,10 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
                         def_flag = f"-D{definition}"
                         if def_flag not in compile_flags:
                             compile_flags.append(def_flag)
+                    # Check for public link directories from linked libraries
+                    for link_dir in linked_lib.public_link_directories:
+                        if link_dir not in exe.link_directories:
+                            exe.link_directories.append(link_dir)
                 # Check for cflags from imported targets
                 if lib_name in ctx.imported_targets:
                     imported = ctx.imported_targets[lib_name]
@@ -3261,6 +3315,8 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
             # Add linked libraries to inputs
             link_inputs = objects.copy()
             link_flags: list[str] = []
+            for link_dir in exe.link_directories:
+                link_flags.append(f"-L{link_dir}")
             for lib_name in exe.link_libraries:
                 if lib_name in object_lib_objects:
                     # Object library: add object files directly
