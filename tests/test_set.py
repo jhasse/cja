@@ -66,3 +66,17 @@ def test_set_with_cache_and_force() -> None:
     ]
     process_commands(commands, ctx)
     assert ctx.variables["MY_VAR"] == "value"
+
+
+def test_unset_cache() -> None:
+    """Test unset(CACHE) removes cache variable tracking."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    ctx.cache_variables.add("CACHED")
+    ctx.variables["CACHED"] = "1"
+    commands = [
+        Command(name="unset", args=["CACHED", "CACHE"], line=1),
+    ]
+    process_commands(commands, ctx)
+
+    assert "CACHED" not in ctx.cache_variables
+    assert ctx.variables["CACHED"] == "1"

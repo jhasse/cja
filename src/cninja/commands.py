@@ -1106,6 +1106,24 @@ def handle_set(
             ctx.variables.pop(var_name, None)
 
 
+def handle_unset(
+    ctx: BuildContext,
+    args: list[str],
+) -> None:
+    """Handle unset() command."""
+    if not args:
+        return
+    var_name = args[0]
+    scope = args[1].upper() if len(args) > 1 else ""
+    if scope == "PARENT_SCOPE":
+        # Signal caller to remove the variable
+        ctx.parent_scope_vars[var_name] = None
+    elif scope == "CACHE":
+        ctx.cache_variables.discard(var_name)
+    else:
+        ctx.variables.pop(var_name, None)
+
+
 def handle_option(
     ctx: BuildContext,
     args: list[str],
@@ -1122,6 +1140,84 @@ def handle_option(
             if len(args) >= 3:
                 value = args[2]
             ctx.variables[var_name] = value
+
+
+def handle_cmake_parse_arguments(
+    ctx: BuildContext,
+    cmd: Command,
+    strict: bool,
+) -> None:
+    """Handle cmake_parse_arguments() command."""
+    expanded_args: list[str] = []
+    for idx, arg in enumerate(cmd.args):
+        expanded = ctx.expand_variables(arg, strict, cmd.line)
+        quoted = cmd.is_quoted[idx] if idx < len(cmd.is_quoted) else False
+        if idx < 4:
+            expanded_args.append(expanded)
+        elif ";" in expanded and not quoted:
+            expanded_args.extend(expanded.split(";"))
+        else:
+            expanded_args.append(expanded)
+
+    if len(expanded_args) < 4:
+        if strict:
+            ctx.print_error(
+                "cmake_parse_arguments() requires PREFIX, OPTIONS, ONE_VALUE, and MULTI_VALUE lists",
+                cmd.line,
+            )
+            sys.exit(1)
+        return
+
+    prefix = expanded_args[0]
+    options = expanded_args[1].split(";") if expanded_args[1] else []
+    one_value = expanded_args[2].split(";") if expanded_args[2] else []
+    multi_value = expanded_args[3].split(";") if expanded_args[3] else []
+    values = expanded_args[4:]
+
+    keyword_set = set(options + one_value + multi_value)
+
+    # Initialize outputs
+    for opt in options:
+        ctx.variables[f"{prefix}_{opt}"] = "FALSE"
+    for key in one_value + multi_value:
+        ctx.variables[f"{prefix}_{key}"] = ""
+    ctx.variables[f"{prefix}_UNPARSED_ARGUMENTS"] = ""
+    ctx.variables[f"{prefix}_KEYWORDS_MISSING_VALUES"] = ""
+
+    unparsed: list[str] = []
+    missing: list[str] = []
+    i = 0
+    while i < len(values):
+        token = values[i]
+        if token in options:
+            ctx.variables[f"{prefix}_{token}"] = "TRUE"
+            i += 1
+            continue
+        if token in one_value:
+            if i + 1 >= len(values) or values[i + 1] in keyword_set:
+                missing.append(token)
+                i += 1
+            else:
+                ctx.variables[f"{prefix}_{token}"] = values[i + 1]
+                i += 2
+            continue
+        if token in multi_value:
+            collected: list[str] = []
+            i += 1
+            while i < len(values) and values[i] not in keyword_set:
+                collected.append(values[i])
+                i += 1
+            if not collected:
+                missing.append(token)
+            ctx.variables[f"{prefix}_{token}"] = ";".join(collected)
+            continue
+        unparsed.append(token)
+        i += 1
+
+    if unparsed:
+        ctx.variables[f"{prefix}_UNPARSED_ARGUMENTS"] = ";".join(unparsed)
+    if missing:
+        ctx.variables[f"{prefix}_KEYWORDS_MISSING_VALUES"] = ";".join(missing)
 
 
 def handle_math(

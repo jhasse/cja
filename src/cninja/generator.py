@@ -32,6 +32,7 @@ from .commands import (
     handle_get_directory_property,
     handle_get_filename_component,
     handle_get_property,
+    handle_cmake_parse_arguments,
     handle_list,
     handle_macro,
     handle_math,
@@ -39,6 +40,7 @@ from .commands import (
     handle_set,
     handle_set_property,
     handle_set_target_properties,
+    handle_unset,
     handle_target_compile_definitions,
     handle_target_compile_features,
     handle_target_include_directories,
@@ -141,7 +143,10 @@ def handle_add_subdirectory(
                 ctx.parent_directory = saved_parent_directory
                 ctx.variables = saved_vars
                 for var, val in parent_scope_updates.items():
-                    ctx.variables[var] = val
+                    if val is None:
+                        ctx.variables.pop(var, None)
+                    else:
+                        ctx.variables[var] = val
         elif strict:
             ctx.print_error(
                 f'add_subdirectory given source "{sub_dir_name}" which does not exist.',
@@ -417,7 +422,10 @@ def process_commands(
                             ctx.parent_directory = saved_parent_directory
                             ctx.variables = saved_vars
                             for var, val in parent_scope_updates.items():
-                                ctx.variables[var] = val
+                                if val is None:
+                                    ctx.variables.pop(var, None)
+                                else:
+                                    ctx.variables[var] = val
                     elif strict:
                         ctx.print_error(
                             f'add_subdirectory given source "{sub_dir_name}" which does not exist.',
@@ -582,13 +590,22 @@ def process_commands(
                                 ctx.variables = saved_vars
 
                                 for var, val in parent_scope_updates.items():
-                                    ctx.variables[var] = val
+                                    if val is None:
+                                        ctx.variables.pop(var, None)
+                                    else:
+                                        ctx.variables[var] = val
 
             case "set":
                 handle_set(ctx, cmd, args)
 
+            case "unset":
+                handle_unset(ctx, args)
+
             case "option":
                 handle_option(ctx, args)
+
+            case "cmake_parse_arguments":
+                handle_cmake_parse_arguments(ctx, cmd, strict)
 
             case "math":
                 handle_math(ctx, cmd, args, strict)
@@ -2198,7 +2215,10 @@ int main() {{
 
                     # Apply PARENT_SCOPE changes to saved_vars
                     for var_name, var_value in ctx.parent_scope_vars.items():
-                        saved_vars[var_name] = var_value
+                        if var_value is None:
+                            saved_vars.pop(var_name, None)
+                        else:
+                            saved_vars[var_name] = var_value
                     ctx.parent_scope_vars.clear()
 
                     # Restore list file context

@@ -136,3 +136,85 @@ def test_function_error_uses_defining_file(capsys: pytest.CaptureFixture[str]) -
     err = capsys.readouterr().err
     assert "defs/CMakeLists.txt:2:" in err
     assert "caller/CMakeLists.txt" not in err
+
+
+def test_cmake_parse_arguments() -> None:
+    """Test basic cmake_parse_arguments behavior."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(
+            name="cmake_parse_arguments",
+            args=[
+                "MY",
+                "QUIET;REQUIRED",
+                "MODE",
+                "SOURCES;DEPS",
+                "QUIET",
+                "MODE",
+                "FAST",
+                "SOURCES",
+                "a.cpp",
+                "b.cpp",
+                "EXTRA",
+                "DEPS",
+                "x",
+                "y",
+            ],
+            line=1,
+        ),
+    ]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["MY_QUIET"] == "TRUE"
+    assert ctx.variables["MY_REQUIRED"] == "FALSE"
+    assert ctx.variables["MY_MODE"] == "FAST"
+    assert ctx.variables["MY_SOURCES"] == "a.cpp;b.cpp;EXTRA"
+    assert ctx.variables["MY_DEPS"] == "x;y"
+    assert ctx.variables["MY_UNPARSED_ARGUMENTS"] == ""
+    assert ctx.variables["MY_KEYWORDS_MISSING_VALUES"] == ""
+
+
+def test_cmake_parse_arguments_unparsed_and_missing() -> None:
+    """Test unparsed args and missing values handling."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(
+            name="cmake_parse_arguments",
+            args=[
+                "ARG",
+                "QUIET",
+                "MODE",
+                "SOURCES",
+                "EXTRA1",
+                "QUIET",
+                "MODE",
+                "SOURCES",
+                "a.cpp",
+                "EXTRA2",
+            ],
+            line=1,
+        ),
+    ]
+    process_commands(commands, ctx)
+
+    # EXTRA1 comes before any keyword and should be unparsed.
+    assert ctx.variables["ARG_UNPARSED_ARGUMENTS"] == "EXTRA1"
+    # MODE is a one-value keyword but has no value (next token is keyword).
+    assert ctx.variables["ARG_KEYWORDS_MISSING_VALUES"] == "MODE"
+    # SOURCES collects until next keyword; EXTRA2 is part of SOURCES.
+    assert ctx.variables["ARG_SOURCES"] == "a.cpp;EXTRA2"
+
+
+def test_unset_parent_scope() -> None:
+    """Test unset(PARENT_SCOPE) clears variable in caller."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    ctx.variables["OUTER"] = "keep"
+    commands = [
+        Command(name="function", args=["do_unset"], line=1),
+        Command(name="unset", args=["OUTER", "PARENT_SCOPE"], line=2),
+        Command(name="endfunction", args=[], line=3),
+        Command(name="do_unset", args=[], line=4),
+    ]
+    process_commands(commands, ctx)
+
+    assert "OUTER" not in ctx.variables
