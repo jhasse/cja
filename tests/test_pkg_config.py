@@ -189,9 +189,9 @@ def test_pkg_check_modules_output(capsys, tmp_path):
     ]
     process_commands(commands, ctx)
     captured = capsys.readouterr()
-    assert "✅ PkgConfig" in captured.out
-    assert "✅ zlib" in captured.out
-    assert "❌ nonexistent_package_123" in captured.out
+    assert "✓ PkgConfig" in captured.out
+    assert "✓ zlib" in captured.out
+    assert "✗ nonexistent_package_123" in captured.out
 
 
 def test_pkg_check_modules_quiet_output(capsys, tmp_path):
@@ -208,5 +208,5 @@ def test_pkg_check_modules_quiet_output(capsys, tmp_path):
     ]
     process_commands(commands, ctx)
     captured = capsys.readouterr()
-    assert "✅ zlib" not in captured.out
-    assert "❌ nonexistent_package_123" not in captured.out
+    assert "✓ zlib" not in captured.out
+    assert "✗ nonexistent_package_123" not in captured.out

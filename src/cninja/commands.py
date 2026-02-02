@@ -84,7 +84,7 @@ def handle_target_link_libraries(
                     from .utils import strip_generator_expressions
 
                     ctx.print_warning(
-                        f"generator expressions in target_link_libraries are not yet supported: {arg}",
+                        "generator expressions in target_link_libraries are not yet supported",
                         cmd.line,
                     )
                     arg = strip_generator_expressions(arg)

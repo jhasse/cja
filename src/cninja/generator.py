@@ -1578,7 +1578,7 @@ int main() {{
                             ctx.variables["GTest_FOUND"] = "TRUE"
                             ctx.variables["GTEST_FOUND"] = "TRUE"
                             if not quiet:
-                                print(f"✅ {package_name}")
+                                print(f"{colored('✓', 'green')} {package_name}")
                         else:
                             ctx.variables["GTest_FOUND"] = "FALSE"
                             ctx.variables["GTEST_FOUND"] = "FALSE"
@@ -1588,7 +1588,7 @@ int main() {{
                                 )
                                 raise SystemExit(1)
                             if not quiet:
-                                print(f"❌ {package_name}")
+                                print(f"{colored('✗', 'red')} {package_name}")
                     elif package_name == "Threads":
                         # Threads is always available on Unix-like systems
                         ctx.variables["Threads_FOUND"] = "TRUE"
@@ -1599,12 +1599,12 @@ int main() {{
                             libs="-pthread"
                         )
                         if not quiet:
-                            print(f"✅ {package_name}")
+                            print(f"{colored('✓', 'green')} {package_name}")
                     elif package_name == "PkgConfig":
                         ctx.variables["PkgConfig_FOUND"] = "TRUE"
                         ctx.variables["PKG_CONFIG_EXECUTABLE"] = "pkg-config"
                         if not quiet:
-                            print(f"✅ {package_name}")
+                            print(f"{colored('✓', 'green')} {package_name}")
                     elif package_name == "WebP":
                         found = False
                         pkg_name = None
@@ -1661,7 +1661,7 @@ int main() {{
                                 libs=webp_libs,
                             )
                             if not quiet:
-                                print(f"✅ {package_name}")
+                                print(f"{colored('✓', 'green')} {package_name}")
                         else:
                             ctx.variables["WebP_FOUND"] = "FALSE"
                             ctx.variables["WEBP_FOUND"] = "FALSE"
@@ -1671,7 +1671,7 @@ int main() {{
                                 )
                                 raise SystemExit(1)
                             if not quiet:
-                                print(f"❌ {package_name}")
+                                print(f"{colored('✗', 'red')} {package_name}")
                     else:
                         # Search for Find<PackageName>.cmake in CMAKE_MODULE_PATH
                         module_path = ctx.variables.get("CMAKE_MODULE_PATH", "")
@@ -1714,7 +1714,7 @@ int main() {{
                                 )
                                 raise SystemExit(1)
                             if not quiet:
-                                print(f"❌ {package_name}")
+                                print(f"{colored('✗', 'red')} {package_name}")
 
             case "pkg_check_modules":
                 if args:
@@ -1809,7 +1809,7 @@ int main() {{
 
                         if found_all:
                             if not is_quiet:
-                                print(f"✅ {', '.join(modules)}")
+                                print(f"{colored('✓', 'green')} {', '.join(modules)}")
                             ctx.variables[f"{prefix}_FOUND"] = "1"
                             cflags = " ".join(all_cflags)
                             libs = " ".join(all_libs)
@@ -1848,7 +1848,7 @@ int main() {{
                                 )
                         else:
                             if not is_quiet:
-                                print(f"❌ {', '.join(modules)}")
+                                print(f"{colored('✗', 'red')} {', '.join(modules)}")
                             ctx.variables[f"{prefix}_FOUND"] = "0"
                             if is_required:
                                 raise FileNotFoundError(
