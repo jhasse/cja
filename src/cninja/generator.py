@@ -692,6 +692,26 @@ def process_commands(
                 # Exit from current function early
                 raise ReturnFromFunction()
 
+            case "cmake_policy":
+                if args:
+                    subcommand = args[0].upper()
+                    if subcommand == "SET" and len(args) >= 3:
+                        policy = args[1]
+                        value = args[2].upper()
+                        if value == "OLD":
+                            ctx.print_warning(
+                                f"cmake_policy(SET {policy} OLD) is called, but cninja always uses NEW behavior for all policies",
+                                cmd.line,
+                            )
+                    elif subcommand == "GET" and len(args) >= 3:
+                        var_name = args[2]
+                        # cninja always uses NEW behavior
+                        ctx.variables[var_name] = "NEW"
+                    elif subcommand in ("PUSH", "POP", "VERSION"):
+                        pass
+                i += 1
+                continue
+
             case "cmake_minimum_required":
                 pass  # Just acknowledge it
 
@@ -926,6 +946,21 @@ def process_commands(
                 if args:
                     var_name = args[0]
                     values = args[1:]
+
+                    # Handle CMAKE_POLICY_DEFAULT_CMPxxxx specially
+                    if var_name.startswith("CMAKE_POLICY_DEFAULT_CMP"):
+                        # Extract the value (should be NEW or OLD)
+                        policy_value = values[0] if values else ""
+                        if policy_value == "OLD":
+                            # cninja always uses NEW behavior, warn about OLD
+                            ctx.print_warning(
+                                f"{var_name} is set to OLD, but cninja always uses NEW behavior for all policies",
+                                cmd.line,
+                            )
+                        # For NEW, silently accept (this is what we want)
+                        # Don't actually set the variable, just acknowledge it
+                        i += 1
+                        continue
 
                     # Filter out CACHE, PARENT_SCOPE, and track FORCE
                     filtered_values: list[str] = []
