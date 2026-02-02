@@ -2643,7 +2643,7 @@ int main() {{
                             if required:
                                 ctx.print_error(
                                     f"could not find package: {package_name}", cmd.line
-                                    )
+                                )
                                 raise SystemExit(1)
 
             case "pkg_check_modules":
@@ -2674,6 +2674,9 @@ int main() {{
                         all_include_dirs = []
                         all_lib_dirs = []
                         all_libraries = []
+                        all_includedirs = []
+                        all_libdirs = []
+                        all_prefixes = []
 
                         for module in modules:
                             try:
@@ -2709,6 +2712,26 @@ int main() {{
                                     elif entry.startswith("-L"):
                                         all_lib_dirs.append(entry[2:])
 
+                                # Fetch standard variables
+                                for var_name, target_list in [
+                                    ("includedir", all_includedirs),
+                                    ("libdir", all_libdirs),
+                                    ("prefix", all_prefixes),
+                                ]:
+                                    var_res = subprocess.run(
+                                        [
+                                            "pkg-config",
+                                            f"--variable={var_name}",
+                                            module,
+                                        ],
+                                        capture_output=True,
+                                        text=True,
+                                    )
+                                    if var_res.returncode == 0:
+                                        val = var_res.stdout.strip()
+                                        if val:
+                                            target_list.append(val)
+
                             except FileNotFoundError:
                                 found_all = False
                                 break
@@ -2729,6 +2752,15 @@ int main() {{
                             )
                             ctx.variables[f"{prefix}_LIBRARY_DIRS"] = ";".join(
                                 list(dict.fromkeys(all_lib_dirs))
+                            )
+                            ctx.variables[f"{prefix}_INCLUDEDIR"] = ";".join(
+                                list(dict.fromkeys(all_includedirs))
+                            )
+                            ctx.variables[f"{prefix}_LIBDIR"] = ";".join(
+                                list(dict.fromkeys(all_libdirs))
+                            )
+                            ctx.variables[f"{prefix}_PREFIX"] = ";".join(
+                                list(dict.fromkeys(all_prefixes))
                             )
                             ctx.variables[f"{prefix}_CFLAGS"] = cflags
                             ctx.variables[f"{prefix}_LDFLAGS"] = libs

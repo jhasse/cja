@@ -136,6 +136,28 @@ def test_pkg_check_modules_vorbisfile_library_dirs() -> None:
             assert Path(d).is_absolute()
 
 
+@pytest.mark.skipif(
+    not has_pkg_config_vorbisfile(), reason="vorbisfile not found via pkg-config"
+)
+def test_pkg_check_modules_vorbisfile_includedir() -> None:
+    """Test that pkg_check_modules sets _INCLUDEDIR for vorbisfile."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="find_package", args=["PkgConfig"], line=1),
+        Command(
+            name="pkg_check_modules",
+            args=["VorbisFile", "REQUIRED", "vorbisfile"],
+            line=2,
+        ),
+    ]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["VorbisFile_FOUND"] == "1"
+    assert "VorbisFile_INCLUDEDIR" in ctx.variables
+    # Most systems have an includedir for vorbisfile
+    assert ctx.variables["VorbisFile_INCLUDEDIR"] != ""
+
+
 def test_pkg_check_modules_imported_target() -> None:
     """Test pkg_check_modules with IMPORTED_TARGET."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
