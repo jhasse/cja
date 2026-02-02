@@ -19,3 +19,6 @@ build/
 
 # Claude Code
 .claude/
+
+# C++
+.cache/

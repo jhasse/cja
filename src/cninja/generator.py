@@ -2353,20 +2353,34 @@ def generate_ninja(
                 register_output(out, custom_cmd.defined_file, custom_cmd.defined_line)
             n.newline()
 
+        # Helper to expand public link libraries recursively
+        def expand_public_link_libraries(initial: list[str]) -> list[str]:
+            expanded: list[str] = []
+            seen: set[str] = set()
+            queue = list(initial)
+            while queue:
+                name = queue.pop(0)
+                if name in seen:
+                    continue
+                seen.add(name)
+                expanded.append(name)
+                lib = ctx.get_library(name)
+                if lib:
+                    for dep in lib.public_link_libraries:
+                        if dep not in seen:
+                            queue.append(dep)
+            return expanded
+
         # Generate build statements for libraries
         for lib in ctx.libraries:
             if lib.is_alias:
-                # Aliases don't produce build rules themselves, they point to another target
-                # In cninja, we'll map the alias name to the original library output
-                # (This is a bit hacky but works for linking)
-                # Wait, where do we store lib_outputs?
                 continue
             objects: list[str] = []
 
-            # Collect compile flags from global options, compile definitions, compile features, and include dirs
+            # Collect compile flags from global options, compile definitions, compile features, include dirs, and linked libraries
             lib_compile_flags: list[str] = list(ctx.compile_options)
             for definition in ctx.compile_definitions:
-                lib_compile_flags.append(f"-D{definition}")
+                lib_compile_flags.append(f"-D{strip_generator_expressions(definition)}")
             for definition in lib.compile_definitions:
                 lib_compile_flags.append(f"-D{strip_generator_expressions(definition)}")
             for feature in lib.compile_features:
@@ -2375,6 +2389,30 @@ def generate_ninja(
                     lib_compile_flags.append(flag)
             for inc_dir in lib.include_directories:
                 lib_compile_flags.append(f"-I{strip_generator_expressions(inc_dir)}")
+
+            # Propagate flags from dependencies
+            expanded_lib_link_libraries = expand_public_link_libraries(
+                lib.link_libraries
+            )
+            for dep_name in expanded_lib_link_libraries:
+                dep_lib = ctx.get_library(dep_name)
+                if dep_lib:
+                    for feature in dep_lib.public_compile_features:
+                        flag = compile_feature_to_flag(feature)
+                        if flag and flag not in lib_compile_flags:
+                            lib_compile_flags.append(flag)
+                    for inc_dir in dep_lib.public_include_directories:
+                        inc_flag = f"-I{strip_generator_expressions(inc_dir)}"
+                        if inc_flag not in lib_compile_flags:
+                            lib_compile_flags.append(inc_flag)
+                    for definition in dep_lib.public_compile_definitions:
+                        def_flag = f"-D{strip_generator_expressions(definition)}"
+                        if def_flag not in lib_compile_flags:
+                            lib_compile_flags.append(def_flag)
+                if dep_name in ctx.imported_targets:
+                    imported = ctx.imported_targets[dep_name]
+                    if imported.cflags:
+                        lib_compile_flags.append(imported.cflags)
 
             # Filter out headers from compileable sources
             compileable_sources: list[str] = [
@@ -2468,23 +2506,6 @@ def generate_ninja(
             if lib.is_alias and lib.alias_for in lib_outputs:
                 lib_outputs[lib.name] = lib_outputs[lib.alias_for]
 
-        def expand_public_link_libraries(initial: list[str]) -> list[str]:
-            expanded: list[str] = []
-            seen: set[str] = set()
-            queue = list(initial)
-            while queue:
-                name = queue.pop(0)
-                if name in seen:
-                    continue
-                seen.add(name)
-                expanded.append(name)
-                lib = ctx.get_library(name)
-                if lib:
-                    for dep in lib.public_link_libraries:
-                        if dep not in seen:
-                            queue.append(dep)
-            return expanded
-
         # Generate build statements for executables
         default_targets: list[str] = []
 
@@ -2493,7 +2514,7 @@ def generate_ninja(
             uses_cxx = False
             expanded_link_libraries = expand_public_link_libraries(exe.link_libraries)
 
-            # Collect cflags from global options, compile definitions, compile features, include dirs, linked libraries, and imported targets
+            # Collect compile flags from global options, compile definitions, compile features, include dirs, linked libraries, and imported targets
             compile_flags: list[str] = list(ctx.compile_options)
             for definition in ctx.compile_definitions:
                 compile_flags.append(f"-D{strip_generator_expressions(definition)}")
@@ -2505,6 +2526,7 @@ def generate_ninja(
                     compile_flags.append(flag)
             for inc_dir in exe.include_directories:
                 compile_flags.append(f"-I{strip_generator_expressions(inc_dir)}")
+
             for lib_name in expanded_link_libraries:
                 # Check for public compile features from linked libraries
                 linked_lib = ctx.get_library(lib_name)
@@ -2569,7 +2591,7 @@ def generate_ninja(
 
                 if file_props:
                     for definition in file_props.compile_definitions:
-                        source_compile_flags.append(shlex.quote(f"-D{definition}"))
+                        source_compile_flags.append(f"-D{definition}")
                     for inc_dir in file_props.include_directories:
                         source_compile_flags.append(f"-I{inc_dir}")
                     for d in file_props.object_depends:
@@ -2626,6 +2648,17 @@ def generate_ninja(
                     imported = ctx.imported_targets[lib_name]
                     if imported.libs:
                         link_flags.append(imported.libs)
+                else:
+                    # Generic library name or path
+                    if (
+                        lib_name.startswith("-")
+                        or lib_name.startswith("/")
+                        or lib_name.startswith("$")
+                        or "." in lib_name
+                    ):
+                        link_flags.append(lib_name)
+                    else:
+                        link_flags.append(f"-l{lib_name}")
 
             # Link
             exe_name = f"$builddir/{exe.name}{exe_ext}"
