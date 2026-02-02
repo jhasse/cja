@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 
 def make_relative(path_str: str, root: Path) -> str:
@@ -44,3 +45,15 @@ def is_constant_truthy(value: str) -> bool:
     except ValueError:
         pass
     return False
+
+
+def strip_generator_expressions(value: str) -> str:
+    """Strip or evaluate simple CMake generator expressions."""
+    # Handle $<BUILD_INTERFACE:xxx>
+    value = re.sub(r"\$<BUILD_INTERFACE:([^>]+)>", r"\1", value)
+    # Handle $<INSTALL_INTERFACE:xxx> -> empty
+    value = re.sub(r"\$<INSTALL_INTERFACE:[^>]*>", "", value)
+    # Handle $<TARGET_FILE:target> -> target (we'll fix this later if needed)
+    # Handle others by stripping them
+    value = re.sub(r"\$<[^>]+>", "", value)
+    return value

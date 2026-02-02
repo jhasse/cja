@@ -81,6 +81,8 @@ def tokenize(content: str) -> list[tuple[str, int]]:
                     if content[i + 1] == "\n":
                         i += 2
                         line += 1
+                    elif content[i + 1] in ('"', "\\", "n", "t", "r"):
+                        i += 2
                     else:
                         i += 2
                 else:
@@ -88,7 +90,27 @@ def tokenize(content: str) -> list[tuple[str, int]]:
                         line += 1
                     i += 1
             i += 1  # Skip closing quote
-            tokens.append((content[start:i], line))
+            raw_val = content[start:i]
+            # Unescape
+            val = ""
+            j = 1
+            while j < len(raw_val) - 1:
+                if raw_val[j] == "\\":
+                    if raw_val[j + 1] == "n":
+                        val += "\n"
+                    elif raw_val[j + 1] == "t":
+                        val += "\t"
+                    elif raw_val[j + 1] == "r":
+                        val += "\r"
+                    elif raw_val[j + 1] == "\n":
+                        pass  # Line continuation
+                    else:
+                        val += raw_val[j + 1]
+                    j += 2
+                else:
+                    val += raw_val[j]
+                    j += 1
+            tokens.append(('"' + val + '"', line))
             continue
 
         # Unquoted token (identifier or value)

@@ -1,3 +1,5 @@
+import glob as py_glob
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -14,6 +16,7 @@ from .syntax import (
 )
 from .parser import Command
 from .targets import Executable, Library
+from .utils import strip_generator_expressions
 
 
 def handle_cmake_policy(
@@ -111,6 +114,9 @@ def handle_target_link_directories(
             else:
                 # Expand variables and resolve relative paths
                 expanded = ctx.expand_variables(arg, strict, cmd.line)
+                expanded = strip_generator_expressions(expanded)
+                if not expanded:
+                    continue
                 if not Path(expanded).is_absolute():
                     expanded = str(ctx.current_source_dir / expanded)
                 if visibility == "PUBLIC":
@@ -219,6 +225,9 @@ def handle_target_include_directories(
             else:
                 # Expand variables and resolve relative paths
                 expanded = ctx.expand_variables(arg, strict, cmd.line)
+                expanded = strip_generator_expressions(expanded)
+                if not expanded:
+                    continue
                 if not Path(expanded).is_absolute():
                     expanded = str(ctx.current_source_dir / expanded)
                 if visibility == "PUBLIC":
@@ -264,6 +273,9 @@ def handle_target_compile_definitions(
             else:
                 # Expand variables
                 expanded = ctx.expand_variables(arg, strict, cmd.line)
+                expanded = strip_generator_expressions(expanded)
+                if not expanded:
+                    continue
                 if visibility == "PUBLIC":
                     public_defs.append(expanded)
                     target_defs.append(expanded)
@@ -693,6 +705,36 @@ def handle_add_library(
     """Handle add_library() command."""
     if len(args) >= 2:
         name = args[0]
+        # Check for ALIAS
+        if len(args) >= 3 and args[1] == "ALIAS":
+            target_name = args[2]
+            # For now, just register the alias in imported_targets or something?
+            # Or just ignore it if we don't need it.
+            # CMake aliases are just pointers to other targets.
+            # In cninja, we can probably just ignore them or add them to ctx.libraries
+            # as a copy if we want to support linking against the alias.
+            lib = ctx.get_library(target_name)
+            if lib:
+                ctx.libraries.append(
+                    Library(
+                        name=name,
+                        sources=lib.sources,
+                        lib_type=lib.lib_type,
+                        include_directories=lib.include_directories,
+                        compile_definitions=lib.compile_definitions,
+                        compile_features=lib.compile_features,
+                        link_libraries=lib.link_libraries,
+                        link_directories=lib.link_directories,
+                        public_include_directories=lib.public_include_directories,
+                        public_compile_definitions=lib.public_compile_definitions,
+                        public_compile_features=lib.public_compile_features,
+                        public_link_directories=lib.public_link_directories,
+                        is_alias=True,
+                        alias_for=target_name,
+                    )
+                )
+            return
+
         # Check for STATIC/SHARED/OBJECT keyword
         sources = args[1:]
         lib_type = "STATIC"
@@ -1360,3 +1402,251 @@ def handle_macro(
 
     # Skip to after endmacro
     return endmacro_idx + 1
+
+
+def handle_string(
+    ctx: BuildContext,
+    cmd: Command,
+    args: list[str],
+    strict: bool,
+) -> None:
+    """Handle string() command."""
+    if len(args) < 2:
+        if strict:
+            ctx.print_error("string() requires at least a subcommand", cmd.line)
+            sys.exit(1)
+        return
+
+    subcommand = args[0].upper()
+
+    if subcommand == "REPLACE":
+        # string(REPLACE <match_string> <replace_string> <out_var> <input> [<input>...])
+        if len(args) >= 5:
+            match_str = args[1]
+            replace_str = args[2]
+            out_var = args[3]
+            inputs = args[4:]
+            full_input = "".join(inputs)
+            ctx.variables[out_var] = full_input.replace(match_str, replace_str)
+
+    elif subcommand == "REGEX":
+        if len(args) >= 4:
+            regex_sub = args[1].upper()
+            if regex_sub == "MATCH":
+                # string(REGEX MATCH <regex> <out_var> <input> [<input>...])
+                if len(args) >= 5:
+                    pattern = args[2]
+                    out_var = args[3]
+                    inputs = args[4:]
+                    full_input = "".join(inputs)
+                    match = re.search(pattern, full_input)
+                    if match:
+                        ctx.variables[out_var] = match.group(0)
+                        # Set CMAKE_MATCH_n variables
+                        for j in range(len(match.groups()) + 1):
+                            ctx.variables[f"CMAKE_MATCH_{j}"] = match.group(j)
+                    else:
+                        ctx.variables[out_var] = ""
+            elif regex_sub == "MATCHALL":
+                # string(REGEX MATCHALL <regex> <out_var> <input> [<input>...])
+                if len(args) >= 5:
+                    pattern = args[2]
+                    out_var = args[3]
+                    inputs = args[4:]
+                    full_input = "".join(inputs)
+                    matches = re.findall(pattern, full_input)
+                    ctx.variables[out_var] = ";".join(matches)
+            elif regex_sub == "REPLACE":
+                # string(REGEX REPLACE <regex> <replace_string> <out_var> <input> [<input>...])
+                if len(args) >= 6:
+                    pattern = args[2]
+                    replace_str = args[3]
+                    out_var = args[4]
+                    inputs = args[5:]
+                    full_input = "".join(inputs)
+
+                    # CMake uses \1, \2 etc for backreferences, Python uses \1, \2
+                    # but also supports \g<1> which is safer.
+                    # Actually CMake's REGEX REPLACE is a bit different.
+                    ctx.variables[out_var] = re.sub(pattern, replace_str, full_input)
+
+    elif subcommand == "SUBSTRING":
+        # string(SUBSTRING <string> <begin> <length> <out_var>)
+        if len(args) >= 5:
+            string_val = args[1]
+            try:
+                begin = int(args[2])
+                length = int(args[3])
+                out_var = args[4]
+                if length == -1:
+                    ctx.variables[out_var] = string_val[begin:]
+                else:
+                    ctx.variables[out_var] = string_val[begin : begin + length]
+            except ValueError:
+                pass
+
+    elif subcommand == "TOLOWER":
+        # string(TOLOWER <string> <out_var>)
+        if len(args) >= 3:
+            string_val = args[1]
+            out_var = args[2]
+            ctx.variables[out_var] = string_val.lower()
+
+    elif subcommand == "TOUPPER":
+        # string(TOUPPER <string> <out_var>)
+        if len(args) >= 3:
+            string_val = args[1]
+            out_var = args[2]
+            ctx.variables[out_var] = string_val.upper()
+
+    elif subcommand == "LENGTH":
+        # string(LENGTH <string> <out_var>)
+        if len(args) >= 3:
+            string_val = args[1]
+            out_var = args[2]
+            ctx.variables[out_var] = str(len(string_val))
+
+    elif subcommand == "APPEND":
+        # string(APPEND <var> [<string>...])
+        if len(args) >= 2:
+            out_var = args[1]
+            current_val = ctx.variables.get(out_var, "")
+            ctx.variables[out_var] = current_val + "".join(args[2:])
+
+    elif subcommand == "CONCAT":
+        # string(CONCAT <out_var> [<string>...])
+        if len(args) >= 2:
+            out_var = args[1]
+            ctx.variables[out_var] = "".join(args[2:])
+
+    elif subcommand == "JOIN":
+        # string(JOIN <glue> <out_var> [<string>...])
+        if len(args) >= 3:
+            glue = args[1]
+            out_var = args[2]
+            ctx.variables[out_var] = glue.join(args[3:])
+
+    elif subcommand == "STRIP":
+        # string(STRIP <string> <out_var>)
+        if len(args) >= 3:
+            string_val = args[1]
+            out_var = args[2]
+            ctx.variables[out_var] = string_val.strip()
+
+    elif subcommand == "SHA1":
+        # string(SHA1 <out_var> <input>)
+        if len(args) >= 3:
+            out_var = args[1]
+            input_val = args[2]
+            ctx.variables[out_var] = hashlib.sha1(input_val.encode()).hexdigest()
+
+    elif subcommand == "COMPARE":
+        # string(COMPARE <OP> <string1> <string2> <out_var>)
+        if len(args) >= 5:
+            op = args[1].upper()
+            s1 = args[2]
+            s2 = args[3]
+            out_var = args[4]
+            result = False
+            if op == "EQUAL":
+                result = s1 == s2
+            elif op == "NOTEQUAL":
+                result = s1 != s2
+            elif op == "LESS":
+                result = s1 < s2
+            elif op == "GREATER":
+                result = s1 > s2
+            ctx.variables[out_var] = "1" if result else "0"
+
+
+def handle_file(
+    ctx: BuildContext,
+    cmd: Command,
+    args: list[str],
+    strict: bool,
+) -> None:
+    """Handle file() command."""
+    if not args:
+        if strict:
+            ctx.print_error("file() requires at least a subcommand", cmd.line)
+            sys.exit(1)
+        return
+
+    subcommand = args[0].upper()
+
+    if subcommand in ("WRITE", "APPEND"):
+        # file(WRITE <filename> <content>...)
+        if len(args) >= 2:
+            filename = ctx.expand_variables(args[1], strict, cmd.line)
+            if not Path(filename).is_absolute():
+                filename = str(ctx.current_source_dir / filename)
+            content = "".join(args[2:])
+            mode = "w" if subcommand == "WRITE" else "a"
+            with open(filename, mode) as f:
+                f.write(content)
+
+    elif subcommand == "READ":
+        # file(READ <filename> <variable> [OFFSET <offset>] [LIMIT <limit>] [HEX])
+        if len(args) >= 3:
+            filename = ctx.expand_variables(args[1], strict, cmd.line)
+            if not Path(filename).is_absolute():
+                filename = str(ctx.current_source_dir / filename)
+            var_name = args[2]
+            if Path(filename).exists():
+                with open(filename, "r") as f:
+                    ctx.variables[var_name] = f.read()
+            else:
+                ctx.variables[var_name] = ""
+
+    elif subcommand == "GLOB":
+        if len(args) >= 3:
+            var_name = args[1]
+            patterns = args[2:]
+            matched_files: list[str] = []
+            for pattern in patterns:
+                expanded_pattern = ctx.expand_variables(pattern, strict, cmd.line)
+                if Path(expanded_pattern).is_absolute():
+                    matched = py_glob.glob(expanded_pattern)
+                else:
+                    matched = py_glob.glob(
+                        str(ctx.current_source_dir / expanded_pattern)
+                    )
+                matched.sort()
+                matched_files.extend(matched)
+            ctx.variables[var_name] = ";".join(matched_files)
+
+    elif subcommand == "REMOVE_RECURSE":
+        # file(REMOVE_RECURSE [<files>...])
+        for arg in args[1:]:
+            filename = ctx.expand_variables(arg, strict, cmd.line)
+            if not Path(filename).is_absolute():
+                filename = str(ctx.current_source_dir / filename)
+            p = Path(filename)
+            if p.exists():
+                import shutil
+
+                if p.is_dir():
+                    shutil.rmtree(p)
+                else:
+                    p.unlink()
+
+    elif subcommand == "MAKE_DIRECTORY":
+        # file(MAKE_DIRECTORY [<directories>...])
+        for arg in args[1:]:
+            dirname = ctx.expand_variables(arg, strict, cmd.line)
+            if not Path(dirname).is_absolute():
+                dirname = str(ctx.current_source_dir / dirname)
+            Path(dirname).mkdir(parents=True, exist_ok=True)
+
+    elif subcommand == "TOUCH":
+        # file(TOUCH [<files>...])
+        for arg in args[1:]:
+            filename = ctx.expand_variables(arg, strict, cmd.line)
+            if not Path(filename).is_absolute():
+                filename = str(ctx.current_source_dir / filename)
+            Path(filename).touch()
+
+    elif subcommand == "LOCK":
+        # file(LOCK <path> [DIRECTORY] [RELEASE] [GUARD <FUNCTION|FILE|PROCESS>] [RESULT_VARIABLE <variable>] [TIMEOUT <seconds>])
+        # Stub for now, just succeeds
+        pass

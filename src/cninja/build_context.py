@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+import os
 from pathlib import Path
 import re
 import sys
@@ -110,9 +111,9 @@ class BuildContext:
         raise SyntaxError(message, (str(self.current_list_file), line, 0, ""))
 
     def expand_variables(self, value: str, strict: bool = False, line: int = 0) -> str:
-        """Expand ${VAR} references in a string."""
+        """Expand ${VAR} and $ENV{VAR} references in a string."""
 
-        def replace(match: re.Match[str]) -> str:
+        def replace_normal(match: re.Match[str]) -> str:
             var_name = match.group(1)
             if var_name not in self.variables:
                 level = self.print_error if strict else self.print_warning
@@ -122,9 +123,16 @@ class BuildContext:
                 return ""
             return self.variables.get(var_name, "")
 
+        def replace_env(match: re.Match[str]) -> str:
+            var_name = match.group(1)
+            return os.environ.get(var_name, "")
+
         result = value
         for _ in range(10):
-            expanded = re.sub(r"\$\{(\w+)\}", replace, result)
+            # Expand $ENV{VAR} first
+            expanded = re.sub(r"\$ENV\{(\w+)\}", replace_env, result)
+            # Then ${VAR}
+            expanded = re.sub(r"\$\{(\w+)\}", replace_normal, expanded)
             if expanded == result:
                 break
             result = expanded

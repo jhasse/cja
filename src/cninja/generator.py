@@ -10,11 +10,10 @@ import sys
 import tarfile
 import urllib.request
 import zipfile
-import glob as py_glob
 from pathlib import Path
 from typing import Callable, cast
 
-from .utils import make_relative
+from .utils import make_relative, strip_generator_expressions
 from .syntax import (
     FetchContentInfo,
     SourceFileProperties,
@@ -29,6 +28,9 @@ from .build_context import (
     find_matching_endif,
 )
 from .commands import (
+    handle_add_executable,
+    handle_add_library,
+    handle_file,
     handle_function,
     handle_get_directory_property,
     handle_get_filename_component,
@@ -41,16 +43,17 @@ from .commands import (
     handle_set,
     handle_set_property,
     handle_set_target_properties,
-    handle_unset,
+    handle_string,
     handle_target_compile_definitions,
     handle_target_compile_features,
     handle_target_include_directories,
     handle_target_link_directories,
     handle_target_link_libraries,
     handle_target_sources,
+    handle_unset,
 )
 
-from .targets import Library, Executable, ImportedTarget, InstallTarget
+from .targets import ImportedTarget, InstallTarget
 
 from rich.progress import (
     Progress,
@@ -85,6 +88,7 @@ class Frame:
     fetchcontent_names: list[str] = field(default_factory=list)
     fetchcontent_index: int = 0
     fetchcontent_cmd: Command | None = None
+    fetchcontent_make_available: bool = True
 
 
 def is_header(filename: str) -> bool:
@@ -274,6 +278,7 @@ def process_commands(
     """Process CMake commands and populate the build context."""
     # Ensure CMAKE_COMMAND is always set
     ctx.variables["CMAKE_COMMAND"] = "cninja"
+    ctx.variables["CMAKE_VERSION"] = "3.28.0"
     stack: list[Frame] = [Frame(commands=commands, pc=0, kind="commands")]
     while stack:
         frame = stack[-1]
@@ -391,37 +396,40 @@ def process_commands(
                 )
                 ctx.variables[f"{name.lower()}_POPULATED"] = "TRUE"
 
-                sub_cmakelists = actual_src_dir / "CMakeLists.txt"
-                if sub_cmakelists.exists():
-                    from .parser import parse_file
+                if frame.fetchcontent_make_available:
+                    sub_cmakelists = actual_src_dir / "CMakeLists.txt"
+                    if sub_cmakelists.exists():
+                        from .parser import parse_file
 
-                    sub_commands = parse_file(sub_cmakelists)
+                        sub_commands = parse_file(sub_cmakelists)
 
-                    saved_current_source_dir = ctx.current_source_dir
-                    saved_current_list_file = ctx.current_list_file
-                    saved_vars = ctx.variables.copy()
-                    ctx.parent_scope_vars = {}
+                        saved_current_source_dir = ctx.current_source_dir
+                        saved_current_list_file = ctx.current_list_file
+                        saved_vars = ctx.variables.copy()
+                        ctx.parent_scope_vars = {}
 
-                    ctx.current_source_dir = actual_src_dir
-                    ctx.current_list_file = sub_cmakelists
-                    ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = str(actual_src_dir)
-                    ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(sub_cmakelists)
-                    ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(sub_cmakelists.parent)
-                    ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(ctx.build_dir)
+                        ctx.current_source_dir = actual_src_dir
+                        ctx.current_list_file = sub_cmakelists
+                        ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = str(actual_src_dir)
+                        ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(sub_cmakelists)
+                        ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
+                            sub_cmakelists.parent
+                        )
+                        ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(ctx.build_dir)
 
-                    def on_exit() -> None:
-                        parent_scope_updates = ctx.parent_scope_vars
-                        ctx.current_source_dir = saved_current_source_dir
-                        ctx.current_list_file = saved_current_list_file
-                        ctx.variables = saved_vars
-                        for var, val in parent_scope_updates.items():
-                            if val is None:
-                                ctx.variables.pop(var, None)
-                            else:
-                                ctx.variables[var] = val
-                        ctx.parent_scope_vars.clear()
+                        def on_exit() -> None:
+                            parent_scope_updates = ctx.parent_scope_vars
+                            ctx.current_source_dir = saved_current_source_dir
+                            ctx.current_list_file = saved_current_list_file
+                            ctx.variables = saved_vars
+                            for var, val in parent_scope_updates.items():
+                                if val is None:
+                                    ctx.variables.pop(var, None)
+                                else:
+                                    ctx.variables[var] = val
+                            ctx.parent_scope_vars.clear()
 
-                    stack.append(Frame(commands=sub_commands, on_exit=on_exit))
+                        stack.append(Frame(commands=sub_commands, on_exit=on_exit))
             continue
 
         current_commands = cast(list[Command], frame.commands)
@@ -610,13 +618,29 @@ def process_commands(
                         name=name, args=args[1:]
                     )
 
-            case "fetchcontent_makeavailable":
+            case "fetchcontent_getproperties":
+                if args:
+                    name = args[0].lower()
+                    if name in ctx.variables:  # Check if already populated
+                        pass
+                    # Set variables even if not populated yet, as CMake does
+                    # Actually, we should check our internal state
+                    source_dir = ctx.variables.get(f"{name}_SOURCE_DIR", "")
+                    binary_dir = ctx.variables.get(f"{name}_BINARY_DIR", "")
+                    populated = ctx.variables.get(f"{name}_POPULATED", "FALSE")
+                    ctx.variables[f"{name}_SOURCE_DIR"] = source_dir
+                    ctx.variables[f"{name}_BINARY_DIR"] = binary_dir
+                    ctx.variables[f"{name}_POPULATED"] = populated
+
+            case "fetchcontent_makeavailable" | "fetchcontent_populate":
                 stack.append(
                     Frame(
                         commands=None,
                         kind="fetchcontent",
                         fetchcontent_names=args,
                         fetchcontent_cmd=cmd,
+                        fetchcontent_make_available=cmd.name
+                        == "fetchcontent_makeavailable",
                     )
                 )
                 frame.pc += 1
@@ -637,341 +661,11 @@ def process_commands(
             case "math":
                 handle_math(ctx, cmd, args, strict)
 
+            case "string":
+                handle_string(ctx, cmd, args, strict)
+
             case "list":
                 handle_list(ctx, cmd, args, strict)
-
-            case "list":
-                # list(SUBCOMMAND <list_var> ...)
-                if len(args) < 2:
-                    if strict:
-                        ctx.print_error(
-                            "list() requires at least a subcommand and variable name",
-                            cmd.line,
-                        )
-                        sys.exit(1)
-                    frame.pc += 1
-                    continue
-
-                subcommand = args[0].upper()
-
-                if subcommand == "LENGTH":
-                    # list(LENGTH <list> <output variable>)
-                    if len(args) < 3:
-                        if strict:
-                            ctx.print_error(
-                                "list(LENGTH) requires list and output variable",
-                                cmd.line,
-                            )
-                            sys.exit(1)
-                    else:
-                        list_name = args[1]
-                        out_var = args[2]
-                        list_val = ctx.variables.get(list_name, "")
-                        if list_val:
-                            items = list_val.split(";")
-                            ctx.variables[out_var] = str(len(items))
-                        else:
-                            ctx.variables[out_var] = "0"
-
-                elif subcommand == "GET":
-                    # list(GET <list> <element index> [<element index> ...] <output variable>)
-                    if len(args) < 4:
-                        if strict:
-                            ctx.print_error(
-                                "list(GET) requires list, indices, and output variable",
-                                cmd.line,
-                            )
-                            sys.exit(1)
-                    else:
-                        list_name = args[1]
-                        indices = args[2:-1]
-                        out_var = args[-1]
-                        list_val = ctx.variables.get(list_name, "")
-                        items = list_val.split(";") if list_val else []
-                        result = []
-                        for idx_str in indices:
-                            try:
-                                idx = int(idx_str)
-                                if -len(items) <= idx < len(items):
-                                    result.append(items[idx])
-                            except (ValueError, IndexError):
-                                pass
-                        ctx.variables[out_var] = ";".join(result)
-
-                elif subcommand == "APPEND":
-                    # list(APPEND <list> [<element> ...])
-                    list_name = args[1]
-                    elements = args[2:]
-                    list_val = ctx.variables.get(list_name, "")
-                    if list_val:
-                        items = list_val.split(";")
-                        items.extend(elements)
-                        ctx.variables[list_name] = ";".join(items)
-                    elif elements:
-                        ctx.variables[list_name] = ";".join(elements)
-
-                elif subcommand == "PREPEND":
-                    # list(PREPEND <list> [<element> ...])
-                    list_name = args[1]
-                    elements = args[2:]
-                    list_val = ctx.variables.get(list_name, "")
-                    if list_val:
-                        items = list_val.split(";")
-                        items = elements + items
-                        ctx.variables[list_name] = ";".join(items)
-                    elif elements:
-                        ctx.variables[list_name] = ";".join(elements)
-
-                elif subcommand == "INSERT":
-                    # list(INSERT <list> <element_index> <element> [<element> ...])
-                    if len(args) < 4:
-                        if strict:
-                            ctx.print_error(
-                                "list(INSERT) requires list, index, and at least one element",
-                                cmd.line,
-                            )
-                            sys.exit(1)
-                    else:
-                        list_name = args[1]
-                        try:
-                            index = int(args[2])
-                            elements = args[3:]
-                            list_val = ctx.variables.get(list_name, "")
-                            items = list_val.split(";") if list_val else []
-                            # Insert elements at index
-                            for i_offset, elem in enumerate(elements):
-                                items.insert(index + i_offset, elem)
-                            ctx.variables[list_name] = ";".join(items)
-                        except ValueError:
-                            if strict:
-                                ctx.print_error(
-                                    "list(INSERT) index must be an integer", cmd.line
-                                )
-                                sys.exit(1)
-
-                elif subcommand == "REMOVE_ITEM":
-                    # list(REMOVE_ITEM <list> <value> [<value> ...])
-                    list_name = args[1]
-                    values_to_remove = args[2:]
-                    list_val = ctx.variables.get(list_name, "")
-                    if list_val:
-                        items = list_val.split(";")
-                        items = [item for item in items if item not in values_to_remove]
-                        ctx.variables[list_name] = ";".join(items)
-
-                elif subcommand == "REMOVE_AT":
-                    # list(REMOVE_AT <list> <index> [<index> ...])
-                    if len(args) < 3:
-                        if strict:
-                            ctx.print_error(
-                                "list(REMOVE_AT) requires list and at least one index",
-                                cmd.line,
-                            )
-                            sys.exit(1)
-                    else:
-                        list_name = args[1]
-                        indices = args[2:]
-                        list_val = ctx.variables.get(list_name, "")
-                        if list_val:
-                            items = list_val.split(";")
-                            # Convert indices and sort in reverse to remove from end
-                            idx_set = set()
-                            for idx_str in indices:
-                                try:
-                                    idx = int(idx_str)
-                                    # Handle negative indices
-                                    if idx < 0:
-                                        idx = len(items) + idx
-                                    if 0 <= idx < len(items):
-                                        idx_set.add(idx)
-                                except ValueError:
-                                    pass
-                            items = [
-                                item
-                                for program_counter, item in enumerate(items)
-                                if program_counter not in idx_set
-                            ]
-                            ctx.variables[list_name] = ";".join(items)
-
-                elif subcommand == "REMOVE_DUPLICATES":
-                    # list(REMOVE_DUPLICATES <list>)
-                    list_name = args[1]
-                    list_val = ctx.variables.get(list_name, "")
-                    if list_val:
-                        items = list_val.split(";")
-                        seen = set()
-                        unique_items = []
-                        for item in items:
-                            if item not in seen:
-                                seen.add(item)
-                                unique_items.append(item)
-                        ctx.variables[list_name] = ";".join(unique_items)
-
-                elif subcommand == "REVERSE":
-                    # list(REVERSE <list>)
-                    list_name = args[1]
-                    list_val = ctx.variables.get(list_name, "")
-                    if list_val:
-                        items = list_val.split(";")
-                        items.reverse()
-                        ctx.variables[list_name] = ";".join(items)
-
-                elif subcommand == "SORT":
-                    # list(SORT <list> [COMPARE <compare>] [CASE <case>] [ORDER <order>])
-                    list_name = args[1]
-                    list_val = ctx.variables.get(list_name, "")
-                    if list_val:
-                        items = list_val.split(";")
-                        # Parse options (simplified - ignoring COMPARE, CASE, ORDER for now)
-                        items.sort()
-                        ctx.variables[list_name] = ";".join(items)
-
-                elif subcommand == "FIND":
-                    # list(FIND <list> <value> <output variable>)
-                    if len(args) < 4:
-                        if strict:
-                            ctx.print_error(
-                                "list(FIND) requires list, value, and output variable",
-                                cmd.line,
-                            )
-                            sys.exit(1)
-                    else:
-                        list_name = args[1]
-                        value = args[2]
-                        out_var = args[3]
-                        list_val = ctx.variables.get(list_name, "")
-                        if list_val:
-                            items = list_val.split(";")
-                            try:
-                                idx = items.index(value)
-                                ctx.variables[out_var] = str(idx)
-                            except ValueError:
-                                ctx.variables[out_var] = "-1"
-                        else:
-                            ctx.variables[out_var] = "-1"
-
-                elif subcommand == "JOIN":
-                    # list(JOIN <list> <glue> <output variable>)
-                    if len(args) < 4:
-                        if strict:
-                            ctx.print_error(
-                                "list(JOIN) requires list, glue, and output variable",
-                                cmd.line,
-                            )
-                            sys.exit(1)
-                    else:
-                        list_name = args[1]
-                        glue = args[2]
-                        out_var = args[3]
-                        list_val = ctx.variables.get(list_name, "")
-                        if list_val:
-                            items = list_val.split(";")
-                            ctx.variables[out_var] = glue.join(items)
-                        else:
-                            ctx.variables[out_var] = ""
-
-                elif subcommand == "SUBLIST":
-                    # list(SUBLIST <list> <begin> <length> <output variable>)
-                    if len(args) < 5:
-                        if strict:
-                            ctx.print_error(
-                                "list(SUBLIST) requires list, begin, length, and output variable",
-                                cmd.line,
-                            )
-                            sys.exit(1)
-                    else:
-                        list_name = args[1]
-                        try:
-                            begin = int(args[2])
-                            length = int(args[3])
-                            out_var = args[4]
-                            list_val = ctx.variables.get(list_name, "")
-                            if list_val:
-                                items = list_val.split(";")
-                                # Handle negative length (means all remaining)
-                                if length < 0:
-                                    sublist = items[begin:]
-                                else:
-                                    sublist = items[begin : begin + length]
-                                ctx.variables[out_var] = ";".join(sublist)
-                            else:
-                                ctx.variables[out_var] = ""
-                        except ValueError:
-                            if strict:
-                                ctx.print_error(
-                                    "list(SUBLIST) begin and length must be integers",
-                                    cmd.line,
-                                )
-                                sys.exit(1)
-
-                elif subcommand == "TRANSFORM":
-                    # list(TRANSFORM <list> <ACTION> [<SELECTOR>] [OUTPUT_VARIABLE <output variable>])
-                    # Simplified implementation - just handle basic TOUPPER/TOLOWER/STRIP
-                    if len(args) < 3:
-                        if strict:
-                            ctx.print_error(
-                                "list(TRANSFORM) requires list and action", cmd.line
-                            )
-                            sys.exit(1)
-                    else:
-                        list_name = args[1]
-                        action = args[2].upper()
-                        # Check for OUTPUT_VARIABLE
-                        out_var = list_name
-                        if "OUTPUT_VARIABLE" in args:
-                            idx = args.index("OUTPUT_VARIABLE")
-                            if idx + 1 < len(args):
-                                out_var = args[idx + 1]
-
-                        list_val = ctx.variables.get(list_name, "")
-                        if list_val:
-                            items = list_val.split(";")
-                            if action == "TOUPPER":
-                                items = [item.upper() for item in items]
-                            elif action == "TOLOWER":
-                                items = [item.lower() for item in items]
-                            elif action == "STRIP":
-                                items = [item.strip() for item in items]
-                            ctx.variables[out_var] = ";".join(items)
-
-                elif subcommand == "FILTER":
-                    # list(FILTER <list> <INCLUDE|EXCLUDE> REGEX <regex>)
-                    if len(args) < 5:
-                        if strict:
-                            ctx.print_error(
-                                "list(FILTER) requires list, mode, REGEX, and pattern",
-                                cmd.line,
-                            )
-                            sys.exit(1)
-                    else:
-                        list_name = args[1]
-                        mode = args[2].upper()
-                        if args[3].upper() == "REGEX" and len(args) >= 5:
-                            pattern = args[4]
-                            list_val = ctx.variables.get(list_name, "")
-                            if list_val:
-                                items = list_val.split(";")
-                                import re as regex_module
-
-                                if mode == "INCLUDE":
-                                    items = [
-                                        item
-                                        for item in items
-                                        if regex_module.search(pattern, item)
-                                    ]
-                                elif mode == "EXCLUDE":
-                                    items = [
-                                        item
-                                        for item in items
-                                        if not regex_module.search(pattern, item)
-                                    ]
-                                ctx.variables[list_name] = ";".join(items)
-                else:
-                    if strict:
-                        ctx.print_error(
-                            f"list() unknown subcommand: {subcommand}", cmd.line
-                        )
-                        sys.exit(1)
 
             case "include":
                 if args:
@@ -984,11 +678,40 @@ def process_commands(
                         "CheckCXXSymbolExists",
                         "FetchContent",
                         "FindPackageHandleStandardArgs",
+                        "GNUInstallDirs",
                     }
                     if module_name == "CTest":
                         # CTest sets BUILD_TESTING to ON by default
                         if "BUILD_TESTING" not in ctx.variables:
                             ctx.variables["BUILD_TESTING"] = "ON"
+                    elif module_name == "GNUInstallDirs":
+                        # Set standard installation directories
+                        if "CMAKE_INSTALL_BINDIR" not in ctx.variables:
+                            ctx.variables["CMAKE_INSTALL_BINDIR"] = "bin"
+                        if "CMAKE_INSTALL_LIBDIR" not in ctx.variables:
+                            ctx.variables["CMAKE_INSTALL_LIBDIR"] = "lib"
+                        if "CMAKE_INSTALL_INCLUDEDIR" not in ctx.variables:
+                            ctx.variables["CMAKE_INSTALL_INCLUDEDIR"] = "include"
+                        if "CMAKE_INSTALL_DATADIR" not in ctx.variables:
+                            ctx.variables["CMAKE_INSTALL_DATADIR"] = "share"
+                        if "CMAKE_INSTALL_DOCDIR" not in ctx.variables:
+                            ctx.variables["CMAKE_INSTALL_DOCDIR"] = "share/doc"
+                        if "CMAKE_INSTALL_PREFIX" not in ctx.variables:
+                            ctx.variables["CMAKE_INSTALL_PREFIX"] = "/usr/local"
+
+                        # Full paths
+                        prefix = ctx.variables["CMAKE_INSTALL_PREFIX"]
+                        for var in [
+                            "BINDIR",
+                            "LIBDIR",
+                            "INCLUDEDIR",
+                            "DATADIR",
+                            "DOCDIR",
+                        ]:
+                            full_var = f"CMAKE_INSTALL_FULL_{var}"
+                            if full_var not in ctx.variables:
+                                rel_path = ctx.variables[f"CMAKE_INSTALL_{var}"]
+                                ctx.variables[full_var] = str(Path(prefix) / rel_path)
                     elif module_name.endswith(".cmake") or "/" in module_name:
                         inc_file = Path(module_name)
                         if not inc_file.is_absolute():
@@ -1243,27 +966,10 @@ int main() {{
                     ctx.variables[variable] = "1" if found else ""
 
             case "add_library":
-                if len(args) >= 2:
-                    name = args[0]
-                    # Check for STATIC/SHARED/OBJECT keyword
-                    sources = args[1:]
-                    lib_type = "STATIC"
-                    if sources and sources[0] in ("STATIC", "SHARED", "OBJECT"):
-                        lib_type = sources[0]
-                        sources = sources[1:]
-                    sources = [ctx.resolve_path(s) for s in sources]
-                    ctx.libraries.append(
-                        Library(
-                            name=name,
-                            sources=sources,
-                            lib_type=lib_type,
-                        )
-                    )
+                handle_add_library(ctx, args)
 
             case "add_executable":
-                if len(args) >= 2:
-                    sources = [ctx.resolve_path(s) for s in args[1:]]
-                    ctx.executables.append(Executable(name=args[0], sources=sources))
+                handle_add_executable(ctx, args)
 
             case "set_target_properties":
                 handle_set_target_properties(ctx, cmd, args, strict)
@@ -1299,25 +1005,7 @@ int main() {{
                 handle_target_compile_definitions(ctx, cmd, args, strict)
 
             case "file":
-                if len(args) >= 3:
-                    mode = args[0]
-                    if mode == "GLOB":
-                        var_name = args[1]
-                        patterns = args[2:]
-                        matched_files: list[str] = []
-                        for pattern in patterns:
-                            expanded_pattern = ctx.expand_variables(
-                                pattern, strict, cmd.line
-                            )
-                            if Path(expanded_pattern).is_absolute():
-                                matched = py_glob.glob(expanded_pattern)
-                            else:
-                                matched = py_glob.glob(
-                                    str(ctx.current_source_dir / expanded_pattern)
-                                )
-                            matched.sort()
-                            matched_files.extend(matched)
-                        ctx.variables[var_name] = ";".join(matched_files)
+                handle_file(ctx, cmd, args, strict)
 
             case "add_compile_options":
                 # add_compile_options adds flags to all targets
@@ -2493,6 +2181,12 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
 
         # Generate build statements for libraries
         for lib in ctx.libraries:
+            if lib.is_alias:
+                # Aliases don't produce build rules themselves, they point to another target
+                # In cninja, we'll map the alias name to the original library output
+                # (This is a bit hacky but works for linking)
+                # Wait, where do we store lib_outputs?
+                continue
             objects: list[str] = []
 
             # Collect compile flags from global options, compile definitions, compile features, and include dirs
@@ -2500,13 +2194,13 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
             for definition in ctx.compile_definitions:
                 lib_compile_flags.append(f"-D{definition}")
             for definition in lib.compile_definitions:
-                lib_compile_flags.append(f"-D{definition}")
+                lib_compile_flags.append(f"-D{strip_generator_expressions(definition)}")
             for feature in lib.compile_features:
                 flag = compile_feature_to_flag(feature)
                 if flag:
                     lib_compile_flags.append(flag)
             for inc_dir in lib.include_directories:
-                lib_compile_flags.append(f"-I{inc_dir}")
+                lib_compile_flags.append(f"-I{strip_generator_expressions(inc_dir)}")
 
             # Filter out headers from compileable sources
             compileable_sources: list[str] = [
@@ -2571,6 +2265,11 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
                 n.newline()
                 lib_outputs[lib.name] = lib_name
 
+        # Second pass for aliases to map them to original outputs
+        for lib in ctx.libraries:
+            if lib.is_alias and lib.alias_for in lib_outputs:
+                lib_outputs[lib.name] = lib_outputs[lib.alias_for]
+
         # Generate build statements for executables
         default_targets: list[str] = []
 
@@ -2581,15 +2280,15 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
             # Collect cflags from global options, compile definitions, compile features, include dirs, linked libraries, and imported targets
             compile_flags: list[str] = list(ctx.compile_options)
             for definition in ctx.compile_definitions:
-                compile_flags.append(f"-D{definition}")
+                compile_flags.append(f"-D{strip_generator_expressions(definition)}")
             for definition in exe.compile_definitions:
-                compile_flags.append(f"-D{definition}")
+                compile_flags.append(f"-D{strip_generator_expressions(definition)}")
             for feature in exe.compile_features:
                 flag = compile_feature_to_flag(feature)
                 if flag:
                     compile_flags.append(flag)
             for inc_dir in exe.include_directories:
-                compile_flags.append(f"-I{inc_dir}")
+                compile_flags.append(f"-I{strip_generator_expressions(inc_dir)}")
             for lib_name in exe.link_libraries:
                 # Check for public compile features from linked libraries
                 linked_lib = ctx.get_library(lib_name)
@@ -2600,12 +2299,12 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
                             compile_flags.append(flag)
                     # Check for public include directories from linked libraries
                     for inc_dir in linked_lib.public_include_directories:
-                        inc_flag = f"-I{inc_dir}"
+                        inc_flag = f"-I{strip_generator_expressions(inc_dir)}"
                         if inc_flag not in compile_flags:
                             compile_flags.append(inc_flag)
                     # Check for public compile definitions from linked libraries
                     for definition in linked_lib.public_compile_definitions:
-                        def_flag = f"-D{definition}"
+                        def_flag = f"-D{strip_generator_expressions(definition)}"
                         if def_flag not in compile_flags:
                             compile_flags.append(def_flag)
                     # Check for public link directories from linked libraries
@@ -2836,6 +2535,7 @@ def configure(
     ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(ctx.build_dir)
     ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(ctx.current_list_file)
     ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(ctx.current_list_file.parent)
+    ctx.variables["CMAKE_MODULE_PATH"] = ""
 
     if platform.system() == "Darwin":
         ctx.variables["CMAKE_SYSTEM_NAME"] = "Darwin"
