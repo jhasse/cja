@@ -2783,9 +2783,19 @@ def generate_ninja(
                 pool="console",
             )
             n.newline()
-            first_exe_target = ctx.executables[0].name
-            if first_exe_target in exe_outputs:
-                n.build("run", "run_exe", exe_outputs[first_exe_target])
+            run_target = ctx.executables[0].name
+
+            # Check for VS_STARTUP_PROJECT property on the root directory
+            root_dir = str(ctx.source_dir)
+            if root_dir in ctx.directory_properties:
+                startup_proj = ctx.directory_properties[root_dir].get(
+                    "VS_STARTUP_PROJECT"
+                )
+                if startup_proj:
+                    run_target = startup_proj
+
+            if run_target in exe_outputs:
+                n.build("run", "run_exe", exe_outputs[run_target])
                 n.newline()
 
         # Default target

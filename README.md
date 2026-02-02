@@ -62,7 +62,9 @@ ninja -f build-release.ninja test
 
 ## Run Subcommand
 
-cninja generates a "run" phony target which executes the first executable in your CMakeLists.txt.
+cninja generates a "run" phony target which executes the first executable (or the one set via
+[VS_STARTUP_PROJECT](https://cmake.org/cmake/help/latest/prop_dir/VS_STARTUP_PROJECT.html)) in your
+CMakeLists.txt.
 
 ### `cninja run`
 

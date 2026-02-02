@@ -335,11 +335,16 @@ def handle_set_target_properties(
                             lib.public_include_directories.append(expanded)
                         elif exe:
                             exe.include_directories.append(expanded)
-                elif strict:
-                    ctx.print_warning(
-                        f"set_target_properties: property '{prop_name}' not yet supported",
-                        cmd.line,
-                    )
+                else:
+                    if lib:
+                        lib.properties[prop_name] = prop_value
+                    elif exe:
+                        exe.properties[prop_name] = prop_value
+                    elif strict:
+                        ctx.print_warning(
+                            f"set_target_properties: property '{prop_name}' not yet supported",
+                            cmd.line,
+                        )
 
 
 def handle_set_property(
@@ -439,11 +444,27 @@ def handle_set_property(
                 elif exe:
                     # Executables don't have compile_definitions directly yet
                     pass
-            elif strict:
-                ctx.print_warning(
-                    f"set_property(TARGET): property '{prop_name}' not yet supported",
-                    cmd.line,
-                )
+            else:
+                value = ";".join(prop_values)
+                if lib:
+                    if append_mode and prop_name in lib.properties:
+                        lib.properties[prop_name] += (
+                            "" if append_string else ";"
+                        ) + value
+                    else:
+                        lib.properties[prop_name] = value
+                elif exe:
+                    if append_mode and prop_name in exe.properties:
+                        exe.properties[prop_name] += (
+                            "" if append_string else ";"
+                        ) + value
+                    else:
+                        exe.properties[prop_name] = value
+                elif strict:
+                    ctx.print_warning(
+                        f"set_property(TARGET): property '{prop_name}' not yet supported",
+                        cmd.line,
+                    )
 
     elif scope_type == "SOURCE":
         # Source file property
@@ -483,13 +504,23 @@ def handle_set_property(
                 )
 
     elif scope_type == "DIRECTORY":
-        # Directory property - for now, we'll just store it but not act on it
-        # Common properties: EP_BASE, INCLUDE_DIRECTORIES, etc.
-        if strict:
-            ctx.print_warning(
-                "set_property(DIRECTORY) is not yet fully supported",
-                cmd.line,
-            )
+        # Directory property
+        # scope_args can be empty (current directory) or contain a path
+        dirs = scope_args if scope_args else [str(ctx.current_source_dir)]
+        for d in dirs:
+            abs_dir = d
+            if not Path(abs_dir).is_absolute():
+                abs_dir = str(ctx.current_source_dir / abs_dir)
+
+            if abs_dir not in ctx.directory_properties:
+                ctx.directory_properties[abs_dir] = {}
+
+            value = ";".join(prop_values)
+            if append_mode and prop_name in ctx.directory_properties[abs_dir]:
+                separator = "" if append_string else ";"
+                ctx.directory_properties[abs_dir][prop_name] += separator + value
+            else:
+                ctx.directory_properties[abs_dir][prop_name] = value
 
     elif scope_type in ("TEST", "CACHE", "INSTALL"):
         # These scopes are not commonly used in basic builds
@@ -574,7 +605,6 @@ def handle_get_property(
         if scope_args:
             target_name = scope_args[0]
             lib = ctx.get_library(target_name)
-            exe = ctx.get_executable(target_name)
 
             value = ""
             if prop_name == "INTERFACE_INCLUDE_DIRECTORIES" and lib:

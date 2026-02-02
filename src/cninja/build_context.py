@@ -69,6 +69,9 @@ class BuildContext:
     global_properties: dict[str, str] = field(
         default_factory=dict
     )  # Global properties set via set_property(GLOBAL ...)
+    directory_properties: dict[str, dict[str, str]] = field(
+        default_factory=dict
+    )  # Properties for directories
     parent_directory: str = ""  # Path to parent directory (if in subdirectory)
     cmake_files: set[Path] = field(default_factory=set)
 

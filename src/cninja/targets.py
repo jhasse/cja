@@ -29,6 +29,7 @@ class Library:
     )  # PUBLIC link directories
     link_libraries: list[str] = field(default_factory=list)
     public_link_libraries: list[str] = field(default_factory=list)
+    properties: dict[str, str] = field(default_factory=dict)
     is_alias: bool = False
     alias_for: str | None = None
 
@@ -46,6 +47,7 @@ class Executable:
     include_directories: list[str] = field(default_factory=list)
     compile_definitions: list[str] = field(default_factory=list)
     link_directories: list[str] = field(default_factory=list)
+    properties: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass

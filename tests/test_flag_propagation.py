@@ -1,4 +1,3 @@
-from pathlib import Path
 from cninja.generator import BuildContext, process_commands, generate_ninja
 from cninja.parser import Command
 import pytest
