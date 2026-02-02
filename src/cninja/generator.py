@@ -14,6 +14,7 @@ import zipfile
 import glob as py_glob
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import cast
 
 from .targets import Library, Executable, ImportedTarget
 
@@ -2538,9 +2539,12 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
                         else:
                             source_depends.append(d)
 
-                source_vars = None
+                source_vars: dict[str, str | list[str] | None] | None = None
                 if source_compile_flags:
-                    source_vars = {"cflags": " ".join(source_compile_flags)}
+                    source_vars = cast(
+                        dict[str, str | list[str] | None],
+                        {"cflags": " ".join(source_compile_flags)},
+                    )
 
                 n.build(
                     obj_name,
@@ -2642,9 +2646,12 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
                         else:
                             source_depends.append(d)
 
-                source_vars = None
+                source_vars: dict[str, str | list[str] | None] | None = None
                 if source_compile_flags:
-                    source_vars = {"cflags": " ".join(source_compile_flags)}
+                    source_vars = cast(
+                        dict[str, str | list[str] | None],
+                        {"cflags": " ".join(source_compile_flags)},
+                    )
 
                 n.build(
                     obj_name,
@@ -2673,7 +2680,7 @@ def generate_ninja(ctx: BuildContext, output_path: Path, builddir: str) -> None:
             # Link
             exe_name = f"$builddir/{exe.name}{exe_ext}"
             link_rule = "link_cxx" if uses_cxx else "link"
-            variables: dict[str, str] = {}
+            variables: dict[str, str | list[str] | None] = {}
             if link_flags:
                 variables["libs"] = " ".join(link_flags)
             n.build(
