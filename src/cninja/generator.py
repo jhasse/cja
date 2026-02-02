@@ -2912,6 +2912,9 @@ int main() {{
                 assert len(args) == 0
                 pass  # stub
 
+            case "mark_as_advanced":
+                pass  # not needed because we don't have a GUI (yet?)
+
             case "execute_process":
                 # Parse execute_process arguments
                 commands_list: list[list[str]] = []
