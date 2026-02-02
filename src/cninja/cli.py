@@ -141,6 +141,8 @@ def _run_ninja(args: argparse.Namespace, target: str | None) -> int:
     ninja_cmd = ["ninja", "-f", str(ninja_file)]
     if target:
         ninja_cmd.append(target)
+    if hasattr(args, "ninja_args"):
+        ninja_cmd.extend(args.ninja_args)
     result = subprocess.run(ninja_cmd)
     return result.returncode
 
@@ -217,7 +219,14 @@ def main() -> int:
         help="Run in release mode (CMAKE_BUILD_TYPE=Release)",
     )
 
-    args = parser.parse_args()
+    args, ninja_args = parser.parse_known_args()
+    if hasattr(args, "command") and args.command in ("build", "test", "run"):
+        args.ninja_args = ninja_args
+    elif ninja_args:
+        # If not a subcommand, argparse shouldn't have unknown args unless it's an error
+        # But we want to be strict here or handle it.
+        # Actually, if it's the default (configure), we don't expect ninja_args.
+        pass
 
     if args.E:
         return cmd_command_mode(args.E)
