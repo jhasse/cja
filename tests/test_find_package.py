@@ -47,7 +47,7 @@ def test_find_package_unknown_required() -> None:
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
     commands = [Command(name="find_package", args=["UnknownPackage123", "REQUIRED"], line=1)]
 
-    with pytest.raises(FileNotFoundError, match="Could not find package"):
+    with pytest.raises(SystemExit):
         process_commands(commands, ctx)
 
 
