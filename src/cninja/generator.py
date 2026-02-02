@@ -444,7 +444,8 @@ def process_commands(
 
         if trace:
             args_str = " ".join(cmd.args) if cmd.args else ""
-            print(f"{colored('--', 'cyan')} {cmd.name}({args_str})")
+            rel_file = make_relative(str(ctx.current_list_file), ctx.source_dir)
+            print(f"{rel_file}:{cmd.line}: {cmd.name}({args_str})")
 
         match cmd.name:
             case "if":
