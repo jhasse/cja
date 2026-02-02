@@ -21,6 +21,11 @@ def tokenize(content: str) -> list[tuple[str, int]]:
     line = 1
 
     while i < len(content):
+        # Line continuation: backslash-newline is removed but still advances line count
+        if content[i] == "\\" and i + 1 < len(content) and content[i + 1] == "\n":
+            i += 2
+            line += 1
+            continue
         # Skip whitespace
         if content[i] in " \t":
             i += 1
@@ -73,19 +78,49 @@ def tokenize(content: str) -> list[tuple[str, int]]:
             i += 1
             while i < len(content) and content[i] != '"':
                 if content[i] == "\\" and i + 1 < len(content):
-                    i += 2
+                    if content[i + 1] == "\n":
+                        i += 2
+                        line += 1
+                    elif content[i + 1] in ('"', "\\", "n", "t", "r"):
+                        i += 2
+                    else:
+                        i += 2
                 else:
                     if content[i] == "\n":
                         line += 1
                     i += 1
             i += 1  # Skip closing quote
-            tokens.append((content[start:i], line))
+            raw_val = content[start:i]
+            # Unescape
+            val = ""
+            j = 1
+            while j < len(raw_val) - 1:
+                if raw_val[j] == "\\":
+                    if raw_val[j + 1] == "n":
+                        val += "\n"
+                    elif raw_val[j + 1] == "t":
+                        val += "\t"
+                    elif raw_val[j + 1] == "r":
+                        val += "\r"
+                    elif raw_val[j + 1] == "\n":
+                        pass  # Line continuation
+                    else:
+                        val += raw_val[j + 1]
+                    j += 2
+                else:
+                    val += raw_val[j]
+                    j += 1
+            tokens.append(('"' + val + '"', line))
             continue
 
         # Unquoted token (identifier or value)
         start = i
         while i < len(content) and content[i] not in " \t\n()#":
-            i += 1
+            if content[i] == "\\" and i + 1 < len(content) and content[i + 1] == "\n":
+                i += 2
+                line += 1
+            else:
+                i += 1
         if i > start:
             tokens.append((content[start:i], line))
 

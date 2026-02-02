@@ -80,8 +80,9 @@ def test_target_include_directories_in_ninja(tmp_path: Path) -> None:
     cmake_file = source_dir / "CMakeLists.txt"
     content = cmake_file.read_text()
     content = content.replace(
-        "add_executable(hello main.c)",
-        "add_executable(hello main.c)\ntarget_include_directories(hello PRIVATE include)"
+        "add_executable(hello main.c subfolder/main.c)",
+        "add_executable(hello main.c subfolder/main.c)\n"
+        "target_include_directories(hello PRIVATE include)",
     )
     cmake_file.write_text(content)
 

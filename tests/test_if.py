@@ -4,7 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from cninja.generator import BuildContext, evaluate_condition, process_commands
+from cninja.build_context import BuildContext
+from cninja.generator import process_commands
+from cninja.syntax import evaluate_condition
 from cninja.parser import Command
 
 
@@ -64,6 +66,22 @@ class TestEvaluateCondition:
     def test_matches(self) -> None:
         variables = {"X": "hello world"}
         assert evaluate_condition(["X", "MATCHES", "wor.*"], variables) is True
+        assert variables["CMAKE_MATCH_0"] == "world"
+
+    def test_cmake_matches_sets_group(self) -> None:
+        variables = {"url": "http://example.com/libogg-1.3.5.tar.gz"}
+        assert (
+            evaluate_condition(
+                [
+                    "url",
+                    "MATCHES",
+                    r"[/\?]([a-zA-Z0-9_.-]+)\.(tar|tar\.gz|tar\.bz2|zip|ZIP)(\?|/|$)",
+                ],
+                variables,
+            )
+            is True
+        )
+        assert variables["CMAKE_MATCH_1"] == "libogg-1.3.5"
 
 
 class TestIfCommand:
@@ -117,6 +135,49 @@ class TestIfCommand:
         ]
         process_commands(commands, ctx)
         assert "X is 2" in capsys.readouterr().out
+
+    def test_nested_variable_expansion_in_condition(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+        commands = [
+            Command(name="set", args=["NAME", "foo"], line=1),
+            Command(name="set", args=["CPM_foo_SOURCE", "srcdir"], line=2),
+            Command(
+                name="if",
+                args=["NOT", "${CPM_${NAME}_SOURCE}", "STREQUAL", ""],
+                line=3,
+            ),
+            Command(name="message", args=["STATUS", "has source"], line=4),
+            Command(name="endif", args=[], line=5),
+        ]
+        process_commands(commands, ctx)
+        assert "has source" in capsys.readouterr().out
+
+    def test_cpm_nested_source_condition(self, capsys: pytest.CaptureFixture[str]) -> None:
+        ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+        commands = [
+            Command(name="set", args=["CPM_ARGS_NAME", "libogg"], line=1),
+            Command(name="set", args=["CPM_ARGS_FORCE", "FALSE"], line=2),
+            Command(name="set", args=["CPM_libogg_SOURCE", "srcdir"], line=3),
+            Command(
+                name="if",
+                args=[
+                    "NOT",
+                    "CPM_ARGS_FORCE",
+                    "AND",
+                    "NOT",
+                    "${CPM_${CPM_ARGS_NAME}_SOURCE}",
+                    "STREQUAL",
+                    "",
+                ],
+                line=4,
+            ),
+            Command(name="message", args=["STATUS", "cpm source set"], line=5),
+            Command(name="endif", args=[], line=6),
+        ]
+        process_commands(commands, ctx)
+        assert "cpm source set" in capsys.readouterr().out
 
     def test_nested_if(self, capsys: pytest.CaptureFixture[str]) -> None:
         ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
