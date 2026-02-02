@@ -131,6 +131,7 @@ def handle_add_subdirectory(
         if sub_cmakelists.exists():
             from .parser import parse_file
 
+            ctx.record_cmake_file(sub_cmakelists)
             sub_commands = parse_file(sub_cmakelists)
 
             # Save current state
@@ -401,6 +402,8 @@ def process_commands(
                     if sub_cmakelists.exists():
                         from .parser import parse_file
 
+                        ctx.record_cmake_file(sub_cmakelists)
+                        ctx.record_cmake_file(sub_cmakelists)
                         sub_commands = parse_file(sub_cmakelists)
 
                         saved_current_source_dir = ctx.current_source_dir
@@ -720,6 +723,7 @@ def process_commands(
                         if inc_file.exists():
                             from .parser import parse_file
 
+                            ctx.record_cmake_file(inc_file)
                             inc_commands = parse_file(inc_file)
                             saved_list_file = ctx.current_list_file
                             ctx.current_list_file = inc_file
@@ -1679,6 +1683,7 @@ int main() {{
                         if found_file:
                             from .parser import parse_file
 
+                            ctx.record_cmake_file(found_file)
                             find_commands = parse_file(found_file)
 
                             saved_list_file = ctx.current_list_file
@@ -2159,6 +2164,49 @@ def generate_ninja(
         n.variable("cxx", cxx)
         n.variable("ar", "ar")
         n.newline()
+
+        cmake_deps: list[str] = []
+        for cmake_path in sorted(ctx.cmake_files, key=lambda p: str(p)):
+            if cmake_path.name == "CMakeLists.txt" or cmake_path.suffix == ".cmake":
+                cmake_deps.append(make_relative(str(cmake_path), ctx.source_dir))
+
+        if cmake_deps:
+
+            def format_define(name: str, value: str) -> str:
+                if value == "":
+                    return f"-D{name}="
+                return f"-D{name}={value}"
+
+            reconfigure_cmd_parts = ["cninja"]
+            if builddir != "build":
+                reconfigure_cmd_parts += ["-B", "$builddir"]
+            for var_name in sorted(ctx.cache_variables):
+                if var_name in ctx.variables:
+                    reconfigure_cmd_parts.append(
+                        format_define(var_name, ctx.variables[var_name])
+                    )
+
+            def quote_part(part: str) -> str:
+                if part == "$builddir":
+                    return part
+                return shlex.quote(part)
+
+            reconfigure_cmd = " ".join(
+                quote_part(part) for part in reconfigure_cmd_parts
+            )
+
+            n.rule(
+                "reconfigure",
+                command=reconfigure_cmd,
+                generator=True,
+                restat=True,
+                pool="console",
+            )
+            n.newline()
+
+            output_name = make_relative(str(output_path), ctx.source_dir)
+            n.build(output_name, "reconfigure", cmake_deps)
+            n.newline()
 
         # Compile rules - include build type flags
         base_cflags = f"-fdiagnostics-color {build_type_flags}".strip()
@@ -2676,12 +2724,13 @@ def configure(
 
     from .parser import parse_file
 
-    commands = parse_file(cmake_file)
-
     ctx = BuildContext(
         source_dir=source_dir,
         build_dir=source_dir / build_dir,
     )
+    ctx.record_cmake_file(cmake_file)
+
+    commands = parse_file(cmake_file)
 
     # Set variables from command line (-D flags) first
     # These are cache variables that won't be overridden by set()

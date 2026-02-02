@@ -70,10 +70,20 @@ class BuildContext:
         default_factory=dict
     )  # Global properties set via set_property(GLOBAL ...)
     parent_directory: str = ""  # Path to parent directory (if in subdirectory)
+    cmake_files: set[Path] = field(default_factory=set)
 
     def __post_init__(self) -> None:
         self.current_source_dir = self.source_dir
         self.current_list_file = self.source_dir / "CMakeLists.txt"
+        self.record_cmake_file(self.current_list_file)
+
+    def record_cmake_file(self, path: Path) -> None:
+        """Track a CMakeLists.txt or .cmake file used during configure."""
+        try:
+            resolved = path.resolve()
+        except FileNotFoundError:
+            resolved = path
+        self.cmake_files.add(resolved)
 
     def get_library(self, name: str) -> Library | None:
         for lib in self.libraries:
