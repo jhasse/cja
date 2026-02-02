@@ -2353,8 +2353,10 @@ def generate_ninja(
                 register_output(out, custom_cmd.defined_file, custom_cmd.defined_line)
             n.newline()
 
-        # Helper to expand public link libraries recursively
-        def expand_public_link_libraries(initial: list[str]) -> list[str]:
+        # Helper to expand link libraries recursively
+        def expand_link_libraries(
+            initial: list[str], follow_private_of_static: bool
+        ) -> list[str]:
             expanded: list[str] = []
             seen: set[str] = set()
             queue = list(initial)
@@ -2366,7 +2368,17 @@ def generate_ninja(
                 expanded.append(name)
                 lib = ctx.get_library(name)
                 if lib:
-                    for dep in lib.public_link_libraries:
+                    # For static libraries, even private dependencies propagate to the consumer
+                    # but only when we are expanding for linking, not for compile flags
+                    if follow_private_of_static and lib.lib_type == "STATIC":
+                        deps = list(
+                            dict.fromkeys(
+                                lib.link_libraries + lib.public_link_libraries
+                            )
+                        )
+                    else:
+                        deps = lib.public_link_libraries
+                    for dep in deps:
                         if dep not in seen:
                             queue.append(dep)
             return expanded
@@ -2391,8 +2403,9 @@ def generate_ninja(
                 lib_compile_flags.append(f"-I{strip_generator_expressions(inc_dir)}")
 
             # Propagate flags from dependencies
-            expanded_lib_link_libraries = expand_public_link_libraries(
-                lib.link_libraries
+            # For compilation, we only follow public dependencies
+            expanded_lib_link_libraries = expand_link_libraries(
+                lib.link_libraries, follow_private_of_static=False
             )
             for dep_name in expanded_lib_link_libraries:
                 dep_lib = ctx.get_library(dep_name)
@@ -2512,9 +2525,16 @@ def generate_ninja(
         for exe in ctx.executables:
             objects: list[str] = []
             uses_cxx = False
-            expanded_link_libraries = expand_public_link_libraries(exe.link_libraries)
+            # For compile flags, we only follow public dependencies
+            expanded_compile_libraries = expand_link_libraries(
+                exe.link_libraries, follow_private_of_static=False
+            )
+            # For linking, static libraries propagate their private dependencies
+            expanded_link_libraries = expand_link_libraries(
+                exe.link_libraries, follow_private_of_static=True
+            )
 
-            # Collect compile flags from global options, compile definitions, compile features, include dirs, linked libraries, and imported targets
+            # Collect cflags from global options, compile definitions, compile features, include dirs, linked libraries, and imported targets
             compile_flags: list[str] = list(ctx.compile_options)
             for definition in ctx.compile_definitions:
                 compile_flags.append(f"-D{strip_generator_expressions(definition)}")
@@ -2527,9 +2547,10 @@ def generate_ninja(
             for inc_dir in exe.include_directories:
                 compile_flags.append(f"-I{strip_generator_expressions(inc_dir)}")
 
-            for lib_name in expanded_link_libraries:
+            for lib_name in expanded_compile_libraries:
                 # Check for public compile features from linked libraries
                 linked_lib = ctx.get_library(lib_name)
+
                 if linked_lib:
                     for feature in linked_lib.public_compile_features:
                         flag = compile_feature_to_flag(feature)
@@ -2545,10 +2566,6 @@ def generate_ninja(
                         def_flag = f"-D{strip_generator_expressions(definition)}"
                         if def_flag not in compile_flags:
                             compile_flags.append(def_flag)
-                    # Check for public link directories from linked libraries
-                    for link_dir in linked_lib.public_link_directories:
-                        if link_dir not in exe.link_directories:
-                            exe.link_directories.append(link_dir)
                 # Check for cflags from imported targets
                 if lib_name in ctx.imported_targets:
                     imported = ctx.imported_targets[lib_name]
@@ -2634,6 +2651,15 @@ def generate_ninja(
             # Add linked libraries to inputs
             link_inputs = objects.copy()
             link_flags: list[str] = []
+
+            # Propagate link directories from dependencies
+            for lib_name in expanded_link_libraries:
+                linked_lib = ctx.get_library(lib_name)
+                if linked_lib:
+                    for link_dir in linked_lib.public_link_directories:
+                        if link_dir not in exe.link_directories:
+                            exe.link_directories.append(link_dir)
+
             for link_dir in exe.link_directories:
                 link_flags.append(f"-L{link_dir}")
             for lib_name in expanded_link_libraries:

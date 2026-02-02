@@ -80,3 +80,55 @@ def test_non_target_library_propagation(tmp_path):
             break
     else:
         pytest.fail("Could not find build statement for app")
+
+
+def test_static_private_link_only_propagation(tmp_path):
+    """Test that PRIVATE dependencies of STATIC libraries only propagate link flags, not compile flags."""
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+
+    commands = [
+        # lib2 has a public definition
+        Command(name="add_library", args=["lib2", "lib2.cpp"], line=1),
+        Command(
+            name="target_compile_definitions",
+            args=["lib2", "PUBLIC", "LIB2_PUB"],
+            line=2,
+        ),
+        # lib1 links to lib2 PRIVATELY
+        Command(name="add_library", args=["lib1", "lib1.cpp"], line=3),
+        Command(name="target_link_libraries", args=["lib1", "PRIVATE", "lib2"], line=4),
+        # app links to lib1
+        Command(name="add_executable", args=["app", "main.cpp"], line=5),
+        Command(name="target_link_libraries", args=["app", "PRIVATE", "lib1"], line=6),
+    ]
+
+    process_commands(commands, ctx)
+
+    # Generate ninja
+    ninja_file = tmp_path / "build.ninja"
+    generate_ninja(ctx, ninja_file, "build")
+
+    content = ninja_file.read_text()
+
+    # app compile command should NOT have -DLIB2_PUB
+    for i, line in enumerate(content.splitlines()):
+        if "build $builddir/app_main.o" in line:
+            assert "-DLIB2_PUB" not in content.splitlines()[i + 1]
+            break
+    else:
+        pytest.fail("Could not find build statement for app_main.o")
+
+    # app link command SHOULD have lib2.a
+    found_app_link = False
+    for i, line in enumerate(content.splitlines()):
+        if "build $builddir/app: link_cxx" in line:
+            found_app_link = True
+            # Check this line and subsequent lines (Ninja uses $ for continuation)
+            full_build_stmt = line
+            j = i
+            while full_build_stmt.endswith("$") and j + 1 < len(content.splitlines()):
+                j += 1
+                full_build_stmt += content.splitlines()[j]
+            assert "$builddir/liblib2.a" in full_build_stmt
+            break
+    assert found_app_link, "Could not find build statement for app"

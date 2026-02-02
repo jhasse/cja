@@ -4,7 +4,7 @@ project(freetype_example LANGUAGES CXX)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(FREETYPE REQUIRED freetype2)
 
-add_library(mylib
+add_library(mylib STATIC
     mylib.cpp
 )
 
@@ -13,7 +13,7 @@ target_include_directories(mylib
 )
 
 target_link_libraries(mylib
-    PUBLIC ${FREETYPE_LIBRARIES}
+    PRIVATE ${FREETYPE_LIBRARIES}
 )
 
 add_executable(myapp
