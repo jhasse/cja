@@ -1580,6 +1580,69 @@ int main() {{
                     elif package_name == "PkgConfig":
                         ctx.variables["PkgConfig_FOUND"] = "TRUE"
                         ctx.variables["PKG_CONFIG_EXECUTABLE"] = "pkg-config"
+                    elif package_name == "WebP":
+                        found = False
+                        pkg_name = None
+                        try:
+                            for candidate in ("libwebp", "webp"):
+                                result = subprocess.run(
+                                    ["pkg-config", "--exists", candidate],
+                                    capture_output=True,
+                                )
+                                if result.returncode == 0:
+                                    found = True
+                                    pkg_name = candidate
+                                    break
+                        except FileNotFoundError:
+                            found = False
+
+                        if found and pkg_name:
+                            cflags_result = subprocess.run(
+                                ["pkg-config", "--cflags", pkg_name],
+                                capture_output=True,
+                                text=True,
+                            )
+                            libs_result = subprocess.run(
+                                ["pkg-config", "--libs", pkg_name],
+                                capture_output=True,
+                                text=True,
+                            )
+                            version_result = subprocess.run(
+                                ["pkg-config", "--modversion", pkg_name],
+                                capture_output=True,
+                                text=True,
+                            )
+
+                            webp_cflags = cflags_result.stdout.strip()
+                            webp_libs = libs_result.stdout.strip()
+                            webp_version = version_result.stdout.strip()
+
+                            include_dirs = []
+                            for entry in shlex.split(webp_cflags):
+                                if entry.startswith("-I"):
+                                    include_dirs.append(entry[2:])
+
+                            ctx.variables["WebP_FOUND"] = "TRUE"
+                            ctx.variables["WEBP_FOUND"] = "TRUE"
+                            ctx.variables["WEBP_INCLUDE_DIRS"] = ";".join(include_dirs)
+                            if include_dirs:
+                                ctx.variables["WEBP_INCLUDE_DIR"] = include_dirs[0]
+                            ctx.variables["WEBP_LIBRARIES"] = webp_libs
+                            if webp_version:
+                                ctx.variables["WEBP_VERSION"] = webp_version
+
+                            ctx.imported_targets["WebP::webp"] = ImportedTarget(
+                                cflags=webp_cflags,
+                                libs=webp_libs,
+                            )
+                        else:
+                            ctx.variables["WebP_FOUND"] = "FALSE"
+                            ctx.variables["WEBP_FOUND"] = "FALSE"
+                            if required:
+                                ctx.print_error(
+                                    "could not find package: WebP", cmd.line
+                                )
+                                raise SystemExit(1)
                     else:
                         # Search for Find<PackageName>.cmake in CMAKE_MODULE_PATH
                         module_path = ctx.variables.get("CMAKE_MODULE_PATH", "")
