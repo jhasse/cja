@@ -2253,6 +2253,8 @@ def generate_ninja(
             "ar",
             command="$ar rcs $out $in",
             description="\x1b[32;1mArchiving $out\x1b[0m",
+            # TODO: CMake shows "Linking C static library" or "Linking C++ static library" instead.
+            # "static" is redundant info here, but we should also distinguish C vs C++.
         )
         n.newline()
 
@@ -2260,14 +2262,14 @@ def generate_ninja(
         n.rule(
             "link",
             command="$cc $in -o $out $libs",
-            description="\x1b[32;1mLinking C library $out\x1b[0m",
+            description="\x1b[32;1mLinking C executable $out\x1b[0m",
         )
         n.newline()
 
         n.rule(
             "link_cxx",
             command="$cxx $in -o $out $libs",
-            description="\x1b[32;1mLinking C++ library $out\x1b[0m",
+            description="\x1b[32;1mLinking C++ executable $out\x1b[0m",
         )
         n.newline()
 
