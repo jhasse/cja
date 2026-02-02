@@ -588,7 +588,9 @@ def process_commands(
                     )
 
                 # Find matching endforeach
-                endforeach_idx = find_matching_endforeach(commands, program_counter, ctx)
+                endforeach_idx = find_matching_endforeach(
+                    commands, program_counter, ctx
+                )
                 body = commands[program_counter + 1 : endforeach_idx]
 
                 loop_var = cmd.args[0]  # Use unexpanded for variable name
@@ -644,7 +646,9 @@ def process_commands(
                     ctx.raise_syntax_error("function() requires a name", cmd.line)
 
                 # Find matching endfunction
-                endfunction_idx = find_matching_endfunction(commands, program_counter, ctx)
+                endfunction_idx = find_matching_endfunction(
+                    commands, program_counter, ctx
+                )
                 body = commands[program_counter + 1 : endfunction_idx]
 
                 func_name = cmd.args[0].lower()  # CMake functions are case-insensitive
@@ -1212,7 +1216,9 @@ def process_commands(
                                 except ValueError:
                                     pass
                             items = [
-                                item for program_counter, item in enumerate(items) if program_counter not in idx_set
+                                item
+                                for program_counter, item in enumerate(items)
+                                if program_counter not in idx_set
                             ]
                             ctx.variables[list_name] = ";".join(items)
 
@@ -2598,6 +2604,123 @@ int main() {{
                         if required:
                             raise FileNotFoundError(
                                 f"Could not find path for: {', '.join(names)}"
+                            )
+
+            case "find_library":
+                if len(args) >= 2:
+                    var_name = args[0]
+                    names: list[str] = []
+                    paths: list[str] = []
+                    hints: list[str] = []
+                    suffixes: list[str] = []
+                    required = False
+
+                    j = 1
+                    while j < len(args):
+                        arg = args[j]
+                        if arg == "NAMES":
+                            j += 1
+                            while j < len(args) and args[j] not in (
+                                "PATHS",
+                                "HINTS",
+                                "PATH_SUFFIXES",
+                                "REQUIRED",
+                            ):
+                                names.append(args[j])
+                                j += 1
+                            continue
+                        elif arg == "PATHS":
+                            j += 1
+                            while j < len(args) and args[j] not in (
+                                "NAMES",
+                                "HINTS",
+                                "PATH_SUFFIXES",
+                                "REQUIRED",
+                            ):
+                                paths.append(args[j])
+                                j += 1
+                            continue
+                        elif arg == "HINTS":
+                            j += 1
+                            while j < len(args) and args[j] not in (
+                                "NAMES",
+                                "PATHS",
+                                "PATH_SUFFIXES",
+                                "REQUIRED",
+                            ):
+                                hints.append(args[j])
+                                j += 1
+                            continue
+                        elif arg == "PATH_SUFFIXES":
+                            j += 1
+                            while j < len(args) and args[j] not in (
+                                "NAMES",
+                                "PATHS",
+                                "HINTS",
+                                "REQUIRED",
+                            ):
+                                suffixes.append(args[j])
+                                j += 1
+                            continue
+                        elif arg == "REQUIRED":
+                            required = True
+                        else:
+                            if not names:
+                                names.append(arg)
+                            else:
+                                paths.append(arg)
+                        j += 1
+
+                    search_dirs = []
+                    search_dirs.extend(hints)
+                    search_dirs.extend(paths)
+
+                    # Standard library extensions
+                    if platform.system() == "Darwin":
+                        extensions = [".dylib", ".tbd", ".a"]
+                    elif platform.system() == "Windows":
+                        extensions = [".lib", ".dll.a", ".a"]
+                    else:
+                        extensions = [".so", ".a"]
+
+                    found_lib = None
+                    for name in names:
+                        # Construct potential filenames
+                        lib_filenames = []
+                        if name.startswith("lib") and (
+                            name.endswith(".a")
+                            or name.endswith(".so")
+                            or name.endswith(".dylib")
+                        ):
+                            lib_filenames.append(name)
+                        else:
+                            for ext in extensions:
+                                lib_filenames.append(f"lib{name}{ext}")
+                                if platform.system() == "Windows":
+                                    lib_filenames.append(f"{name}{ext}")
+
+                        for d in search_dirs:
+                            for suffix in [""] + suffixes:
+                                base_path = Path(d) / suffix
+                                for filename in lib_filenames:
+                                    candidate = base_path / filename
+                                    if candidate.exists():
+                                        found_lib = str(candidate.absolute())
+                                        break
+                                if found_lib:
+                                    break
+                            if found_lib:
+                                break
+                        if found_lib:
+                            break
+
+                    if found_lib:
+                        ctx.variables[var_name] = found_lib
+                    else:
+                        ctx.variables[var_name] = f"{var_name}-NOTFOUND"
+                        if required:
+                            raise FileNotFoundError(
+                                f"Could not find library: {', '.join(names)}"
                             )
 
             case "install":
