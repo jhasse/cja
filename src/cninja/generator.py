@@ -2133,7 +2133,9 @@ def generate_ninja(
             rel = make_relative(str(path), ctx.source_dir)
             return f"{rel}:{line}" if line > 0 else rel
 
-        def register_output(output: str, origin_file: Path | None, origin_line: int) -> None:
+        def register_output(
+            output: str, origin_file: Path | None, origin_line: int
+        ) -> None:
             if output in output_origins:
                 first_file, first_line = output_origins[output]
                 loc = format_origin(origin_file, origin_line)
@@ -2365,7 +2367,10 @@ def generate_ninja(
                     source_compile_flags = [
                         flag
                         for flag in source_compile_flags
-                        if not (flag.startswith("-std=c") and not flag.startswith("-std=c++"))
+                        if not (
+                            flag.startswith("-std=c")
+                            and not flag.startswith("-std=c++")
+                        )
                     ]
 
                 source_vars: dict[str, str | list[str] | None] | None = None
@@ -2502,7 +2507,10 @@ def generate_ninja(
                     source_compile_flags = [
                         flag
                         for flag in source_compile_flags
-                        if not (flag.startswith("-std=c") and not flag.startswith("-std=c++"))
+                        if not (
+                            flag.startswith("-std=c")
+                            and not flag.startswith("-std=c++")
+                        )
                     ]
 
                 source_vars: dict[str, str | list[str] | None] | None = None
@@ -2627,14 +2635,14 @@ def generate_ninja(
             n.newline()
 
         # Generate run runner
-            if ctx.executables:
-                n.rule(
-                    "run_exe",
-                    command="$in",
-                    description="RUN $in",
-                    pool="console",
-                )
-                n.newline()
+        if ctx.executables:
+            n.rule(
+                "run_exe",
+                command="$in",
+                description="RUN $in",
+                pool="console",
+            )
+            n.newline()
             first_exe_target = ctx.executables[0].name
             if first_exe_target in exe_outputs:
                 n.build("run", "run_exe", exe_outputs[first_exe_target])
