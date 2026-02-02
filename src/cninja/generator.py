@@ -1722,6 +1722,7 @@ int main() {{
                     pkg_args = args[1:]
 
                     is_required = "REQUIRED" in pkg_args
+                    is_quiet = "QUIET" in pkg_args
                     is_imported_target = "IMPORTED_TARGET" in pkg_args
 
                     modules = [
@@ -1807,6 +1808,8 @@ int main() {{
                                 break
 
                         if found_all:
+                            if not is_quiet:
+                                print(f"✅ {', '.join(modules)}")
                             ctx.variables[f"{prefix}_FOUND"] = "1"
                             cflags = " ".join(all_cflags)
                             libs = " ".join(all_libs)
@@ -1844,6 +1847,8 @@ int main() {{
                                     )
                                 )
                         else:
+                            if not is_quiet:
+                                print(f"❌ {', '.join(modules)}")
                             ctx.variables[f"{prefix}_FOUND"] = "0"
                             if is_required:
                                 raise FileNotFoundError(

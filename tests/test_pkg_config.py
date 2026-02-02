@@ -173,3 +173,40 @@ def test_pkg_check_modules_imported_target() -> None:
         assert "PkgConfig::ZLIB" in ctx.imported_targets
         target = ctx.imported_targets["PkgConfig::ZLIB"]
         assert target.libs is not None
+
+
+def test_pkg_check_modules_output(capsys, tmp_path):
+    """Test the output of pkg_check_modules."""
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path)
+    commands = [
+        Command(name="find_package", args=["PkgConfig"], line=1),
+        Command(name="pkg_check_modules", args=["ZLIB", "zlib"], line=2),
+        Command(
+            name="pkg_check_modules",
+            args=["NONEXISTENT", "nonexistent_package_123"],
+            line=3,
+        ),
+    ]
+    process_commands(commands, ctx)
+    captured = capsys.readouterr()
+    assert "✅ PkgConfig" in captured.out
+    assert "✅ zlib" in captured.out
+    assert "❌ nonexistent_package_123" in captured.out
+
+
+def test_pkg_check_modules_quiet_output(capsys, tmp_path):
+    """Test that QUIET suppresses the output of pkg_check_modules."""
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path)
+    commands = [
+        Command(name="find_package", args=["PkgConfig"], line=1),
+        Command(name="pkg_check_modules", args=["ZLIB", "QUIET", "zlib"], line=2),
+        Command(
+            name="pkg_check_modules",
+            args=["NONEXISTENT", "QUIET", "nonexistent_package_123"],
+            line=3,
+        ),
+    ]
+    process_commands(commands, ctx)
+    captured = capsys.readouterr()
+    assert "✅ zlib" not in captured.out
+    assert "❌ nonexistent_package_123" not in captured.out
