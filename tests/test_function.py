@@ -241,3 +241,12 @@ def test_unset_parent_scope() -> None:
     process_commands(commands, ctx)
 
     assert "OUTER" not in ctx.variables
+
+
+def test_enable_language_objcxx_noop() -> None:
+    """enable_language(OBJCXX) should be a no-op."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [Command(name="enable_language", args=["OBJCXX"], line=1)]
+    process_commands(commands, ctx)
+
+    assert "CMAKE_OBJCXX_FLAGS" not in ctx.variables

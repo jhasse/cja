@@ -579,6 +579,10 @@ def process_commands(
                     ctx.variables[f"{args[0]}_SOURCE_DIR"] = str(ctx.current_source_dir)
                     ctx.variables[f"{args[0]}_BINARY_DIR"] = str(ctx.build_dir)
 
+            case "enable_language":
+                # Objective-C++ is always enabled; ignore for now.
+                pass
+
             case "add_subdirectory":
                 if args:
                     sub_dir_name = args[0]
