@@ -278,3 +278,79 @@ def test_source_group_noop() -> None:
         )
     ]
     process_commands(commands, ctx)
+
+
+def test_undefined_variable_in_if_strequale_empty(capsys: pytest.CaptureFixture[str]) -> None:
+    """Undefined variable in if ("${VAR}" STREQUAL "") should not warn."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="if", args=["${UNDEF}", "STREQUAL", ""], line=1),
+        Command(name="set", args=["HIT", "yes"], line=2),
+        Command(name="endif", args=[], line=3),
+    ]
+    process_commands(commands, ctx)
+
+    err = capsys.readouterr().err
+    assert err == ""
+    assert ctx.variables["HIT"] == "yes"
+
+
+def test_undefined_variable_in_if_not_strequale_empty(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Undefined variable in if (NOT "${VAR}" STREQUAL "") should not warn."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="if", args=["NOT", "${UNDEF}", "STREQUAL", ""], line=1),
+        Command(name="set", args=["HIT", "yes"], line=2),
+        Command(name="endif", args=[], line=3),
+    ]
+    process_commands(commands, ctx)
+
+    err = capsys.readouterr().err
+    assert err == ""
+    assert "HIT" not in ctx.variables
+
+
+def test_undefined_variable_in_if_not_and_flags(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Undefined variable in mixed NOT/AND STREQUAL check should not warn."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="set", args=["MY_FLAG", "OFF"], line=1),
+        Command(
+            name="if",
+            args=["NOT", "MY_FLAG", "AND", "NOT", "${UNDEF}", "STREQUAL", ""],
+            line=2,
+        ),
+        Command(name="set", args=["HIT", "yes"], line=3),
+        Command(name="endif", args=[], line=4),
+    ]
+    process_commands(commands, ctx)
+
+    err = capsys.readouterr().err
+    assert err == ""
+    assert "HIT" not in ctx.variables
+
+
+def test_undefined_variable_in_if_strequale_empty_nested_expansion(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Undefined variable with nested expansion in if should not warn."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="set", args=["FOO", "defin"], line=1),
+        Command(
+            name="if",
+            args=["${un${FOO}ed}", "STREQUAL", ""],
+            line=2,
+        ),
+        Command(name="set", args=["HIT", "yes"], line=3),
+        Command(name="endif", args=[], line=4),
+    ]
+    process_commands(commands, ctx)
+
+    err = capsys.readouterr().err
+    assert err == ""
+    assert ctx.variables["HIT"] == "yes"

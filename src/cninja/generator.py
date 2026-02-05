@@ -209,8 +209,26 @@ def select_if_block(
 
     block_start = pc + 1
 
+    def _is_empty_string_token(token: str) -> bool:
+        return token == "" or token in ('""', "''")
+
+    def _is_exact_var_token(token: str) -> bool:
+        return (
+            (token.startswith("${") and token.endswith("}"))
+            or (token.startswith("\"${") and token.endswith("}\""))
+            or (token.startswith("'${") and token.endswith("}'"))
+        )
+
     # Check the if condition
-    if_args = [ctx.expand_variables(arg, strict, cmd.line) for arg in cmd.args]
+    if_args = []
+    for i, arg in enumerate(cmd.args):
+        allow_undefined = (
+            i + 2 < len(cmd.args)
+            and cmd.args[i + 1] == "STREQUAL"
+            and _is_empty_string_token(cmd.args[i + 2])
+            and _is_exact_var_token(arg)
+        )
+        if_args.append(ctx.expand_variables(arg, strict, cmd.line, allow_undefined))
     if evaluate_condition(if_args, ctx.variables):
         # Execute commands from if to first elseif/else or endif
         block_end = blocks[0][1] if blocks else endif_idx
@@ -219,10 +237,19 @@ def select_if_block(
     # Check elseif/else blocks
     for j, (block_type, block_idx, block_args) in enumerate(blocks):
         if block_type == "elseif":
-            elseif_args = [
-                ctx.expand_variables(arg, strict, commands[block_idx].line)
-                for arg in block_args
-            ]
+            elseif_args = []
+            for i, arg in enumerate(block_args):
+                allow_undefined = (
+                    i + 2 < len(block_args)
+                    and block_args[i + 1] == "STREQUAL"
+                    and _is_empty_string_token(block_args[i + 2])
+                    and _is_exact_var_token(arg)
+                )
+                elseif_args.append(
+                    ctx.expand_variables(
+                        arg, strict, commands[block_idx].line, allow_undefined
+                    )
+                )
             if evaluate_condition(elseif_args, ctx.variables):
                 block_start = block_idx + 1
                 block_end = blocks[j + 1][1] if j + 1 < len(blocks) else endif_idx
@@ -463,7 +490,19 @@ def process_commands(
         cmd = current_commands[frame.pc]
         expanded_args: list[str] = []
         for idx, arg in enumerate(cmd.args):
-            expanded = ctx.expand_variables(arg, strict, cmd.line)
+            allow_undefined = False
+            if cmd.name in ("if", "elseif"):
+                allow_undefined = (
+                    idx + 2 < len(cmd.args)
+                    and cmd.args[idx + 1] == "STREQUAL"
+                    and cmd.args[idx + 2] in ("", "\"\"", "''")
+                    and (
+                        (arg.startswith("${") and arg.endswith("}"))
+                        or (arg.startswith("\"${") and arg.endswith("}\""))
+                        or (arg.startswith("'${") and arg.endswith("}'"))
+                    )
+                )
+            expanded = ctx.expand_variables(arg, strict, cmd.line, allow_undefined)
             quoted = cmd.is_quoted[idx] if idx < len(cmd.is_quoted) else False
             if ";" in expanded and not quoted:
                 expanded_args.extend(expanded.split(";"))

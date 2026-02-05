@@ -125,12 +125,27 @@ class BuildContext:
         """Raise a SyntaxError with file and line information."""
         raise SyntaxError(message, (str(self.current_list_file), line, 0, ""))
 
-    def expand_variables(self, value: str, strict: bool = False, line: int = 0) -> str:
+    def expand_variables(
+        self,
+        value: str,
+        strict: bool = False,
+        line: int = 0,
+        allow_undefined_empty: bool = False,
+    ) -> str:
         """Expand ${VAR} and $ENV{VAR} references in a string."""
+        # Common CMake pattern: if ("${VAR}" STREQUAL "") should not warn when VAR is undefined.
+        if allow_undefined_empty:
+            exact_var = re.fullmatch(r"\$\{(\w+)\}", value)
+            quoted_var = re.fullmatch(r"[\"']\$\{(\w+)\}[\"']", value)
+            match = exact_var or quoted_var
+            if match and match.group(1) not in self.variables:
+                return ""
 
         def replace_normal(match: re.Match[str]) -> str:
             var_name = match.group(1)
             if var_name not in self.variables:
+                if allow_undefined_empty:
+                    return ""
                 level = self.print_error if strict else self.print_warning
                 level(f"undefined variable referenced: {var_name}", line)
                 if strict:
