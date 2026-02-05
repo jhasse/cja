@@ -60,6 +60,82 @@ def handle_project(
         ctx.variables[f"{args[0]}_BINARY_DIR"] = str(ctx.build_dir)
 
 
+def _collect_directory_include_dirs(ctx: BuildContext) -> list[str]:
+    """Collect INCLUDE_DIRECTORIES from current directory and parents."""
+    try:
+        current = ctx.current_source_dir.resolve()
+    except FileNotFoundError:
+        current = ctx.current_source_dir
+    try:
+        root = ctx.source_dir.resolve()
+    except FileNotFoundError:
+        root = ctx.source_dir
+
+    chain: list[str] = []
+    path = current
+    while True:
+        chain.append(str(path))
+        if path == root or path.parent == path:
+            break
+        path = path.parent
+
+    include_dirs: list[str] = []
+    for d in reversed(chain):
+        props = ctx.directory_properties.get(d)
+        if not props:
+            continue
+        value = props.get("INCLUDE_DIRECTORIES")
+        if value:
+            include_dirs.extend([p for p in value.split(";") if p])
+    return include_dirs
+
+
+def handle_include_directories(
+    ctx: BuildContext,
+    cmd: Command,
+    args: list[str],
+    strict: bool,
+) -> None:
+    """Handle include_directories() command."""
+    if not args:
+        return
+
+    dirs: list[str] = []
+    for arg in args:
+        if arg in ("BEFORE", "AFTER", "SYSTEM"):
+            continue
+        expanded = ctx.expand_variables(arg, strict, cmd.line)
+        if "$<" in expanded:
+            ctx.print_warning(
+                f"generator expressions in include_directories are not yet supported: {arg}",
+                cmd.line,
+            )
+        expanded = strip_generator_expressions(expanded)
+        if not expanded:
+            continue
+        if not Path(expanded).is_absolute():
+            expanded = str(ctx.current_source_dir / expanded)
+        dirs.append(expanded)
+
+    if not dirs:
+        return
+
+    try:
+        abs_dir = str(ctx.current_source_dir.resolve())
+    except FileNotFoundError:
+        abs_dir = str(ctx.current_source_dir.absolute())
+    if abs_dir not in ctx.directory_properties:
+        ctx.directory_properties[abs_dir] = {}
+
+    existing = ctx.directory_properties[abs_dir].get("INCLUDE_DIRECTORIES")
+    if existing:
+        ctx.directory_properties[abs_dir]["INCLUDE_DIRECTORIES"] = (
+            existing + ";" + ";".join(dirs)
+        )
+    else:
+        ctx.directory_properties[abs_dir]["INCLUDE_DIRECTORIES"] = ";".join(dirs)
+
+
 def handle_target_link_libraries(
     ctx: BuildContext,
     cmd: Command,
@@ -809,11 +885,13 @@ def handle_add_library(
             lib_type = sources[0]
             sources = sources[1:]
         sources = [ctx.resolve_path(s) for s in sources]
+        include_directories = _collect_directory_include_dirs(ctx)
         ctx.libraries.append(
             Library(
                 name=name,
                 sources=sources,
                 lib_type=lib_type,
+                include_directories=include_directories,
                 defined_file=ctx.current_list_file,
                 defined_line=cmd.line,
             )
@@ -828,10 +906,12 @@ def handle_add_executable(
     """Handle add_executable() command."""
     if len(args) >= 2:
         sources = [ctx.resolve_path(s) for s in args[1:]]
+        include_directories = _collect_directory_include_dirs(ctx)
         ctx.executables.append(
             Executable(
                 name=args[0],
                 sources=sources,
+                include_directories=include_directories,
                 defined_file=ctx.current_list_file,
                 defined_line=cmd.line,
             )
@@ -1659,6 +1739,17 @@ def handle_file(
                 filename = str(ctx.current_source_dir / filename)
             content = "".join(args[2:])
             mode = "w" if subcommand == "WRITE" else "a"
+            assert len(str(ctx.build_dir)) > 1
+            # check that build_dir is below cwd:
+            assert str(ctx.build_dir).startswith(str(Path.cwd()))
+            # check that only writing to files below build_dir:
+            assert str(Path(filename).resolve()).startswith(
+                str(ctx.build_dir.resolve())
+            ), (
+                "writing to files ({}) outside of build directory ({}) is not allowed".format(
+                    filename, str(ctx.build_dir)
+                )
+            )
             with open(filename, mode) as f:
                 f.write(content)
 

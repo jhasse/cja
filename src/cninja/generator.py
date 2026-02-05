@@ -35,6 +35,7 @@ from .commands import (
     handle_get_directory_property,
     handle_get_filename_component,
     handle_get_property,
+    handle_include_directories,
     handle_cmake_parse_arguments,
     handle_list,
     handle_macro,
@@ -1038,6 +1039,9 @@ int main() {{
 
             case "target_compile_definitions":
                 handle_target_compile_definitions(ctx, cmd, args, strict)
+
+            case "include_directories":
+                handle_include_directories(ctx, cmd, args, strict)
 
             case "file":
                 handle_file(ctx, cmd, args, strict)

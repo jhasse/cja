@@ -250,3 +250,18 @@ def test_enable_language_objcxx_noop() -> None:
     process_commands(commands, ctx)
 
     assert "CMAKE_OBJCXX_FLAGS" not in ctx.variables
+
+
+def test_include_directories_applies_to_targets() -> None:
+    """include_directories should apply to targets in the directory."""
+    source_dir = Path(".").resolve() / "root"
+    ctx = BuildContext(source_dir=source_dir, build_dir=Path("build"))
+    commands = [
+        Command(name="include_directories", args=["include"], line=1),
+        Command(name="add_executable", args=["app", "main.c"], line=2),
+    ]
+    process_commands(commands, ctx)
+
+    assert ctx.executables
+    expected_dir = source_dir / "include"
+    assert ctx.executables[0].include_directories == [str(expected_dir)]
