@@ -215,7 +215,7 @@ def select_if_block(
     def _is_exact_var_token(token: str) -> bool:
         return (
             (token.startswith("${") and token.endswith("}"))
-            or (token.startswith("\"${") and token.endswith("}\""))
+            or (token.startswith('"${') and token.endswith('}"'))
             or (token.startswith("'${") and token.endswith("}'"))
         )
 
@@ -495,10 +495,10 @@ def process_commands(
                 allow_undefined = (
                     idx + 2 < len(cmd.args)
                     and cmd.args[idx + 1] == "STREQUAL"
-                    and cmd.args[idx + 2] in ("", "\"\"", "''")
+                    and cmd.args[idx + 2] in ("", '""', "''")
                     and (
                         (arg.startswith("${") and arg.endswith("}"))
-                        or (arg.startswith("\"${") and arg.endswith("}\""))
+                        or (arg.startswith('"${') and arg.endswith('}"'))
                         or (arg.startswith("'${") and arg.endswith("}'"))
                     )
                 )
@@ -618,6 +618,22 @@ def process_commands(
                     ctx.variables["PROJECT_BINARY_DIR"] = str(ctx.build_dir)
                     ctx.variables[f"{args[0]}_SOURCE_DIR"] = str(ctx.current_source_dir)
                     ctx.variables[f"{args[0]}_BINARY_DIR"] = str(ctx.build_dir)
+
+                    if "VERSION" in args:
+                        ver_idx = args.index("VERSION")
+                        if ver_idx + 1 < len(args):
+                            version = args[ver_idx + 1]
+                            ctx.variables["PROJECT_VERSION"] = version
+                            ctx.variables[f"{args[0]}_VERSION"] = version
+                            ctx.variables["CMAKE_PROJECT_VERSION"] = version
+                            parts = version.split(".")
+                            for i, suffix in enumerate(
+                                ("MAJOR", "MINOR", "PATCH", "TWEAK")
+                            ):
+                                val = parts[i] if i < len(parts) else ""
+                                ctx.variables[f"PROJECT_VERSION_{suffix}"] = val
+                                ctx.variables[f"{args[0]}_VERSION_{suffix}"] = val
+                                ctx.variables[f"CMAKE_PROJECT_VERSION_{suffix}"] = val
 
             case "enable_language":
                 # Objective-C++ is always enabled; ignore for now.
@@ -1740,8 +1756,8 @@ int main() {{
                                     ctx.variables["Fontconfig_INCLUDE_DIR"] = (
                                         include_dirs[0]
                                     )
-                                    ctx.variables["Fontconfig_INCLUDE_DIRS"] = (
-                                        ";".join(include_dirs)
+                                    ctx.variables["Fontconfig_INCLUDE_DIRS"] = ";".join(
+                                        include_dirs
                                     )
                                 ctx.variables["Fontconfig_LIBRARIES"] = fc_libs
                                 if fc_version:
