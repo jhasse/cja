@@ -1750,6 +1750,7 @@ def handle_file(
                     filename, str(ctx.build_dir)
                 )
             )
+            Path(filename).parent.mkdir(parents=True, exist_ok=True)
             with open(filename, mode) as f:
                 f.write(content)
 

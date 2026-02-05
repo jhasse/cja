@@ -2938,6 +2938,9 @@ def configure(
 
     commands = parse_file(cmake_file)
 
+    # Create build directory early (needed for variables that reference it)
+    ctx.build_dir.mkdir(parents=True, exist_ok=True)
+
     # Set variables from command line (-D flags) first
     # These are cache variables that won't be overridden by set()
     if variables:
@@ -2952,6 +2955,9 @@ def configure(
     ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(ctx.current_list_file)
     ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(ctx.current_list_file.parent)
     ctx.variables["CMAKE_MODULE_PATH"] = ""
+    ctx.variables["CMAKE_FIND_PACKAGE_REDIRECTS_DIR"] = str(
+        ctx.build_dir / "CMakeFiles" / "pkgRedirects"
+    )
 
     if platform.system() == "Darwin":
         ctx.variables["CMAKE_SYSTEM_NAME"] = "Darwin"
@@ -2966,9 +2972,6 @@ def configure(
     # Generate ninja manifest in source directory (named after build dir)
     output_path = source_dir / f"{build_dir}.ninja"
     generate_ninja(ctx, output_path, build_dir, strict=strict)
-
-    # Create build directory
-    ctx.build_dir.mkdir(parents=True, exist_ok=True)
 
     # Generate compilation database
     try:
