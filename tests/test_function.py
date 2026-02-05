@@ -265,3 +265,16 @@ def test_include_directories_applies_to_targets() -> None:
     assert ctx.executables
     expected_dir = source_dir / "include"
     assert ctx.executables[0].include_directories == [str(expected_dir)]
+
+
+def test_source_group_noop() -> None:
+    """source_group should be a no-op."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(
+            name="source_group",
+            args=["Source Files", "FILES", "a.cpp", "b.cpp"],
+            line=1,
+        )
+    ]
+    process_commands(commands, ctx)

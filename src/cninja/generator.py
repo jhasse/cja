@@ -1206,6 +1206,10 @@ int main() {{
                                     cmd.line,
                                 )
 
+            case "source_group":
+                # Visual Studio solution organization is not supported; ignore.
+                pass
+
             case "find_program":
                 if len(args) >= 2:
                     var_name = args[0]
