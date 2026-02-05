@@ -111,6 +111,23 @@ def compile_feature_to_flag(feature: str) -> str | None:
     return None
 
 
+def framework_link_flags(lib_path: str) -> list[str] | None:
+    """Return macOS framework link flags if lib_path refers to a framework."""
+    if platform.system() != "Darwin":
+        return None
+    if ".framework" not in lib_path:
+        return None
+    idx = lib_path.find(".framework")
+    framework_path = lib_path[: idx + len(".framework")]
+    framework_name = Path(framework_path).stem
+    framework_dir = str(Path(framework_path).parent)
+    flags = []
+    if framework_dir:
+        flags.append(f"-F{framework_dir}")
+    flags.extend(["-framework", framework_name])
+    return flags
+
+
 def handle_add_subdirectory(
     ctx: BuildContext,
     cmd: Command,
@@ -1390,6 +1407,15 @@ int main() {{
                     search_dirs.extend(hints)
                     search_dirs.extend(paths)
 
+                    if platform.system() == "Darwin":
+                        default_framework_dirs = [
+                            "/System/Library/Frameworks",
+                            "/Library/Frameworks",
+                        ]
+                        for d in default_framework_dirs:
+                            if d not in search_dirs:
+                                search_dirs.append(d)
+
                     # Standard library extensions
                     if platform.system() == "Darwin":
                         extensions = [".dylib", ".tbd", ".a"]
@@ -1400,6 +1426,24 @@ int main() {{
 
                     found_lib = None
                     for name in names:
+                        if platform.system() == "Darwin":
+                            framework_name = (
+                                name
+                                if name.endswith(".framework")
+                                else f"{name}.framework"
+                            )
+                            for d in search_dirs:
+                                for suffix in [""] + suffixes:
+                                    base_path = Path(d) / suffix
+                                    framework_path = base_path / framework_name
+                                    if framework_path.exists():
+                                        found_lib = str(framework_path.absolute())
+                                        break
+                                if found_lib:
+                                    break
+                            if found_lib:
+                                break
+
                         # Construct potential filenames
                         lib_filenames = []
                         if name.startswith("lib") and (
@@ -2684,7 +2728,11 @@ def generate_ninja(
                         or lib_name.startswith("$")
                         or "." in lib_name
                     ):
-                        link_flags.append(lib_name)
+                        framework_flags = framework_link_flags(lib_name)
+                        if framework_flags:
+                            link_flags.extend(framework_flags)
+                        else:
+                            link_flags.append(lib_name)
                     else:
                         link_flags.append(f"-l{lib_name}")
 
