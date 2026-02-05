@@ -3,6 +3,7 @@
 from dataclasses import dataclass, field
 import hashlib
 import platform
+import re
 import shlex
 import shutil
 import subprocess
@@ -127,6 +128,72 @@ def framework_link_flags(lib_path: str) -> list[str] | None:
         flags.append(f"-F{framework_dir}")
     flags.extend(["-framework", framework_name])
     return flags
+
+
+_VERSION_RE = re.compile(r"^(\d+)(?:\.(\d+))?(?:\.(\d+))?")
+
+
+def _version_components(version: str) -> tuple[str, str, str]:
+    match = _VERSION_RE.match(version.strip())
+    if not match:
+        return "0", "0", "0"
+    major = match.group(1) or "0"
+    minor = match.group(2) or "0"
+    patch = match.group(3) or "0"
+    return major, minor, patch
+
+
+def _render_basic_package_version_file(
+    version: str,
+    compatibility: str,
+    arch_independent: bool,
+    ctx: BuildContext,
+) -> str:
+    major, minor, _ = _version_components(version)
+    arch_block = ""
+    if arch_independent:
+        arch_block = "set(PACKAGE_VERSION_UNSUITABLE FALSE)\n"
+    else:
+        sizeof_void_p = ctx.variables.get("CMAKE_SIZEOF_VOID_P", "${CMAKE_SIZEOF_VOID_P}")
+        arch_block = (
+            f'set(PACKAGE_VERSION_SIZEOF_VOID_P "{sizeof_void_p}")\n'
+            "if(NOT CMAKE_SIZEOF_VOID_P STREQUAL PACKAGE_VERSION_SIZEOF_VOID_P)\n"
+            "  set(PACKAGE_VERSION_UNSUITABLE TRUE)\n"
+            "endif()\n"
+        )
+
+    return (
+        f'set(PACKAGE_VERSION "{version}")\n'
+        "set(PACKAGE_VERSION_COMPATIBLE FALSE)\n"
+        "set(PACKAGE_VERSION_EXACT FALSE)\n"
+        f"{arch_block}"
+        "if(PACKAGE_VERSION VERSION_LESS PACKAGE_FIND_VERSION)\n"
+        "  set(PACKAGE_VERSION_COMPATIBLE FALSE)\n"
+        "else()\n"
+        f'  if("{compatibility}" STREQUAL "AnyNewerVersion")\n'
+        "    set(PACKAGE_VERSION_COMPATIBLE TRUE)\n"
+        f'  elseif("{compatibility}" STREQUAL "SameMajorVersion")\n'
+        f'    if(PACKAGE_FIND_VERSION_MAJOR STREQUAL "{major}")\n'
+        "      set(PACKAGE_VERSION_COMPATIBLE TRUE)\n"
+        "    endif()\n"
+        f'  elseif("{compatibility}" STREQUAL "SameMinorVersion")\n'
+        f'    if(PACKAGE_FIND_VERSION_MAJOR STREQUAL "{major}" AND '
+        f'PACKAGE_FIND_VERSION_MINOR STREQUAL "{minor}")\n'
+        "      set(PACKAGE_VERSION_COMPATIBLE TRUE)\n"
+        "    endif()\n"
+        f'  elseif("{compatibility}" STREQUAL "ExactVersion")\n'
+        "    if(PACKAGE_FIND_VERSION STREQUAL PACKAGE_VERSION)\n"
+        "      set(PACKAGE_VERSION_COMPATIBLE TRUE)\n"
+        "    endif()\n"
+        "  endif()\n"
+        "endif()\n"
+        "if(PACKAGE_VERSION_COMPATIBLE AND PACKAGE_FIND_VERSION STREQUAL PACKAGE_VERSION)\n"
+        "  set(PACKAGE_VERSION_EXACT TRUE)\n"
+        "endif()\n"
+        "if(NOT DEFINED PACKAGE_VERSION_UNSUITABLE)\n"
+        "  set(PACKAGE_VERSION_UNSUITABLE FALSE)\n"
+        "endif()\n"
+    )
 
 
 def handle_add_subdirectory(
@@ -751,6 +818,7 @@ def process_commands(
                 if args:
                     module_name = args[0]
                     known_modules = {
+                        "CMakePackageConfigHelpers",
                         "CTest",
                         "CheckIPOSupported",
                         "CheckCXXCompilerFlag",
@@ -1097,6 +1165,61 @@ int main() {{
 
             case "include_directories":
                 handle_include_directories(ctx, cmd, args, strict)
+
+            case "write_basic_package_version_file":
+                if not args:
+                    frame.pc += 1
+                    continue
+                filename = args[0]
+                version = None
+                compatibility = None
+                arch_independent = False
+                arg_idx = 1
+                while arg_idx < len(args):
+                    token = args[arg_idx]
+                    if token == "VERSION" and arg_idx + 1 < len(args):
+                        version = args[arg_idx + 1]
+                        arg_idx += 2
+                    elif token == "COMPATIBILITY" and arg_idx + 1 < len(args):
+                        compatibility = args[arg_idx + 1]
+                        arg_idx += 2
+                    elif token == "ARCH_INDEPENDENT":
+                        arch_independent = True
+                        arg_idx += 1
+                    else:
+                        arg_idx += 1
+
+                if not version:
+                    version = ctx.variables.get("PROJECT_VERSION")
+                if not version or not compatibility:
+                    if strict:
+                        ctx.print_error(
+                            "write_basic_package_version_file requires VERSION and COMPATIBILITY",
+                            cmd.line,
+                        )
+                        sys.exit(1)
+                    ctx.print_warning(
+                        "write_basic_package_version_file missing VERSION or COMPATIBILITY",
+                        cmd.line,
+                    )
+                    frame.pc += 1
+                    continue
+
+                output_path = Path(filename)
+                if not output_path.is_absolute():
+                    current_binary_dir = Path(
+                        ctx.variables.get("CMAKE_CURRENT_BINARY_DIR", str(ctx.build_dir))
+                    )
+                    output_path = current_binary_dir / output_path
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_text(
+                    _render_basic_package_version_file(
+                        version,
+                        compatibility,
+                        arch_independent,
+                        ctx,
+                    )
+                )
 
             case "file":
                 handle_file(ctx, cmd, args, strict)
