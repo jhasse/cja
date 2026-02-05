@@ -154,7 +154,9 @@ def _render_basic_package_version_file(
     if arch_independent:
         arch_block = "set(PACKAGE_VERSION_UNSUITABLE FALSE)\n"
     else:
-        sizeof_void_p = ctx.variables.get("CMAKE_SIZEOF_VOID_P", "${CMAKE_SIZEOF_VOID_P}")
+        sizeof_void_p = ctx.variables.get(
+            "CMAKE_SIZEOF_VOID_P", "${CMAKE_SIZEOF_VOID_P}"
+        )
         arch_block = (
             f'set(PACKAGE_VERSION_SIZEOF_VOID_P "{sizeof_void_p}")\n'
             "if(NOT CMAKE_SIZEOF_VOID_P STREQUAL PACKAGE_VERSION_SIZEOF_VOID_P)\n"
@@ -1208,7 +1210,9 @@ int main() {{
                 output_path = Path(filename)
                 if not output_path.is_absolute():
                     current_binary_dir = Path(
-                        ctx.variables.get("CMAKE_CURRENT_BINARY_DIR", str(ctx.build_dir))
+                        ctx.variables.get(
+                            "CMAKE_CURRENT_BINARY_DIR", str(ctx.build_dir)
+                        )
                     )
                     output_path = current_binary_dir / output_path
                 output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2207,6 +2211,7 @@ int main() {{
                 error_variable: str | None = None
                 output_strip = False
                 error_strip = False
+                command_error_is_fatal: str | None = None
 
                 arg_idx = 0
                 while arg_idx < len(args):
@@ -2245,12 +2250,15 @@ int main() {{
                         "COMMAND_ECHO",
                         "OUTPUT_QUIET",
                         "ERROR_QUIET",
-                        "COMMAND_ERROR_IS_FATAL",
                         "ENCODING",
                     ):
                         # Skip unsupported options and their values
                         if arg not in ("OUTPUT_QUIET", "ERROR_QUIET"):
                             arg_idx += 1
+                    elif arg == "COMMAND_ERROR_IS_FATAL":
+                        arg_idx += 1
+                        if arg_idx < len(args):
+                            command_error_is_fatal = args[arg_idx]
                     else:
                         # Part of current command
                         current_command.append(
@@ -2261,36 +2269,64 @@ int main() {{
                 if current_command:
                     commands_list.append(current_command)
 
-                # Execute the commands (piped together if multiple)
+                # Execute the commands (sequentially if multiple)
                 if commands_list:
                     try:
-                        # For now, only support single command (no piping)
-                        cmd = commands_list[0]
-                        result = subprocess.run(
-                            cmd,
-                            capture_output=True,
-                            text=True,
-                            cwd=working_directory,
-                        )
+                        last_result = None
+                        for idx, exec_cmd in enumerate(commands_list):
+                            result = subprocess.run(
+                                exec_cmd,
+                                capture_output=True,
+                                text=True,
+                                cwd=working_directory,
+                            )
+                            last_result = result
 
-                        if result_variable:
-                            ctx.variables[result_variable] = str(result.returncode)
+                            is_last = idx == len(commands_list) - 1
+                            if command_error_is_fatal:
+                                fatal_kind = command_error_is_fatal.upper()
+                                fatal_now = False
+                                if fatal_kind == "ANY" and result.returncode != 0:
+                                    fatal_now = True
+                                elif (
+                                    fatal_kind == "LAST"
+                                    and is_last
+                                    and result.returncode != 0
+                                ):
+                                    fatal_now = True
+                                if fatal_now:
+                                    ctx.print_error(
+                                        f"execute_process failed with exit code {result.returncode}",
+                                        cmd.line,
+                                    )
+                                    raise SystemExit(1)
 
-                        if output_variable:
-                            output = result.stdout
-                            if output_strip:
-                                output = output.rstrip()
-                            ctx.variables[output_variable] = output
+                        if last_result is not None:
+                            if result_variable:
+                                ctx.variables[result_variable] = str(
+                                    last_result.returncode
+                                )
 
-                        if error_variable:
-                            error = result.stderr
-                            if error_strip:
-                                error = error.rstrip()
-                            ctx.variables[error_variable] = error
+                            if output_variable:
+                                output = last_result.stdout
+                                if output_strip:
+                                    output = output.rstrip()
+                                ctx.variables[output_variable] = output
 
+                            if error_variable:
+                                error = last_result.stderr
+                                if error_strip:
+                                    error = error.rstrip()
+                                ctx.variables[error_variable] = error
                     except FileNotFoundError:
                         if result_variable:
                             ctx.variables[result_variable] = "1"
+                        if command_error_is_fatal:
+                            ctx.print_error(
+                                "execute_process failed: command not found",
+                                cmd.line,
+                            )
+                            raise SystemExit(1)
 
             case _:
                 # Check if this is a user-defined function or macro call

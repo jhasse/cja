@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from cninja.generator import BuildContext, process_commands
 from cninja.parser import Command
 
@@ -115,3 +117,37 @@ def test_execute_process_command_not_found() -> None:
     process_commands(commands, ctx)
 
     assert ctx.variables["RES"] == "1"
+
+
+def test_execute_process_command_error_is_fatal_any(monkeypatch: pytest.MonkeyPatch) -> None:
+    """COMMAND_ERROR_IS_FATAL ANY should raise on non-zero exit."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+
+    def fake_run(cmd, capture_output, text, cwd):  # type: ignore[no-untyped-def]
+        return type(
+            "Result",
+            (),
+            {"returncode": 1, "stdout": "", "stderr": "boom"},
+        )()
+
+    monkeypatch.setattr("cninja.generator.subprocess.run", fake_run)
+
+    commands = [
+        Command(
+            name="execute_process",
+            args=[
+                "COMMAND",
+                "git",
+                "submodule",
+                "update",
+                "--init",
+                "subprojects/spine-runtimes",
+                "COMMAND_ERROR_IS_FATAL",
+                "ANY",
+            ],
+            line=1,
+        )
+    ]
+
+    with pytest.raises(SystemExit):
+        process_commands(commands, ctx)
