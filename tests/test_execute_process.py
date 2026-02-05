@@ -123,7 +123,7 @@ def test_execute_process_command_error_is_fatal_any(monkeypatch: pytest.MonkeyPa
     """COMMAND_ERROR_IS_FATAL ANY should raise on non-zero exit."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
 
-    def fake_run(cmd, capture_output, text, cwd):  # type: ignore[no-untyped-def]
+    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
         return type(
             "Result",
             (),

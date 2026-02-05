@@ -2274,9 +2274,17 @@ int main() {{
                     try:
                         last_result = None
                         for idx, exec_cmd in enumerate(commands_list):
+                            stdout_setting = None
+                            stderr_setting = None
+                            if output_variable:
+                                stdout_setting = subprocess.PIPE
+                            if error_variable:
+                                stderr_setting = subprocess.PIPE
+
                             result = subprocess.run(
                                 exec_cmd,
-                                capture_output=True,
+                                stdout=stdout_setting,
+                                stderr=stderr_setting,
                                 text=True,
                                 cwd=working_directory,
                             )
