@@ -1700,6 +1700,76 @@ int main() {{
                         ctx.variables["PKG_CONFIG_EXECUTABLE"] = "pkg-config"
                         if not quiet:
                             print(f"{colored('✓', 'green')} {package_name}")
+                    elif package_name == "Fontconfig":
+                        found = False
+                        try:
+                            result = subprocess.run(
+                                ["pkg-config", "--exists", "fontconfig"],
+                                capture_output=True,
+                            )
+                            if result.returncode == 0:
+                                found = True
+                                cflags_result = subprocess.run(
+                                    ["pkg-config", "--cflags", "fontconfig"],
+                                    capture_output=True,
+                                    text=True,
+                                )
+                                libs_result = subprocess.run(
+                                    ["pkg-config", "--libs", "fontconfig"],
+                                    capture_output=True,
+                                    text=True,
+                                )
+                                version_result = subprocess.run(
+                                    ["pkg-config", "--modversion", "fontconfig"],
+                                    capture_output=True,
+                                    text=True,
+                                )
+
+                                fc_cflags = cflags_result.stdout.strip()
+                                fc_libs = libs_result.stdout.strip()
+                                fc_version = version_result.stdout.strip()
+
+                                include_dirs = []
+                                for entry in shlex.split(fc_cflags):
+                                    if entry.startswith("-I"):
+                                        include_dirs.append(entry[2:])
+
+                                ctx.variables["Fontconfig_FOUND"] = "TRUE"
+                                ctx.variables["FONTCONFIG_FOUND"] = "TRUE"
+                                if include_dirs:
+                                    ctx.variables["Fontconfig_INCLUDE_DIR"] = (
+                                        include_dirs[0]
+                                    )
+                                    ctx.variables["Fontconfig_INCLUDE_DIRS"] = (
+                                        ";".join(include_dirs)
+                                    )
+                                ctx.variables["Fontconfig_LIBRARIES"] = fc_libs
+                                if fc_version:
+                                    ctx.variables["Fontconfig_VERSION"] = fc_version
+                                ctx.variables["Fontconfig_COMPILE_OPTIONS"] = fc_cflags
+
+                                ctx.imported_targets["Fontconfig::Fontconfig"] = (
+                                    ImportedTarget(
+                                        cflags=fc_cflags,
+                                        libs=fc_libs,
+                                    )
+                                )
+                        except FileNotFoundError:
+                            pass
+
+                        if found:
+                            if not quiet:
+                                print(f"{colored('✓', 'green')} {package_name}")
+                        else:
+                            ctx.variables["Fontconfig_FOUND"] = "FALSE"
+                            ctx.variables["FONTCONFIG_FOUND"] = "FALSE"
+                            if required:
+                                ctx.print_error(
+                                    "could not find package: Fontconfig", cmd.line
+                                )
+                                raise SystemExit(1)
+                            if not quiet:
+                                print(f"{colored('✗', 'red')} {package_name}")
                     elif package_name == "WebP":
                         found = False
                         pkg_name = None
