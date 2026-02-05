@@ -440,6 +440,8 @@ def process_commands(
 
             url = None
             url_hash = None
+            git_repo = None
+            git_tag = None
             arg_idx = 0
             while arg_idx < len(info.args):
                 if info.args[arg_idx] == "URL" and arg_idx + 1 < len(info.args):
@@ -447,6 +449,14 @@ def process_commands(
                     arg_idx += 2
                 elif info.args[arg_idx] == "URL_HASH" and arg_idx + 1 < len(info.args):
                     url_hash = info.args[arg_idx + 1]
+                    arg_idx += 2
+                elif info.args[arg_idx] == "GIT_REPOSITORY" and arg_idx + 1 < len(
+                    info.args
+                ):
+                    git_repo = info.args[arg_idx + 1]
+                    arg_idx += 2
+                elif info.args[arg_idx] == "GIT_TAG" and arg_idx + 1 < len(info.args):
+                    git_tag = info.args[arg_idx + 1]
                     arg_idx += 2
                 else:
                     arg_idx += 1
@@ -501,7 +511,46 @@ def process_commands(
                     elif url.endswith((".tar.gz", ".tgz", ".tar.xz", ".tar.bz2")):
                         with tarfile.open(download_file, "r:*") as tar_ref:
                             tar_ref.extractall(src_dir)
+            elif git_repo:
+                deps_dir = ctx.build_dir / "_deps"
+                deps_dir.mkdir(parents=True, exist_ok=True)
+                src_dir = deps_dir / f"{name.lower()}-src"
 
+                if not src_dir.exists():
+                    print(f"Cloning {name} from {git_repo}")
+                    try:
+                        clone_cmd = ["git", "clone"]
+                        if git_tag:
+                            clone_cmd.extend(["--branch", git_tag])
+                        clone_cmd.extend([git_repo, str(src_dir)])
+                        subprocess.run(clone_cmd, check=True)
+                    except FileNotFoundError:
+                        if strict:
+                            ctx.print_error(
+                                "git is required for FetchContent GIT_REPOSITORY",
+                                cmd.line,
+                            )
+                            sys.exit(1)
+                    except subprocess.CalledProcessError:
+                        if strict:
+                            ctx.print_error(
+                                f"git clone failed for {git_repo}", cmd.line
+                            )
+                            sys.exit(1)
+                elif git_tag:
+                    try:
+                        subprocess.run(
+                            ["git", "-C", str(src_dir), "checkout", git_tag], check=True
+                        )
+                    except (FileNotFoundError, subprocess.CalledProcessError):
+                        if strict:
+                            ctx.print_error(
+                                f"git checkout failed for {git_repo} ({git_tag})",
+                                cmd.line,
+                            )
+                            sys.exit(1)
+
+            if url or git_repo:
                 ctx.variables[f"{name.lower()}_SOURCE_DIR"] = str(src_dir)
                 ctx.variables[f"{name.lower()}_BINARY_DIR"] = str(
                     ctx.build_dir / "_deps" / f"{name.lower()}-build"
@@ -542,7 +591,11 @@ def process_commands(
                         )
                         ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(ctx.build_dir)
 
-                        def on_exit() -> None:
+                        def on_exit(
+                            saved_current_source_dir: Path = saved_current_source_dir,
+                            saved_current_list_file: Path = saved_current_list_file,
+                            saved_vars: dict[str, str] = saved_vars,
+                        ) -> None:
                             parent_scope_updates = ctx.parent_scope_vars
                             ctx.current_source_dir = saved_current_source_dir
                             ctx.current_list_file = saved_current_list_file
