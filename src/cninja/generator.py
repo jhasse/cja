@@ -255,6 +255,14 @@ def handle_add_subdirectory(
                         ctx.variables.pop(var, None)
                     else:
                         ctx.variables[var] = val
+                ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = str(
+                    saved_current_source_dir
+                )
+                ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(saved_current_list_file)
+                ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
+                    saved_current_list_file.parent
+                )
+                ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(ctx.build_dir)
         elif strict:
             ctx.print_error(
                 f'add_subdirectory given source "{sub_dir_name}" which does not exist.',
@@ -737,7 +745,12 @@ def process_commands(
                         )
                         ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(ctx.build_dir)
 
-                        def on_exit() -> None:
+                        def on_exit(
+                            saved_current_source_dir: Path = saved_current_source_dir,
+                            saved_current_list_file: Path = saved_current_list_file,
+                            saved_parent_directory: str = saved_parent_directory,
+                            saved_vars: dict[str, str] = saved_vars,
+                        ) -> None:
                             parent_scope_updates = ctx.parent_scope_vars
                             ctx.current_source_dir = saved_current_source_dir
                             ctx.current_list_file = saved_current_list_file
@@ -749,6 +762,18 @@ def process_commands(
                                 else:
                                     ctx.variables[var] = val
                             ctx.parent_scope_vars.clear()
+                            ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = str(
+                                saved_current_source_dir
+                            )
+                            ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(
+                                saved_current_list_file
+                            )
+                            ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
+                                saved_current_list_file.parent
+                            )
+                            ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(
+                                ctx.build_dir
+                            )
 
                         stack.append(Frame(commands=sub_commands, on_exit=on_exit))
                     elif strict:

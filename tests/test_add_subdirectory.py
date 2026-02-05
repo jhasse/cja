@@ -93,3 +93,49 @@ def test_add_subdirectory_current_dir(tmp_path: Path) -> None:
     process_commands(commands, ctx)
 
     assert ctx.variables["SUB_DIR"] == str(sub_dir.resolve())
+
+
+def test_add_subdirectory_restores_current_source_dir(tmp_path: Path) -> None:
+    """CMAKE_CURRENT_SOURCE_DIR should be restored after add_subdirectory."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+
+    sub_dir = source_dir / "subdir"
+    sub_dir.mkdir()
+    (sub_dir / "CMakeLists.txt").write_text("message(STATUS subdir)")
+
+    ctx = BuildContext(source_dir=source_dir, build_dir=tmp_path / "build")
+    ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = str(source_dir)
+    ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(source_dir / "CMakeLists.txt")
+    ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(source_dir)
+    ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(tmp_path / "build")
+
+    commands = [Command(name="add_subdirectory", args=["subdir"], line=1)]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] == str(source_dir)
+
+
+def test_add_subdirectory_two_levels(tmp_path: Path) -> None:
+    """CMAKE_CURRENT_SOURCE_DIR should restore across nested subdirectories."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+
+    sub_dir = source_dir / "subdir"
+    sub_dir.mkdir()
+    sub_sub_dir = sub_dir / "inner"
+    sub_sub_dir.mkdir()
+
+    (sub_dir / "CMakeLists.txt").write_text("add_subdirectory(inner)")
+    (sub_sub_dir / "CMakeLists.txt").write_text("message(STATUS inner)")
+
+    ctx = BuildContext(source_dir=source_dir, build_dir=tmp_path / "build")
+    ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = str(source_dir)
+    ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(source_dir / "CMakeLists.txt")
+    ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(source_dir)
+    ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(tmp_path / "build")
+
+    commands = [Command(name="add_subdirectory", args=["subdir"], line=1)]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] == str(source_dir)
