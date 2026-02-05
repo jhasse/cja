@@ -2450,7 +2450,7 @@ def generate_ninja(
                 objects.append(obj_name)
 
                 # Determine if C or C++
-                if source.endswith((".cpp", ".cxx", ".cc", ".C")):
+                if source.endswith((".cpp", ".cxx", ".cc", ".C", ".mm", ".MM")):
                     rule = "cxx"
                 else:
                     rule = "cc"
@@ -2595,7 +2595,7 @@ def generate_ninja(
                 objects.append(obj_name)
 
                 # Determine if C or C++
-                if source.endswith((".cpp", ".cxx", ".cc", ".C")):
+                if source.endswith((".cpp", ".cxx", ".cc", ".C", ".mm", ".MM")):
                     rule = "cxx"
                     uses_cxx = True
                 else:
@@ -2857,6 +2857,7 @@ def configure(
     if platform.system() == "Darwin":
         ctx.variables["CMAKE_SYSTEM_NAME"] = "Darwin"
         ctx.variables["UNIX"] = "TRUE"
+        ctx.variables["APPLE"] = "TRUE"
     else:
         ctx.variables["CMAKE_SYSTEM_NAME"] = "Linux"
         ctx.variables["UNIX"] = "TRUE"
