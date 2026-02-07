@@ -2963,6 +2963,9 @@ def configure(
         ctx.variables["CMAKE_SYSTEM_NAME"] = "Darwin"
         ctx.variables["UNIX"] = "TRUE"
         ctx.variables["APPLE"] = "TRUE"
+    elif platform.system() == "Windows":
+        ctx.variables["CMAKE_SYSTEM_NAME"] = "Windows"
+        ctx.variables["WIN32"] = "TRUE"
     else:
         ctx.variables["CMAKE_SYSTEM_NAME"] = "Linux"
         ctx.variables["UNIX"] = "TRUE"
