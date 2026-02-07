@@ -74,6 +74,8 @@ class BuildContext:
     )  # Properties for directories
     parent_directory: str = ""  # Path to parent directory (if in subdirectory)
     cmake_files: set[Path] = field(default_factory=set)
+    c_compiler: str = os.getenv("CC", "cc")  # C compiler command
+    cxx_compiler: str = os.getenv("CXX", "c++")  # C++ compiler command
 
     def __post_init__(self) -> None:
         self.current_source_dir = self.source_dir

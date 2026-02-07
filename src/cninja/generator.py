@@ -842,7 +842,7 @@ def process_commands(
                         temp_src = f.name
                     temp_out = temp_src + ".out"
                     result = subprocess.run(
-                        ["cc", "-flto", "-o", temp_out, temp_src],
+                        [ctx.c_compiler, "-flto", "-o", temp_out, temp_src],
                         capture_output=True,
                         text=True,
                     )
@@ -878,7 +878,7 @@ def process_commands(
                             temp_src = f.name
                         temp_out = temp_src + ".o"
                         result = subprocess.run(
-                            ["c++", flag, "-c", "-o", temp_out, temp_src],
+                            [ctx.cxx_compiler, flag, "-c", "-o", temp_out, temp_src],
                             capture_output=True,
                             text=True,
                         )
@@ -916,7 +916,7 @@ def process_commands(
                             temp_src = f.name
                         temp_out = temp_src + ".o"
                         result = subprocess.run(
-                            ["cc", flag, "-c", "-o", temp_out, temp_src],
+                            [ctx.c_compiler, flag, "-c", "-o", temp_out, temp_src],
                             capture_output=True,
                             text=True,
                         )
@@ -968,7 +968,7 @@ int main() {{
                             temp_src = f.name
                         temp_out = temp_src.replace(".cpp", "")
                         result = subprocess.run(
-                            ["c++", "-o", temp_out, temp_src],
+                            [ctx.cxx_compiler, "-o", temp_out, temp_src],
                             capture_output=True,
                             text=True,
                         )
@@ -1008,7 +1008,7 @@ int main() {{
                             temp_src = f.name
                         temp_out = temp_src.replace(".c", "")
                         result = subprocess.run(
-                            ["cc", "-o", temp_out, temp_src],
+                            [ctx.c_compiler, "-o", temp_out, temp_src],
                             capture_output=True,
                             text=True,
                         )
@@ -2215,9 +2215,9 @@ def generate_ninja(
     ctx: BuildContext, output_path: Path, builddir: str, strict: bool = False
 ) -> None:
     """Generate ninja build file."""
-    # Detect compiler
-    cc = "cc"
-    cxx = "c++"
+    # Use compilers from context (set via CMAKE_C_COMPILER/CMAKE_CXX_COMPILER or defaults)
+    cc = ctx.c_compiler
+    cxx = ctx.cxx_compiler
 
     # Detect extensions
     exe_ext = ".exe" if platform.system() == "Windows" else ""
@@ -2969,6 +2969,12 @@ def configure(
     else:
         ctx.variables["CMAKE_SYSTEM_NAME"] = "Linux"
         ctx.variables["UNIX"] = "TRUE"
+
+    # Set up compilers from variables if provided
+    if "CMAKE_C_COMPILER" in ctx.variables:
+        ctx.c_compiler = ctx.variables["CMAKE_C_COMPILER"]
+    if "CMAKE_CXX_COMPILER" in ctx.variables:
+        ctx.cxx_compiler = ctx.variables["CMAKE_CXX_COMPILER"]
 
     process_commands(commands, ctx, trace, strict)
 
