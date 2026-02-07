@@ -1,4 +1,4 @@
-name: Linux
+name: macOS
 
 on:
   push:
@@ -8,14 +8,13 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
-    container: fedora:43
+    runs-on: macos-latest
 
     steps:
     - uses: actions/checkout@v4
 
     - name: Install uv
-      run: sudo dnf install -y uv python ninja gcc-c++ zlib-devel
+      run: brew install uv
 
     - name: Run tests
-      run: uv run pytest --color=yes
+      run: uv run pytest
