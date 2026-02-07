@@ -17,4 +17,4 @@ jobs:
       run: brew install uv
 
     - name: Run tests
-      run: uv run pytest
+      run: uv run pytest --color=yes
