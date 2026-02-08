@@ -2,14 +2,47 @@ from pathlib import Path
 import re
 
 
+_DRIVE_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
+_UNC_PATH_RE = re.compile(r"^[\\/]{2}[^\\/]+[\\/][^\\/]+")
+
+
+def to_posix_path(path: str | Path) -> str:
+    """Normalize path separators to forward slashes."""
+    return str(path).replace("\\", "/")
+
+
+def is_cmake_absolute_path(path_str: str) -> bool:
+    """Return True for CMake-style absolute paths across platforms."""
+    if not path_str:
+        return False
+    if path_str.startswith("/"):
+        return True
+    return bool(_DRIVE_PATH_RE.match(path_str) or _UNC_PATH_RE.match(path_str))
+
+
+def resolve_cmake_path(path_str: str, base_dir: Path) -> str:
+    """Resolve a CMake path while preserving native absolute path formatting."""
+    if is_cmake_absolute_path(path_str):
+        if path_str.startswith("/"):
+            return path_str.replace("\\", "/")
+        return str(Path(path_str))
+    resolved = base_dir / path_str
+    base_str = str(base_dir)
+    if base_str.startswith("\\") and not _DRIVE_PATH_RE.match(base_str):
+        return to_posix_path(resolved)
+    return str(resolved)
+
+
 def make_relative(path_str: str, root: Path) -> str:
     """Convert an absolute path to a relative path if it's under the root directory."""
     try:
         path = Path(path_str)
         if path.is_absolute() and path.is_relative_to(root):
-            return str(path.relative_to(root))
+            return to_posix_path(path.relative_to(root))
     except ValueError:
         pass
+    if not Path(path_str).is_absolute():
+        return to_posix_path(path_str)
     return path_str
 
 

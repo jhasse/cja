@@ -16,7 +16,7 @@ from .syntax import (
 )
 from .parser import Command
 from .targets import Executable, Library
-from .utils import strip_generator_expressions
+from .utils import resolve_cmake_path, strip_generator_expressions, to_posix_path
 
 
 def handle_cmake_policy(
@@ -113,9 +113,7 @@ def handle_include_directories(
         expanded = strip_generator_expressions(expanded)
         if not expanded:
             continue
-        if not Path(expanded).is_absolute():
-            expanded = str(ctx.current_source_dir / expanded)
-        dirs.append(expanded)
+        dirs.append(resolve_cmake_path(expanded, ctx.current_source_dir))
 
     if not dirs:
         return
@@ -216,8 +214,7 @@ def handle_target_link_directories(
 
                 if not expanded:
                     continue
-                if not Path(expanded).is_absolute():
-                    expanded = str(ctx.current_source_dir / expanded)
+                expanded = resolve_cmake_path(expanded, ctx.current_source_dir)
                 if visibility == "PUBLIC":
                     public_dirs.append(expanded)
                     target_dirs.append(expanded)
@@ -332,8 +329,7 @@ def handle_target_include_directories(
                 expanded = strip_generator_expressions(expanded)
                 if not expanded:
                     continue
-                if not Path(expanded).is_absolute():
-                    expanded = str(ctx.current_source_dir / expanded)
+                expanded = resolve_cmake_path(expanded, ctx.current_source_dir)
                 if visibility == "PUBLIC":
                     public_dirs.append(expanded)
                     target_dirs.append(expanded)
@@ -434,8 +430,7 @@ def handle_set_target_properties(
                     dirs = prop_value.split(";")
                     for d in dirs:
                         expanded = ctx.expand_variables(d, strict, cmd.line)
-                        if not Path(expanded).is_absolute():
-                            expanded = str(ctx.current_source_dir / expanded)
+                        expanded = resolve_cmake_path(expanded, ctx.current_source_dir)
                         if lib:
                             lib.public_include_directories.append(expanded)
                         elif exe:
@@ -528,8 +523,7 @@ def handle_set_property(
             if prop_name == "INTERFACE_INCLUDE_DIRECTORIES":
                 for value in prop_values:
                     expanded = ctx.expand_variables(value, strict, cmd.line)
-                    if not Path(expanded).is_absolute():
-                        expanded = str(ctx.current_source_dir / expanded)
+                    expanded = resolve_cmake_path(expanded, ctx.current_source_dir)
                     if lib:
                         if append_mode:
                             lib.public_include_directories.append(expanded)
@@ -575,8 +569,9 @@ def handle_set_property(
         # Source file property
         for source_file in scope_args:
             expanded_filename = ctx.expand_variables(source_file, strict, cmd.line)
-            if not Path(expanded_filename).is_absolute():
-                expanded_filename = str(ctx.current_source_dir / expanded_filename)
+            expanded_filename = resolve_cmake_path(
+                expanded_filename, ctx.current_source_dir
+            )
 
             if expanded_filename not in ctx.source_file_properties:
                 ctx.source_file_properties[expanded_filename] = SourceFileProperties()
@@ -591,8 +586,7 @@ def handle_set_property(
             elif prop_name == "INCLUDE_DIRECTORIES":
                 for value in prop_values:
                     expanded = ctx.expand_variables(value, strict, cmd.line)
-                    if not Path(expanded).is_absolute():
-                        expanded = str(ctx.current_source_dir / expanded)
+                    expanded = resolve_cmake_path(expanded, ctx.current_source_dir)
                     if append_mode:
                         file_props.include_directories.append(expanded)
                     else:
@@ -613,9 +607,7 @@ def handle_set_property(
         # scope_args can be empty (current directory) or contain a path
         dirs = scope_args if scope_args else [str(ctx.current_source_dir)]
         for d in dirs:
-            abs_dir = d
-            if not Path(abs_dir).is_absolute():
-                abs_dir = str(ctx.current_source_dir / abs_dir)
+            abs_dir = resolve_cmake_path(d, ctx.current_source_dir)
 
             if abs_dir not in ctx.directory_properties:
                 ctx.directory_properties[abs_dir] = {}
@@ -729,8 +721,9 @@ def handle_get_property(
         if scope_args:
             source_file = scope_args[0]
             expanded_filename = ctx.expand_variables(source_file, strict, cmd.line)
-            if not Path(expanded_filename).is_absolute():
-                expanded_filename = str(ctx.current_source_dir / expanded_filename)
+            expanded_filename = resolve_cmake_path(
+                expanded_filename, ctx.current_source_dir
+            )
 
             value = ""
             if expanded_filename in ctx.source_file_properties:
@@ -1781,7 +1774,7 @@ def handle_file(
                         str(ctx.current_source_dir / expanded_pattern)
                     )
                 matched.sort()
-                matched_files.extend(matched)
+                matched_files.extend(to_posix_path(m) for m in matched)
             ctx.variables[var_name] = ";".join(matched_files)
 
     elif subcommand == "REMOVE_RECURSE":

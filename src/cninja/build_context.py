@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 import os
 from pathlib import Path
+import platform
 import re
 import sys
 
@@ -8,8 +9,28 @@ from termcolor import colored
 
 from .parser import Command
 from .syntax import FetchContentInfo, FunctionDef, MacroDef, SourceFileProperties, Test
-from .utils import make_relative
+from .utils import make_relative, resolve_cmake_path
 from .targets import Executable, ImportedTarget, InstallTarget, Library
+
+
+def _default_c_compiler() -> str:
+    """Pick a sensible default C compiler command for the host platform."""
+    env_cc = os.getenv("CC")
+    if env_cc:
+        return env_cc
+    if platform.system() == "Windows":
+        return "clang"
+    return "cc"
+
+
+def _default_cxx_compiler() -> str:
+    """Pick a sensible default C++ compiler command for the host platform."""
+    env_cxx = os.getenv("CXX")
+    if env_cxx:
+        return env_cxx
+    if platform.system() == "Windows":
+        return "clang++"
+    return "c++"
 
 
 @dataclass
@@ -74,8 +95,8 @@ class BuildContext:
     )  # Properties for directories
     parent_directory: str = ""  # Path to parent directory (if in subdirectory)
     cmake_files: set[Path] = field(default_factory=set)
-    c_compiler: str = os.getenv("CC", "cc")  # C compiler command
-    cxx_compiler: str = os.getenv("CXX", "c++")  # C++ compiler command
+    c_compiler: str = field(default_factory=_default_c_compiler)
+    cxx_compiler: str = field(default_factory=_default_cxx_compiler)
 
     def __post_init__(self) -> None:
         self.current_source_dir = self.source_dir
@@ -104,10 +125,8 @@ class BuildContext:
 
     def resolve_path(self, path: str) -> str:
         """Resolve a path against current_source_dir and make it relative to source_dir."""
-        p = Path(path)
-        if not p.is_absolute():
-            p = self.current_source_dir / p
-        return make_relative(str(p), self.source_dir)
+        resolved = resolve_cmake_path(path, self.current_source_dir)
+        return make_relative(resolved, self.source_dir)
 
     def print_warning(self, message: str, line: int = 0) -> None:
         """Print a warning message."""
