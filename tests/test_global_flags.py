@@ -42,3 +42,22 @@ def test_cmake_cxx_flags(tmp_path: Path) -> None:
     content = ninja_file.read_text()
 
     assert "-std=c++17" in content
+
+
+def test_cmake_linker_flags(tmp_path: Path) -> None:
+    """Test that CMAKE_LINKER_FLAGS are included in the ninja file."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    (source_dir / "CMakeLists.txt").write_text(
+        "project(test_linker_flags)\n"
+        'set(CMAKE_LINKER_FLAGS "-Wl,--as-needed")\n'
+        "add_executable(main main.c)"
+    )
+    (source_dir / "main.c").write_text("int main() { return 0; }")
+
+    configure(source_dir, "build")
+
+    ninja_file = source_dir / "build.ninja"
+    content = ninja_file.read_text()
+
+    assert "-Wl,--as-needed" in content

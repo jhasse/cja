@@ -2322,6 +2322,8 @@ def generate_ninja(
         base_cflags = f"-fdiagnostics-color {build_type_flags}".strip()
         c_flags = ctx.variables.get("CMAKE_C_FLAGS", "")
         cxx_flags = ctx.variables.get("CMAKE_CXX_FLAGS", "")
+        linker_flags = ctx.variables.get("CMAKE_LINKER_FLAGS", "")
+        n.variable("ldflags", linker_flags)
 
         n.rule(
             "cc",
@@ -2356,14 +2358,14 @@ def generate_ninja(
         # Link rules
         n.rule(
             "link",
-            command="$cc $in -o $out $libs",
+            command="$cc $in -o $out $ldflags $libs",
             description="\x1b[32;1mLinking C executable $out\x1b[0m",
         )
         n.newline()
 
         n.rule(
             "link_cxx",
-            command="$cxx $in -o $out $libs",
+            command="$cxx $in -o $out $ldflags $libs",
             description="\x1b[32;1mLinking C++ executable $out\x1b[0m",
         )
         n.newline()
