@@ -1,7 +1,7 @@
 """Tests for GNUInstallDirs module."""
 
 from pathlib import Path
-from cninja.generator import configure
+from cja.generator import configure
 
 
 def test_gnu_install_dirs(tmp_path: Path) -> None:

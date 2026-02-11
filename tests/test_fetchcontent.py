@@ -3,8 +3,8 @@
 import pytest
 import tarfile
 from pathlib import Path
-from cninja.generator import BuildContext, process_commands
-from cninja.parser import Command
+from cja.generator import BuildContext, process_commands
+from cja.parser import Command
 
 
 def test_fetchcontent_url(tmp_path: Path) -> None:

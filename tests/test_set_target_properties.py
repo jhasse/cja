@@ -1,7 +1,7 @@
 """Tests for set_target_properties command."""
 
 from pathlib import Path
-from cninja.generator import configure
+from cja.generator import configure
 
 
 def test_set_target_properties_interface_include_directories(tmp_path: Path) -> None:
@@ -29,7 +29,7 @@ def test_set_target_properties_interface_include_directories(tmp_path: Path) -> 
     # Check that executable 'main' has the include directory from 'mylib'
     exe = ctx.get_executable("main")
     assert exe is not None
-    # In cninja, public_include_directories from linked libs should be added to exe.include_directories
+    # In cja, public_include_directories from linked libs should be added to exe.include_directories
     # during processing or ninja generation.
 
     # Let's verify build.ninja content

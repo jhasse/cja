@@ -1,8 +1,8 @@
 """Test nested parentheses in if() conditions."""
 
 from pathlib import Path
-from cninja.parser import parse
-from cninja.generator import configure
+from cja.parser import parse
+from cja.generator import configure
 
 
 def test_nested_parentheses_parsing() -> None:

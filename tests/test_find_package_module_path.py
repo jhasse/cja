@@ -3,8 +3,8 @@
 from pathlib import Path
 import pytest
 
-from cninja.generator import BuildContext, process_commands
-from cninja.parser import Command
+from cja.generator import BuildContext, process_commands
+from cja.parser import Command
 
 
 def test_find_package_module_path(tmp_path: Path) -> None:

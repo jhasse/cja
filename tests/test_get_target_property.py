@@ -1,7 +1,7 @@
 """Tests for get_target_property command."""
 
 from pathlib import Path
-from cninja.generator import configure
+from cja.generator import configure
 
 
 def test_get_target_property_type(tmp_path: Path) -> None:

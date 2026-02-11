@@ -2,8 +2,8 @@
 
 from pathlib import Path
 
-from cninja.generator import BuildContext, process_commands, generate_ninja
-from cninja.parser import Command
+from cja.generator import BuildContext, process_commands, generate_ninja
+from cja.parser import Command
 
 
 def test_add_test(tmp_path: Path) -> None:

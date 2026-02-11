@@ -2,13 +2,13 @@
 
 from pathlib import Path
 
-from cninja.generator import (
+from cja.generator import (
     BuildContext,
     compile_feature_to_flag,
     generate_ninja,
     process_commands,
 )
-from cninja.parser import Command
+from cja.parser import Command
 
 
 def test_compile_feature_to_flag_cxx_std() -> None:

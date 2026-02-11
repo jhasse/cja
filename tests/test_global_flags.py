@@ -1,7 +1,7 @@
 """Tests for CMAKE_C_FLAGS and CMAKE_CXX_FLAGS."""
 
 from pathlib import Path
-from cninja.generator import configure
+from cja.generator import configure
 
 
 def test_cmake_c_flags(tmp_path: Path) -> None:

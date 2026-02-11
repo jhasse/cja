@@ -3,7 +3,7 @@
 import shutil
 from pathlib import Path
 
-from cninja.generator import configure
+from cja.generator import configure
 
 
 EXAMPLES_DIR = Path(__file__).parent.parent / "examples"

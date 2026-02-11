@@ -32,12 +32,12 @@ def handle_cmake_policy(
             value = args[2].upper()
             if value == "OLD":
                 ctx.print_warning(
-                    f"cmake_policy(SET {policy} OLD) is called, but cninja always uses NEW behavior for all policies",
+                    f"cmake_policy(SET {policy} OLD) is called, but cja always uses NEW behavior for all policies",
                     cmd.line,
                 )
         elif subcommand == "GET" and len(args) >= 3:
             var_name = args[2]
-            # cninja always uses NEW behavior
+            # cja always uses NEW behavior
             ctx.variables[var_name] = "NEW"
         elif subcommand in ("PUSH", "POP", "VERSION"):
             pass
@@ -852,7 +852,7 @@ def handle_add_library(
             # For now, just register the alias in imported_targets or something?
             # Or just ignore it if we don't need it.
             # CMake aliases are just pointers to other targets.
-            # In cninja, we can probably just ignore them or add them to ctx.libraries
+            # In cja, we can probably just ignore them or add them to ctx.libraries
             # as a copy if we want to support linking against the alias.
             lib = ctx.get_library(target_name)
             if lib:
@@ -1260,9 +1260,9 @@ def handle_set(
             # Extract the value (should be NEW or OLD)
             policy_value = values[0] if values else ""
             if policy_value == "OLD":
-                # cninja always uses NEW behavior, warn about OLD
+                # cja always uses NEW behavior, warn about OLD
                 ctx.print_warning(
-                    f"{var_name} is set to OLD, but cninja always uses NEW behavior for all policies",
+                    f"{var_name} is set to OLD, but cja always uses NEW behavior for all policies",
                     cmd.line,
                 )
             # For NEW, silently accept (this is what we want)
