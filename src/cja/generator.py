@@ -2872,6 +2872,15 @@ def generate_ninja(
 
             install_files: list[str] = []
             for install in ctx.install_targets:
+                destination = install.destination
+                try:
+                    source_dir = ctx.source_dir.resolve()
+                    destination_path = Path(destination).resolve()
+                    if destination_path.is_relative_to(source_dir):
+                        destination = str(destination_path.relative_to(source_dir))
+                except (OSError, RuntimeError, ValueError):
+                    pass
+
                 for target in install.targets:
                     src = None
                     if target in exe_outputs:
@@ -2880,13 +2889,15 @@ def generate_ninja(
                         src = lib_outputs[target]
 
                     if src:
-                        dest = f"{install.destination}/{Path(src).name.replace('$builddir/', '')}"
+                        dest = (
+                            f"{destination}/{Path(src).name.replace('$builddir/', '')}"
+                        )
                         register_output(dest, None, 0)
                         n.build(
                             dest,
                             "install_file",
                             src,
-                            variables={"out_dir": install.destination},
+                            variables={"out_dir": destination},
                         )
                         install_files.append(dest)
 
