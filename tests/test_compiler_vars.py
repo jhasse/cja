@@ -1,6 +1,7 @@
 """Tests for CMAKE_C_COMPILER and CMAKE_CXX_COMPILER."""
 
 from pathlib import Path
+import platform
 from cja.generator import configure
 
 
@@ -84,5 +85,9 @@ def test_default_compilers(tmp_path: Path) -> None:
     content = ninja_file.read_text()
 
     # Check that default compilers are used
-    assert "cc = cc" in content
-    assert "cxx = c++" in content
+    if platform.system() == "Windows":
+        assert "cc = clang" in content
+        assert "cxx = clang++" in content
+    else:
+        assert "cc = cc" in content
+        assert "cxx = c++" in content
