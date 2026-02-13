@@ -3,6 +3,7 @@
 from dataclasses import dataclass, field
 import hashlib
 import platform
+import re
 import shlex
 import shutil
 import subprocess
@@ -96,6 +97,40 @@ def is_header(filename: str) -> bool:
     """Check if a filename refers to a header file."""
     header_extensions = (".h", ".hpp", ".hxx", ".hh", ".inc", ".inl")
     return filename.lower().endswith(header_extensions)
+
+
+def is_rc(filename: str) -> bool:
+    """Check if a filename refers to a Windows resource script."""
+    return filename.lower().endswith(".rc")
+
+
+def is_manifest(filename: str) -> bool:
+    """Check if a filename refers to a Windows manifest file."""
+    return filename.lower().endswith(".manifest")
+
+
+def _rc_manifest_deps(ctx: BuildContext, rc_path: str) -> list[str]:
+    """Extract manifest file paths referenced by RT_MANIFEST in .rc file."""
+    deps: list[str] = []
+    abs_path = ctx.source_dir / rc_path
+    if not abs_path.exists():
+        return deps
+    try:
+        content = abs_path.read_text(encoding="utf-8", errors="replace")
+        # Match RT_MANIFEST "filename" or RT_MANIFEST 'filename'
+        for match in re.finditer(
+            r"RT_MANIFEST\s+[\"']([^\"']+)[\"']", content, re.I
+        ):
+            manifest_ref = match.group(1)
+            rc_dir = Path(rc_path).parent
+            if rc_dir and rc_dir != Path("."):
+                manifest_path = (rc_dir / manifest_ref).as_posix()
+            else:
+                manifest_path = manifest_ref
+            deps.append(manifest_path)
+    except (OSError, UnicodeDecodeError):
+        pass
+    return deps
 
 
 def compile_feature_to_flag(feature: str) -> str | None:
@@ -2380,6 +2415,17 @@ def generate_ninja(
         )
         n.newline()
 
+        # Windows resource compilation (llvm-rc, clang-only, no mt.exe)
+        if platform.system() == "Windows":
+            default_rc = "llvm-rc"
+            n.variable("rc", default_rc)
+            n.rule(
+                "rc",
+                command="$rc /FO $out $in",
+                description="\x1b[32mCompiling resources $in\x1b[0m",
+            )
+            n.newline()
+
         # Track library and executable outputs for linking and testing
         lib_outputs: dict[str, str] = {}
         exe_outputs: dict[str, str] = {}
@@ -2538,9 +2584,11 @@ def generate_ninja(
                     if imported.cflags:
                         lib_compile_flags.append(imported.cflags)
 
-            # Filter out headers from compileable sources
+            # Filter out headers, .rc, and .manifest files from compileable sources
             compileable_sources: list[str] = [
-                s for s in lib.sources if not is_header(s)
+                s
+                for s in lib.sources
+                if not is_header(s) and not is_rc(s) and not is_manifest(s)
             ]
 
             for source in compileable_sources:
@@ -2685,10 +2733,14 @@ def generate_ninja(
                     if imported.cflags:
                         compile_flags.append(imported.cflags)
 
-            # Filter out headers from compileable sources
+            # Filter out headers, .rc, and .manifest files from compileable sources
             compileable_sources: list[str] = [
-                s for s in exe.sources if not is_header(s)
+                s
+                for s in exe.sources
+                if not is_header(s) and not is_rc(s) and not is_manifest(s)
             ]
+            rc_sources: list[str] = [s for s in exe.sources if is_rc(s)]
+            manifest_sources: list[str] = [s for s in exe.sources if is_manifest(s)]
 
             for source in compileable_sources:
                 actual_source = source
@@ -2802,6 +2854,49 @@ def generate_ninja(
                             link_flags.append(lib_name)
                     else:
                         link_flags.append(f"-l{lib_name}")
+
+            # On Windows, compile .rc files to .res and add to link inputs
+            if rc_sources and platform.system() == "Windows":
+                for rc_source in rc_sources:
+                    actual_rc = rc_source
+                    if rc_source in custom_command_outputs:
+                        actual_rc = f"$builddir/{rc_source}"
+                    rc_rel = Path(rc_source)
+                    res_name = f"$builddir/{exe.name}_{rc_rel.stem}.res"
+                    register_output(res_name, exe.defined_file, exe.defined_line)
+                    rc_deps = _rc_manifest_deps(ctx, rc_source)
+                    n.build(
+                        res_name,
+                        "rc",
+                        actual_rc,
+                        implicit=rc_deps if rc_deps else None,
+                    )
+                    link_inputs.append(res_name)
+
+            # On Windows, .manifest as source: auto-generate .rc and use llvm-rc workflow
+            if manifest_sources and platform.system() == "Windows":
+                for manifest in manifest_sources:
+                    manifest_rel = Path(manifest)
+                    rc_stem = f"{exe.name}_{manifest_rel.stem}"
+                    rc_name = f"{rc_stem}.rc"
+                    res_name = f"$builddir/{rc_stem}.res"
+                    rc_path = ctx.build_dir / rc_name
+                    # Path from build dir to manifest (llvm-rc resolves relative to .rc)
+                    rc_manifest_path = Path("..") / manifest
+                    rc_content = (
+                        "#ifndef RT_MANIFEST\n#define RT_MANIFEST 24\n#endif\n"
+                        f'1 RT_MANIFEST "{rc_manifest_path.as_posix()}"\n'
+                    )
+                    rc_path.parent.mkdir(parents=True, exist_ok=True)
+                    rc_path.write_text(rc_content, encoding="utf-8")
+                    register_output(res_name, exe.defined_file, exe.defined_line)
+                    n.build(
+                        res_name,
+                        "rc",
+                        f"$builddir/{rc_name}",
+                        implicit=manifest,
+                    )
+                    link_inputs.append(res_name)
 
             # Link
             exe_name = f"$builddir/{exe.name}{exe_ext}"

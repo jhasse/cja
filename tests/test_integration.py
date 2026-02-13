@@ -3,6 +3,7 @@
 import shutil
 import subprocess
 import platform
+import pytest
 from pathlib import Path
 
 from cja import configure
@@ -127,3 +128,53 @@ def test_objlib_example(tmp_path: Path) -> None:
     )
     assert result.returncode == 0
     assert "Value: 42" in result.stdout
+
+
+def test_manifest_example(tmp_path: Path) -> None:
+    """Test building the manifest example with .manifest as source (auto .rc + llvm-rc)."""
+    source_dir = tmp_path / "manifest"
+    shutil.copytree(EXAMPLES_DIR / "manifest", source_dir)
+
+    # Configure
+    configure(source_dir, "build")
+
+    build_ninja = source_dir / "build.ninja"
+    assert build_ninja.exists()
+
+    # Build with ninja
+    result = subprocess.run(
+        ["ninja"],
+        cwd=source_dir,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, f"ninja failed: {result.stderr}"
+
+    build_dir = source_dir / "build"
+    app_exe = build_dir / f"app{EXE_EXT}"
+    assert app_exe.exists()
+
+    # Run and verify output
+    result = subprocess.run(
+        [str(app_exe)],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    assert "Hello from manifest example" in result.stdout
+
+
+def test_manifest_example_ninja_content(tmp_path: Path) -> None:
+    """Verify manifest example generates rc rule, .res, and auto-generated .rc (Windows)."""
+    source_dir = tmp_path / "manifest"
+    shutil.copytree(EXAMPLES_DIR / "manifest", source_dir)
+    configure(source_dir, "build")
+
+    content = (source_dir / "build.ninja").read_text()
+    if platform.system() == "Windows":
+        assert 'rule rc' in content
+        assert "app_app.res" in content
+        # Auto-generated .rc references manifest
+        generated_rc = source_dir / "build" / "app_app.rc"
+        assert generated_rc.exists()
+        assert "RT_MANIFEST" in generated_rc.read_text()
