@@ -1,4 +1,4 @@
-name: Linux
+name: Windows
 
 on:
   push:
@@ -13,8 +13,8 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    # - name: Install uv
-    #   run: winget install --id=astral-sh.uv -e
+    - name: Install uv
+      run: winget install --id=astral-sh.uv -e
 
     - name: Run tests
       run: uv run pytest
