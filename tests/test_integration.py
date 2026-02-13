@@ -1,11 +1,11 @@
-"""Integration tests for cninja."""
+"""Integration tests for cja."""
 
 import shutil
 import subprocess
 import platform
 from pathlib import Path
 
-from cninja import configure
+from cja import configure
 
 
 EXAMPLES_DIR = Path(__file__).parent.parent / "examples"

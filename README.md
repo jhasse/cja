@@ -1,4 +1,4 @@
-# cninja
+# cja
 
 A CMake reimplementation in Python that generates Ninja build files.
 
@@ -6,14 +6,14 @@ A CMake reimplementation in Python that generates Ninja build files.
 
 ```sh
 # Configure in current directory
-cninja
+cja
 
 # Specify build directory
-cninja -B build-release
+cja -B build-release
 
 # Set CMake variables
-cninja -DCMAKE_BUILD_TYPE=Release
-cninja -DCMAKE_BUILD_TYPE=Debug -DENABLE_TESTS=ON
+cja -DCMAKE_BUILD_TYPE=Release
+cja -DCMAKE_BUILD_TYPE=Debug -DENABLE_TESTS=ON
 ```
 
 After configuration, build with Ninja:
@@ -24,61 +24,61 @@ ninja
 
 ## Build Subcommand
 
-cninja supports a `build` subcommand that works similar to cargo:
+cja supports a `build` subcommand that works similar to cargo:
 
-### `cninja build`
+### `cja build`
 
 Equivalent to calling:
 ```
-cninja -Bbuild
+cja -Bbuild
 ninja
 ```
 
-### `cninja build --release`
+### `cja build --release`
 
 Equivalent to calling:
 ```sh
-cninja -Bbuild-release -DCMAKE_BUILD_TYPE=Release
+cja -Bbuild-release -DCMAKE_BUILD_TYPE=Release
 ninja -f build-release.ninja
 ```
 
 ## Test Subcommand
 
-### `cninja test`
+### `cja test`
 
 Equivalent to calling:
 ```sh
-cninja build
+cja build
 ninja -f build.ninja test
 ```
 
-### `cninja test --release`
+### `cja test --release`
 
 Equivalent to calling:
 ```sh
-cninja build --release
+cja build --release
 ninja -f build-release.ninja test
 ```
 
 ## Run Subcommand
 
-cninja generates a "run" phony target which executes the first executable (or the one set via
+cja generates a "run" phony target which executes the first executable (or the one set via
 [VS_STARTUP_PROJECT](https://cmake.org/cmake/help/latest/prop_dir/VS_STARTUP_PROJECT.html)) in your
 CMakeLists.txt.
 
-### `cninja run`
+### `cja run`
 
 Equivalent to calling:
 ```sh
-cninja build
+cja build
 ninja -f build.ninja run
 ```
 
-### `cninja run --release`
+### `cja run --release`
 
 Equivalent to calling:
 ```sh
-cninja build --release
+cja build --release
 ninja -f build-release.ninja run
 ```
 
@@ -147,7 +147,7 @@ target_compile_features(myapp PUBLIC cxx_std_17)
 
 Build:
 ```sh
-cninja -DCMAKE_BUILD_TYPE=Release
+cja -DCMAKE_BUILD_TYPE=Release
 ninja
 ./build/myapp
 ```

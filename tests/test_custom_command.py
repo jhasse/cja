@@ -2,8 +2,8 @@
 
 from pathlib import Path
 
-from cninja.generator import BuildContext, process_commands
-from cninja.parser import Command
+from cja.generator import BuildContext, process_commands
+from cja.parser import Command
 
 
 def test_add_custom_command_minimal() -> None:
@@ -68,7 +68,7 @@ def test_add_custom_command_multiple_outputs() -> None:
 def test_add_custom_command_integration() -> None:
     """Integration test: verify custom command generates build.ninja correctly."""
     import tempfile
-    from cninja.generator import configure
+    from cja.generator import configure
 
     with tempfile.TemporaryDirectory() as tmpdir:
         tmppath = Path(tmpdir)
@@ -103,7 +103,7 @@ add_custom_command(
 
 def test_add_custom_command_dependency(tmp_path: Path) -> None:
     """Test that a target depending on custom command output uses builddir."""
-    from cninja.generator import configure
+    from cja.generator import configure
 
     source_dir = tmp_path
     cmake_content = """cmake_minimum_required(VERSION 3.10)
@@ -137,7 +137,7 @@ add_executable(myapp generated.cpp)
 
 def test_add_custom_command_main_dependency(tmp_path: Path) -> None:
     """Test that MAIN_DEPENDENCY is correctly handled."""
-    from cninja.generator import configure
+    from cja.generator import configure
 
     source_dir = tmp_path
     cmake_content = """cmake_minimum_required(VERSION 3.10)
@@ -165,7 +165,7 @@ add_custom_command(
 
 def test_add_custom_command_absolute_output(tmp_path: Path) -> None:
     """Test that absolute paths in OUTPUT are converted to relative."""
-    from cninja.generator import configure
+    from cja.generator import configure
 
     source_dir = tmp_path
     build_dir = tmp_path / "build"
@@ -196,7 +196,7 @@ add_custom_command(
 
 def test_add_custom_command_working_dir_verbatim(tmp_path: Path) -> None:
     """Test that WORKING_DIRECTORY and VERBATIM are correctly handled."""
-    from cninja.generator import configure
+    from cja.generator import configure
 
     source_dir = tmp_path
     cmake_content = """cmake_minimum_required(VERSION 3.10)
@@ -227,7 +227,7 @@ add_custom_command(
 
 def test_add_custom_command_multiple_commands(tmp_path: Path) -> None:
     """Test that multiple COMMAND sections are correctly joined with &&."""
-    from cninja.generator import configure
+    from cja.generator import configure
 
     source_dir = tmp_path
     cmake_content = """cmake_minimum_required(VERSION 3.10)

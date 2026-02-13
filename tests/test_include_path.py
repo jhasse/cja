@@ -1,7 +1,7 @@
 """Tests for including .cmake files."""
 
 from pathlib import Path
-from cninja.generator import configure
+from cja.generator import configure
 
 
 def test_include_path(tmp_path: Path) -> None:

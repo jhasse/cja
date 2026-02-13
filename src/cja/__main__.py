@@ -1,4 +1,4 @@
-"""Main entry point for cninja."""
+"""Main entry point for cja."""
 
 import sys
 from .cli import main

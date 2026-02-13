@@ -1,5 +1,5 @@
 [project]
-name = "cninja"
+name = "cja"
 version = "0.1.0"
 description = "A CMake reimplementation in Python with Ninja generator"
 readme = "README.md"
@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.scripts]
-cninja = "cninja.cli:main"
+cja = "cja.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.9.26,<0.10.0"]

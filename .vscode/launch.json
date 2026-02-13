@@ -5,10 +5,10 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "cninja",
+            "name": "cja",
             "type": "debugpy",
             "request": "launch",
-            "module": "cninja",
+            "module": "cja",
             "cwd": "${workspaceFolder}/../ninja",
             "env": {
                 "PYTHONPATH": "${workspaceFolder}/src"

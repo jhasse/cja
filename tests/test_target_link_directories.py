@@ -3,8 +3,8 @@
 import platform
 from pathlib import Path
 
-from cninja.generator import BuildContext, process_commands, generate_ninja
-from cninja.parser import Command
+from cja.generator import BuildContext, process_commands, generate_ninja
+from cja.parser import Command
 
 LIB_EXT = ".lib" if platform.system() == "Windows" else ".a"
 

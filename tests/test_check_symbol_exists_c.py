@@ -1,9 +1,9 @@
 """Tests for check_symbol_exists command."""
 
 from pathlib import Path
-from cninja.generator import BuildContext
-from cninja.parser import Command
-from cninja.generator import process_commands
+from cja.generator import BuildContext
+from cja.parser import Command
+from cja.generator import process_commands
 
 
 def test_check_symbol_exists_found():

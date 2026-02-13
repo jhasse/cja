@@ -1,4 +1,4 @@
-"""cninja - A CMake reimplementation in Python with Ninja generator."""
+"""cja - A CMake reimplementation in Python with Ninja generator."""
 
 __version__ = "0.1.0"
 

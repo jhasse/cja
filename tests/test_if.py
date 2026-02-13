@@ -4,10 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from cninja.build_context import BuildContext
-from cninja.generator import process_commands
-from cninja.syntax import evaluate_condition
-from cninja.parser import Command
+from cja.build_context import BuildContext
+from cja.generator import process_commands
+from cja.syntax import evaluate_condition
+from cja.parser import Command
 
 
 class TestEvaluateCondition:

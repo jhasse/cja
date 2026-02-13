@@ -2,7 +2,7 @@
 
 from pathlib import Path
 import json
-from cninja.generator import configure
+from cja.generator import configure
 
 
 def test_compile_commands_json(tmp_path: Path) -> None:

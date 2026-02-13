@@ -2,7 +2,7 @@
 
 import platform
 from pathlib import Path
-from cninja.generator import configure
+from cja.generator import configure
 
 
 def test_cmake_system_name(tmp_path: Path) -> None:

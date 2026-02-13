@@ -2,8 +2,8 @@
 
 from pathlib import Path
 
-from cninja.generator import BuildContext, process_commands
-from cninja.parser import Command
+from cja.generator import BuildContext, process_commands
+from cja.parser import Command
 
 
 def test_cmake_policy_default_new() -> None:
@@ -189,7 +189,7 @@ def test_cmake_policy_get() -> None:
         Command(name="cmake_policy", args=["GET", "CMP0077", "MY_VAR"], line=1),
     ]
     process_commands(commands, ctx)
-    # cninja always uses NEW behavior
+    # cja always uses NEW behavior
     assert ctx.variables["MY_VAR"] == "NEW"
 
 

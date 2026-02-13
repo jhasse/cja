@@ -1,8 +1,8 @@
 """Tests for CMake comments."""
 
 from pathlib import Path
-from cninja.generator import configure
-from cninja.parser import parse
+from cja.generator import configure
+from cja.parser import parse
 
 
 def test_line_comment() -> None:

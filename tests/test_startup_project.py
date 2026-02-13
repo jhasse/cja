@@ -1,5 +1,5 @@
-from cninja.generator import BuildContext, process_commands, generate_ninja
-from cninja.parser import Command
+from cja.generator import BuildContext, process_commands, generate_ninja
+from cja.parser import Command
 
 
 def test_vs_startup_project_directory(tmp_path):

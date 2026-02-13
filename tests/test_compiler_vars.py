@@ -1,7 +1,7 @@
 """Tests for CMAKE_C_COMPILER and CMAKE_CXX_COMPILER."""
 
 from pathlib import Path
-from cninja.generator import configure
+from cja.generator import configure
 
 
 def test_cmake_c_compiler(tmp_path: Path) -> None:
