@@ -2,12 +2,15 @@
 
 import shutil
 import subprocess
+import platform
 from pathlib import Path
 
 from cninja import configure
 
 
 EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
+EXE_EXT = ".exe" if platform.system() == "Windows" else ""
+LIB_EXT = ".lib" if platform.system() == "Windows" else ".a"
 
 
 def test_hello_example(tmp_path: Path) -> None:
@@ -34,7 +37,7 @@ def test_hello_example(tmp_path: Path) -> None:
 
     # Check executable was created in build dir
     build_dir = source_dir / "build"
-    hello_exe = build_dir / "hello"
+    hello_exe = build_dir / f"hello{EXE_EXT}"
     assert hello_exe.exists()
 
     # Run the executable and check output
@@ -71,12 +74,12 @@ def test_libmath_example(tmp_path: Path) -> None:
 
     # Check library and executable were created in build dir
     build_dir = source_dir / "build"
-    assert (build_dir / "libmath.a").exists()
-    assert (build_dir / "calculator").exists()
+    assert (build_dir / f"libmath{LIB_EXT}").exists()
+    assert (build_dir / f"calculator{EXE_EXT}").exists()
 
     # Run the executable and check output
     result = subprocess.run(
-        [str(build_dir / "calculator")],
+        [str(build_dir / f"calculator{EXE_EXT}")],
         capture_output=True,
         text=True,
     )
@@ -100,7 +103,7 @@ def test_objlib_example(tmp_path: Path) -> None:
 
     # Verify no .a file is created for OBJECT library
     content = build_ninja.read_text()
-    assert "libutils.a" not in content
+    assert f"libutils{LIB_EXT}" not in content
 
     # Build with ninja (run from source dir)
     result = subprocess.run(
@@ -113,12 +116,12 @@ def test_objlib_example(tmp_path: Path) -> None:
 
     # Check executable was created in build dir (but no .a file)
     build_dir = source_dir / "build"
-    assert (build_dir / "app").exists()
-    assert not (build_dir / "libutils.a").exists()
+    assert (build_dir / f"app{EXE_EXT}").exists()
+    assert not (build_dir / f"libutils{LIB_EXT}").exists()
 
     # Run the executable and check output
     result = subprocess.run(
-        [str(build_dir / "app")],
+        [str(build_dir / f"app{EXE_EXT}")],
         capture_output=True,
         text=True,
     )

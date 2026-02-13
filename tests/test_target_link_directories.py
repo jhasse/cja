@@ -1,9 +1,12 @@
 """Tests for target_link_directories command."""
 
+import platform
 from pathlib import Path
 
 from cninja.generator import BuildContext, process_commands, generate_ninja
 from cninja.parser import Command
+
+LIB_EXT = ".lib" if platform.system() == "Windows" else ".a"
 
 
 def test_target_link_directories_exe() -> None:
@@ -104,4 +107,4 @@ def test_target_link_libraries_public_propagates(tmp_path: Path) -> None:
     generate_ninja(ctx, ninja_file, "build")
 
     content = ninja_file.read_text()
-    assert "$builddir/libbar.a" in content
+    assert f"$builddir/libbar{LIB_EXT}" in content

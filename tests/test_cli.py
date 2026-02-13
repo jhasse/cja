@@ -2,6 +2,7 @@
 
 import shutil
 import subprocess
+import platform
 from pathlib import Path
 
 from cninja.cli import parse_define
@@ -9,6 +10,7 @@ from cninja.generator import configure
 
 
 EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
+EXE_EXT = ".exe" if platform.system() == "Windows" else ""
 
 
 def test_parse_define_with_value() -> None:
@@ -136,7 +138,7 @@ def test_build_subcommand(tmp_path: Path) -> None:
 
     # Should have created build.ninja and built the executable
     assert (source_dir / "build.ninja").exists()
-    assert (source_dir / "build" / "hello").exists()
+    assert (source_dir / "build" / f"hello{EXE_EXT}").exists()
 
 
 def test_build_subcommand_release(tmp_path: Path) -> None:
@@ -159,7 +161,7 @@ def test_build_subcommand_release(tmp_path: Path) -> None:
     assert "-DNDEBUG" in content
 
     # Should have built the executable in build-release
-    assert (source_dir / "build-release" / "hello").exists()
+    assert (source_dir / "build-release" / f"hello{EXE_EXT}").exists()
 
 
 def test_build_subcommand_skips_configure_if_ninja_exists(tmp_path: Path) -> None:
@@ -246,4 +248,4 @@ add_executable(myexe main.c)
     # The return code should be 42 because it runs the executable
     assert result.returncode == 42
     assert "RUN" in result.stdout
-    assert "build/myexe" in result.stdout
+    assert f"build/myexe{EXE_EXT}" in result.stdout
