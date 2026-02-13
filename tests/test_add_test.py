@@ -1,9 +1,12 @@
 """Tests for add_test command."""
 
 from pathlib import Path
+import platform
 
 from cja.generator import BuildContext, process_commands, generate_ninja
 from cja.parser import Command
+
+EXE_EXT = ".exe" if platform.system() == "Windows" else ""
 
 
 def test_add_test(tmp_path: Path) -> None:
@@ -41,10 +44,10 @@ def test_add_test(tmp_path: Path) -> None:
     # Check for individual test build statements
     assert "build test_mytest: test_run" in ninja_content
     # It should have resolved 'myapp' to './myapp' (since we cd to $builddir)
-    assert "./myapp --arg" in ninja_content
+    assert f"./myapp{EXE_EXT} --arg" in ninja_content
     assert (
-        "implicit = $builddir/myapp" in ninja_content
-        or "| $builddir/myapp" in ninja_content
+        f"implicit = $builddir/myapp{EXE_EXT}" in ninja_content
+        or f"| $builddir/myapp{EXE_EXT}" in ninja_content
     )
 
     assert "build test_simple_test: test_run" in ninja_content
