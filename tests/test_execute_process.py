@@ -160,7 +160,7 @@ def test_execute_process_command_error_is_fatal_any(
             {"returncode": 1, "stdout": "", "stderr": "boom"},
         )()
 
-    monkeypatch.setattr("cninja.generator.subprocess.run", fake_run)
+    monkeypatch.setattr("cja.generator.subprocess.run", fake_run)
 
     commands = [
         Command(

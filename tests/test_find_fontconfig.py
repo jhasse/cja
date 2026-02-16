@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from cninja.generator import BuildContext, process_commands
-from cninja.parser import Command
+from cja.generator import BuildContext, process_commands
+from cja.parser import Command
 
 
 def has_pkg_config_fontconfig() -> bool:
