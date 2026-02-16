@@ -1,7 +1,7 @@
 """Tests for get_filename_component command."""
 
 from pathlib import Path
-from cninja.generator import configure
+from cja.generator import configure
 
 
 def test_get_filename_component(tmp_path: Path) -> None:

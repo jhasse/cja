@@ -99,6 +99,38 @@ def is_header(filename: str) -> bool:
     return filename.lower().endswith(header_extensions)
 
 
+def is_rc(filename: str) -> bool:
+    """Check if a filename refers to a Windows resource script."""
+    return filename.lower().endswith(".rc")
+
+
+def is_manifest(filename: str) -> bool:
+    """Check if a filename refers to a Windows manifest file."""
+    return filename.lower().endswith(".manifest")
+
+
+def _rc_manifest_deps(ctx: BuildContext, rc_path: str) -> list[str]:
+    """Extract manifest file paths referenced by RT_MANIFEST in .rc file."""
+    deps: list[str] = []
+    abs_path = ctx.source_dir / rc_path
+    if not abs_path.exists():
+        return deps
+    try:
+        content = abs_path.read_text(encoding="utf-8", errors="replace")
+        # Match RT_MANIFEST "filename" or RT_MANIFEST 'filename'
+        for match in re.finditer(r"RT_MANIFEST\s+[\"']([^\"']+)[\"']", content, re.I):
+            manifest_ref = match.group(1)
+            rc_dir = Path(rc_path).parent
+            if rc_dir and rc_dir != Path("."):
+                manifest_path = (rc_dir / manifest_ref).as_posix()
+            else:
+                manifest_path = manifest_ref
+            deps.append(manifest_path)
+    except OSError, UnicodeDecodeError:
+        pass
+    return deps
+
+
 def compile_feature_to_flag(feature: str) -> str | None:
     """Translate a CMake compile feature to a compiler flag."""
     # Map cxx_std_XX features to -std=c++XX flags
@@ -196,6 +228,15 @@ def _render_basic_package_version_file(
         "  set(PACKAGE_VERSION_UNSUITABLE FALSE)\n"
         "endif()\n"
     )
+
+
+def _ninja_flag_path(path: str) -> str:
+    """Format paths for Ninja flags consistently on Windows."""
+    if len(path) >= 3 and path[1] == ":" and path[2] == "\\":
+        head, sep, tail = path.rpartition("\\")
+        if sep:
+            return f"{head}/{tail}"
+    return path
 
 
 def handle_add_subdirectory(
@@ -400,7 +441,7 @@ def process_commands(
 ) -> None:
     """Process CMake commands and populate the build context."""
     # Ensure CMAKE_COMMAND is always set
-    ctx.variables["CMAKE_COMMAND"] = "cninja"
+    ctx.variables["CMAKE_COMMAND"] = "cja"
     ctx.variables["CMAKE_VERSION"] = "3.28.0"
     stack: list[Frame] = [Frame(commands=commands, pc=0, kind="commands")]
     while stack:
@@ -542,7 +583,7 @@ def process_commands(
                         subprocess.run(
                             ["git", "-C", str(src_dir), "checkout", git_tag], check=True
                         )
-                    except (FileNotFoundError, subprocess.CalledProcessError):
+                    except FileNotFoundError, subprocess.CalledProcessError:
                         if strict:
                             ctx.print_error(
                                 f"git checkout failed for {git_repo} ({git_tag})",
@@ -719,7 +760,7 @@ def process_commands(
                         value = args[2].upper()
                         if value == "OLD":
                             ctx.print_warning(
-                                f"cmake_policy(SET {policy} OLD) is called, but cninja always uses NEW behavior for all policies",
+                                f"cmake_policy(SET {policy} OLD) is called, but cja always uses NEW behavior for all policies",
                                 cmd.line,
                             )
                     elif subcommand == "GET" and len(args) >= 3:
@@ -1006,7 +1047,7 @@ def process_commands(
                         temp_src = f.name
                     temp_out = temp_src + ".out"
                     result = subprocess.run(
-                        ["cc", "-flto", "-o", temp_out, temp_src],
+                        [ctx.c_compiler, "-flto", "-o", temp_out, temp_src],
                         capture_output=True,
                         text=True,
                     )
@@ -1042,7 +1083,7 @@ def process_commands(
                             temp_src = f.name
                         temp_out = temp_src + ".o"
                         result = subprocess.run(
-                            ["c++", flag, "-c", "-o", temp_out, temp_src],
+                            [ctx.cxx_compiler, flag, "-c", "-o", temp_out, temp_src],
                             capture_output=True,
                             text=True,
                         )
@@ -1080,7 +1121,7 @@ def process_commands(
                             temp_src = f.name
                         temp_out = temp_src + ".o"
                         result = subprocess.run(
-                            ["cc", flag, "-c", "-o", temp_out, temp_src],
+                            [ctx.c_compiler, flag, "-c", "-o", temp_out, temp_src],
                             capture_output=True,
                             text=True,
                         )
@@ -1132,7 +1173,7 @@ int main() {{
                             temp_src = f.name
                         temp_out = temp_src.replace(".cpp", "")
                         result = subprocess.run(
-                            ["c++", "-o", temp_out, temp_src],
+                            [ctx.cxx_compiler, "-o", temp_out, temp_src],
                             capture_output=True,
                             text=True,
                         )
@@ -1172,7 +1213,7 @@ int main() {{
                             temp_src = f.name
                         temp_out = temp_src.replace(".c", "")
                         result = subprocess.run(
-                            ["cc", "-o", temp_out, temp_src],
+                            [ctx.c_compiler, "-o", temp_out, temp_src],
                             capture_output=True,
                             text=True,
                         )
@@ -2546,9 +2587,9 @@ def generate_ninja(
     ctx: BuildContext, output_path: Path, builddir: str, strict: bool = False
 ) -> None:
     """Generate ninja build file."""
-    # Detect compiler
-    cc = "cc"
-    cxx = "c++"
+    # Use compilers from context (set via CMAKE_C_COMPILER/CMAKE_CXX_COMPILER or defaults)
+    cc = ctx.c_compiler
+    cxx = ctx.cxx_compiler
 
     # Detect extensions
     exe_ext = ".exe" if platform.system() == "Windows" else ""
@@ -2596,14 +2637,15 @@ def generate_ninja(
             else:
                 output_origins[output] = (origin_file, origin_line)
 
-        n.comment("Generated by cninja")
+        n.comment("Generated by cja")
         n.newline()
 
         # Variables
         n.variable("builddir", builddir)
         n.variable("cc", cc)
         n.variable("cxx", cxx)
-        n.variable("ar", "ar")
+        default_ar = "llvm-ar" if platform.system() == "Windows" else "ar"
+        n.variable("ar", default_ar)
         n.newline()
 
         cmake_deps: list[str] = []
@@ -2618,7 +2660,7 @@ def generate_ninja(
                     return f"-D{name}="
                 return f"-D{name}={value}"
 
-            reconfigure_cmd_parts = ["cninja"]
+            reconfigure_cmd_parts = ["cja"]
             if builddir != "build":
                 reconfigure_cmd_parts += ["-B", "$builddir"]
             for var_name in sorted(ctx.cache_variables):
@@ -2653,6 +2695,8 @@ def generate_ninja(
         base_cflags = f"-fdiagnostics-color {build_type_flags}".strip()
         c_flags = ctx.variables.get("CMAKE_C_FLAGS", "")
         cxx_flags = ctx.variables.get("CMAKE_CXX_FLAGS", "")
+        linker_flags = ctx.variables.get("CMAKE_LINKER_FLAGS", "")
+        n.variable("ldflags", linker_flags)
 
         n.rule(
             "cc",
@@ -2687,17 +2731,28 @@ def generate_ninja(
         # Link rules
         n.rule(
             "link",
-            command="$cc $in -o $out $libs",
+            command="$cc $in -o $out $ldflags $libs",
             description="\x1b[32;1mLinking C executable $out\x1b[0m",
         )
         n.newline()
 
         n.rule(
             "link_cxx",
-            command="$cxx $in -o $out $libs",
+            command="$cxx $in -o $out $ldflags $libs",
             description="\x1b[32;1mLinking C++ executable $out\x1b[0m",
         )
         n.newline()
+
+        # Windows resource compilation (llvm-rc, clang-only, no mt.exe)
+        if platform.system() == "Windows":
+            default_rc = "llvm-rc"
+            n.variable("rc", default_rc)
+            n.rule(
+                "rc",
+                command="$rc /FO $out $in",
+                description="\x1b[32mCompiling resources $in\x1b[0m",
+            )
+            n.newline()
 
         # Track library and executable outputs for linking and testing
         lib_outputs: dict[str, str] = {}
@@ -2828,7 +2883,8 @@ def generate_ninja(
                 if flag:
                     lib_compile_flags.append(flag)
             for inc_dir in lib.include_directories:
-                lib_compile_flags.append(f"-I{strip_generator_expressions(inc_dir)}")
+                inc = strip_generator_expressions(inc_dir)
+                lib_compile_flags.append(f"-I{_ninja_flag_path(inc)}")
 
             # Propagate flags from dependencies
             # For compilation, we only follow public dependencies
@@ -2843,7 +2899,8 @@ def generate_ninja(
                         if flag and flag not in lib_compile_flags:
                             lib_compile_flags.append(flag)
                     for inc_dir in dep_lib.public_include_directories:
-                        inc_flag = f"-I{strip_generator_expressions(inc_dir)}"
+                        inc = strip_generator_expressions(inc_dir)
+                        inc_flag = f"-I{_ninja_flag_path(inc)}"
                         if inc_flag not in lib_compile_flags:
                             lib_compile_flags.append(inc_flag)
                     for definition in dep_lib.public_compile_definitions:
@@ -2855,9 +2912,11 @@ def generate_ninja(
                     if imported.cflags:
                         lib_compile_flags.append(imported.cflags)
 
-            # Filter out headers from compileable sources
+            # Filter out headers, .rc, and .manifest files from compileable sources
             compileable_sources: list[str] = [
-                s for s in lib.sources if not is_header(s)
+                s
+                for s in lib.sources
+                if not is_header(s) and not is_rc(s) and not is_manifest(s)
             ]
 
             for source in compileable_sources:
@@ -2892,7 +2951,7 @@ def generate_ninja(
                     for definition in file_props.compile_definitions:
                         source_compile_flags.append(f"-D{definition}")
                     for inc_dir in file_props.include_directories:
-                        source_compile_flags.append(f"-I{inc_dir}")
+                        source_compile_flags.append(f"-I{_ninja_flag_path(inc_dir)}")
                     for d in file_props.object_depends:
                         if d in custom_command_outputs:
                             source_depends.append(f"$builddir/{d}")
@@ -2973,7 +3032,8 @@ def generate_ninja(
                 if flag:
                     compile_flags.append(flag)
             for inc_dir in exe.include_directories:
-                compile_flags.append(f"-I{strip_generator_expressions(inc_dir)}")
+                inc = strip_generator_expressions(inc_dir)
+                compile_flags.append(f"-I{_ninja_flag_path(inc)}")
 
             for lib_name in expanded_compile_libraries:
                 # Check for public compile features from linked libraries
@@ -2986,7 +3046,8 @@ def generate_ninja(
                             compile_flags.append(flag)
                     # Check for public include directories from linked libraries
                     for inc_dir in linked_lib.public_include_directories:
-                        inc_flag = f"-I{strip_generator_expressions(inc_dir)}"
+                        inc = strip_generator_expressions(inc_dir)
+                        inc_flag = f"-I{_ninja_flag_path(inc)}"
                         if inc_flag not in compile_flags:
                             compile_flags.append(inc_flag)
                     # Check for public compile definitions from linked libraries
@@ -3000,10 +3061,14 @@ def generate_ninja(
                     if imported.cflags:
                         compile_flags.append(imported.cflags)
 
-            # Filter out headers from compileable sources
+            # Filter out headers, .rc, and .manifest files from compileable sources
             compileable_sources: list[str] = [
-                s for s in exe.sources if not is_header(s)
+                s
+                for s in exe.sources
+                if not is_header(s) and not is_rc(s) and not is_manifest(s)
             ]
+            rc_sources: list[str] = [s for s in exe.sources if is_rc(s)]
+            manifest_sources: list[str] = [s for s in exe.sources if is_manifest(s)]
 
             for source in compileable_sources:
                 actual_source = source
@@ -3038,7 +3103,7 @@ def generate_ninja(
                     for definition in file_props.compile_definitions:
                         source_compile_flags.append(f"-D{definition}")
                     for inc_dir in file_props.include_directories:
-                        source_compile_flags.append(f"-I{inc_dir}")
+                        source_compile_flags.append(f"-I{_ninja_flag_path(inc_dir)}")
                     for d in file_props.object_depends:
                         if d in custom_command_outputs:
                             source_depends.append(f"$builddir/{d}")
@@ -3089,7 +3154,7 @@ def generate_ninja(
                             exe.link_directories.append(link_dir)
 
             for link_dir in exe.link_directories:
-                link_flags.append(f"-L{link_dir}")
+                link_flags.append(f"-L{_ninja_flag_path(link_dir)}")
             for lib_name in expanded_link_libraries:
                 if lib_name in object_lib_objects:
                     # Object library: add object files directly
@@ -3117,6 +3182,49 @@ def generate_ninja(
                             link_flags.append(lib_name)
                     else:
                         link_flags.append(f"-l{lib_name}")
+
+            # On Windows, compile .rc files to .res and add to link inputs
+            if rc_sources and platform.system() == "Windows":
+                for rc_source in rc_sources:
+                    actual_rc = rc_source
+                    if rc_source in custom_command_outputs:
+                        actual_rc = f"$builddir/{rc_source}"
+                    rc_rel = Path(rc_source)
+                    res_name = f"$builddir/{exe.name}_{rc_rel.stem}.res"
+                    register_output(res_name, exe.defined_file, exe.defined_line)
+                    rc_deps = _rc_manifest_deps(ctx, rc_source)
+                    n.build(
+                        res_name,
+                        "rc",
+                        actual_rc,
+                        implicit=rc_deps if rc_deps else None,
+                    )
+                    link_inputs.append(res_name)
+
+            # On Windows, .manifest as source: auto-generate .rc and use llvm-rc workflow
+            if manifest_sources and platform.system() == "Windows":
+                for manifest in manifest_sources:
+                    manifest_rel = Path(manifest)
+                    rc_stem = f"{exe.name}_{manifest_rel.stem}"
+                    rc_name = f"{rc_stem}.rc"
+                    res_name = f"$builddir/{rc_stem}.res"
+                    rc_path = ctx.build_dir / rc_name
+                    # Path from build dir to manifest (llvm-rc resolves relative to .rc)
+                    rc_manifest_path = Path("..") / manifest
+                    rc_content = (
+                        "#ifndef RT_MANIFEST\n#define RT_MANIFEST 24\n#endif\n"
+                        f'1 RT_MANIFEST "{rc_manifest_path.as_posix()}"\n'
+                    )
+                    rc_path.parent.mkdir(parents=True, exist_ok=True)
+                    rc_path.write_text(rc_content, encoding="utf-8")
+                    register_output(res_name, exe.defined_file, exe.defined_line)
+                    n.build(
+                        res_name,
+                        "rc",
+                        f"$builddir/{rc_name}",
+                        implicit=manifest,
+                    )
+                    link_inputs.append(res_name)
 
             # Link
             exe_name = f"$builddir/{exe.name}{exe_ext}"
@@ -3187,6 +3295,15 @@ def generate_ninja(
 
             install_files: list[str] = []
             for install in ctx.install_targets:
+                destination = install.destination
+                try:
+                    source_dir = ctx.source_dir.resolve()
+                    destination_path = Path(destination).resolve()
+                    if destination_path.is_relative_to(source_dir):
+                        destination = str(destination_path.relative_to(source_dir))
+                except OSError, RuntimeError, ValueError:
+                    pass
+
                 for target in install.targets:
                     src = None
                     if target in exe_outputs:
@@ -3195,13 +3312,15 @@ def generate_ninja(
                         src = lib_outputs[target]
 
                     if src:
-                        dest = f"{install.destination}/{Path(src).name.replace('$builddir/', '')}"
+                        dest = (
+                            f"{destination}/{Path(src).name.replace('$builddir/', '')}"
+                        )
                         register_output(dest, None, 0)
                         n.build(
                             dest,
                             "install_file",
                             src,
-                            variables={"out_dir": install.destination},
+                            variables={"out_dir": destination},
                         )
                         install_files.append(dest)
 
@@ -3294,9 +3413,18 @@ def configure(
         ctx.variables["CMAKE_SYSTEM_NAME"] = "Darwin"
         ctx.variables["UNIX"] = "TRUE"
         ctx.variables["APPLE"] = "TRUE"
+    elif platform.system() == "Windows":
+        ctx.variables["CMAKE_SYSTEM_NAME"] = "Windows"
+        ctx.variables["WIN32"] = "TRUE"
     else:
         ctx.variables["CMAKE_SYSTEM_NAME"] = "Linux"
         ctx.variables["UNIX"] = "TRUE"
+
+    # Set up compilers from variables if provided
+    if "CMAKE_C_COMPILER" in ctx.variables:
+        ctx.c_compiler = ctx.variables["CMAKE_C_COMPILER"]
+    if "CMAKE_CXX_COMPILER" in ctx.variables:
+        ctx.cxx_compiler = ctx.variables["CMAKE_CXX_COMPILER"]
 
     process_commands(commands, ctx, trace, strict)
 
@@ -3312,7 +3440,7 @@ def configure(
             text=True,
         )
         (ctx.build_dir / "compile_commands.json").write_text(compdb)
-    except (subprocess.CalledProcessError, FileNotFoundError):
+    except subprocess.CalledProcessError, FileNotFoundError:
         # Ignore errors if ninja is not found or fails
         pass
 

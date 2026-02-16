@@ -16,7 +16,7 @@ from .syntax import (
 )
 from .parser import Command
 from .targets import Executable, Library
-from .utils import strip_generator_expressions
+from .utils import resolve_cmake_path, strip_generator_expressions, to_posix_path
 
 
 def handle_cmake_policy(
@@ -32,12 +32,12 @@ def handle_cmake_policy(
             value = args[2].upper()
             if value == "OLD":
                 ctx.print_warning(
-                    f"cmake_policy(SET {policy} OLD) is called, but cninja always uses NEW behavior for all policies",
+                    f"cmake_policy(SET {policy} OLD) is called, but cja always uses NEW behavior for all policies",
                     cmd.line,
                 )
         elif subcommand == "GET" and len(args) >= 3:
             var_name = args[2]
-            # cninja always uses NEW behavior
+            # cja always uses NEW behavior
             ctx.variables[var_name] = "NEW"
         elif subcommand in ("PUSH", "POP", "VERSION"):
             pass
@@ -113,9 +113,7 @@ def handle_include_directories(
         expanded = strip_generator_expressions(expanded)
         if not expanded:
             continue
-        if not Path(expanded).is_absolute():
-            expanded = str(ctx.current_source_dir / expanded)
-        dirs.append(expanded)
+        dirs.append(resolve_cmake_path(expanded, ctx.current_source_dir))
 
     if not dirs:
         return
@@ -216,8 +214,7 @@ def handle_target_link_directories(
 
                 if not expanded:
                     continue
-                if not Path(expanded).is_absolute():
-                    expanded = str(ctx.current_source_dir / expanded)
+                expanded = resolve_cmake_path(expanded, ctx.current_source_dir)
                 if visibility == "PUBLIC":
                     public_dirs.append(expanded)
                     target_dirs.append(expanded)
@@ -332,8 +329,7 @@ def handle_target_include_directories(
                 expanded = strip_generator_expressions(expanded)
                 if not expanded:
                     continue
-                if not Path(expanded).is_absolute():
-                    expanded = str(ctx.current_source_dir / expanded)
+                expanded = resolve_cmake_path(expanded, ctx.current_source_dir)
                 if visibility == "PUBLIC":
                     public_dirs.append(expanded)
                     target_dirs.append(expanded)
@@ -434,8 +430,7 @@ def handle_set_target_properties(
                     dirs = prop_value.split(";")
                     for d in dirs:
                         expanded = ctx.expand_variables(d, strict, cmd.line)
-                        if not Path(expanded).is_absolute():
-                            expanded = str(ctx.current_source_dir / expanded)
+                        expanded = resolve_cmake_path(expanded, ctx.current_source_dir)
                         if lib:
                             lib.public_include_directories.append(expanded)
                         elif exe:
@@ -528,8 +523,7 @@ def handle_set_property(
             if prop_name == "INTERFACE_INCLUDE_DIRECTORIES":
                 for value in prop_values:
                     expanded = ctx.expand_variables(value, strict, cmd.line)
-                    if not Path(expanded).is_absolute():
-                        expanded = str(ctx.current_source_dir / expanded)
+                    expanded = resolve_cmake_path(expanded, ctx.current_source_dir)
                     if lib:
                         if append_mode:
                             lib.public_include_directories.append(expanded)
@@ -575,8 +569,9 @@ def handle_set_property(
         # Source file property
         for source_file in scope_args:
             expanded_filename = ctx.expand_variables(source_file, strict, cmd.line)
-            if not Path(expanded_filename).is_absolute():
-                expanded_filename = str(ctx.current_source_dir / expanded_filename)
+            expanded_filename = resolve_cmake_path(
+                expanded_filename, ctx.current_source_dir
+            )
 
             if expanded_filename not in ctx.source_file_properties:
                 ctx.source_file_properties[expanded_filename] = SourceFileProperties()
@@ -591,8 +586,7 @@ def handle_set_property(
             elif prop_name == "INCLUDE_DIRECTORIES":
                 for value in prop_values:
                     expanded = ctx.expand_variables(value, strict, cmd.line)
-                    if not Path(expanded).is_absolute():
-                        expanded = str(ctx.current_source_dir / expanded)
+                    expanded = resolve_cmake_path(expanded, ctx.current_source_dir)
                     if append_mode:
                         file_props.include_directories.append(expanded)
                     else:
@@ -613,9 +607,7 @@ def handle_set_property(
         # scope_args can be empty (current directory) or contain a path
         dirs = scope_args if scope_args else [str(ctx.current_source_dir)]
         for d in dirs:
-            abs_dir = d
-            if not Path(abs_dir).is_absolute():
-                abs_dir = str(ctx.current_source_dir / abs_dir)
+            abs_dir = resolve_cmake_path(d, ctx.current_source_dir)
 
             if abs_dir not in ctx.directory_properties:
                 ctx.directory_properties[abs_dir] = {}
@@ -729,8 +721,9 @@ def handle_get_property(
         if scope_args:
             source_file = scope_args[0]
             expanded_filename = ctx.expand_variables(source_file, strict, cmd.line)
-            if not Path(expanded_filename).is_absolute():
-                expanded_filename = str(ctx.current_source_dir / expanded_filename)
+            expanded_filename = resolve_cmake_path(
+                expanded_filename, ctx.current_source_dir
+            )
 
             value = ""
             if expanded_filename in ctx.source_file_properties:
@@ -852,7 +845,7 @@ def handle_add_library(
             # For now, just register the alias in imported_targets or something?
             # Or just ignore it if we don't need it.
             # CMake aliases are just pointers to other targets.
-            # In cninja, we can probably just ignore them or add them to ctx.libraries
+            # In cja, we can probably just ignore them or add them to ctx.libraries
             # as a copy if we want to support linking against the alias.
             lib = ctx.get_library(target_name)
             if lib:
@@ -1260,9 +1253,9 @@ def handle_set(
             # Extract the value (should be NEW or OLD)
             policy_value = values[0] if values else ""
             if policy_value == "OLD":
-                # cninja always uses NEW behavior, warn about OLD
+                # cja always uses NEW behavior, warn about OLD
                 ctx.print_warning(
-                    f"{var_name} is set to OLD, but cninja always uses NEW behavior for all policies",
+                    f"{var_name} is set to OLD, but cja always uses NEW behavior for all policies",
                     cmd.line,
                 )
             # For NEW, silently accept (this is what we want)
@@ -1781,7 +1774,7 @@ def handle_file(
                         str(ctx.current_source_dir / expanded_pattern)
                     )
                 matched.sort()
-                matched_files.extend(matched)
+                matched_files.extend(to_posix_path(m) for m in matched)
             ctx.variables[var_name] = ";".join(matched_files)
 
     elif subcommand == "REMOVE_RECURSE":

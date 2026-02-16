@@ -1,7 +1,7 @@
 """Test for shell redirection in add_custom_command."""
 
 from pathlib import Path
-from cninja.generator import configure
+from cja.generator import configure
 
 
 def test_custom_command_redirection(tmp_path: Path) -> None:

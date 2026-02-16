@@ -2,10 +2,11 @@
 
 from pathlib import Path
 import subprocess
+import sys
 import pytest
 
-from cninja.generator import BuildContext, process_commands
-from cninja.parser import Command
+from cja.generator import BuildContext, process_commands
+from cja.parser import Command
 
 
 def test_find_package_pkgconfig() -> None:
@@ -175,6 +176,9 @@ def test_pkg_check_modules_imported_target() -> None:
         assert target.libs is not None
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="pkg-config not typically available on Windows"
+)
 def test_pkg_check_modules_output(capsys, tmp_path):
     """Test the output of pkg_check_modules."""
     ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path)

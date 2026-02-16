@@ -4,8 +4,8 @@ from pathlib import Path
 import pytest
 import platform
 
-from cninja.generator import BuildContext, process_commands
-from cninja.parser import Command
+from cja.generator import BuildContext, process_commands
+from cja.parser import Command
 
 
 def test_find_library_basic(tmp_path: Path) -> None:
@@ -15,6 +15,8 @@ def test_find_library_basic(tmp_path: Path) -> None:
 
     if platform.system() == "Darwin":
         lib_name = "libtest.dylib"
+    elif platform.system() == "Windows":
+        lib_name = "libtest.lib"
     else:
         lib_name = "libtest.so"
 

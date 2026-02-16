@@ -1,6 +1,10 @@
-from cninja.generator import BuildContext, process_commands, generate_ninja
-from cninja.parser import Command
+from cja.generator import BuildContext, process_commands, generate_ninja
+from cja.parser import Command
 import pytest
+import platform
+
+EXE_EXT = ".exe" if platform.system() == "Windows" else ""
+LIB_EXT = ".lib" if platform.system() == "Windows" else ".a"
 
 
 def test_public_flags_propagation_to_library(tmp_path):
@@ -71,10 +75,10 @@ def test_non_target_library_propagation(tmp_path):
 
     content = ninja_file.read_text()
     # app link command should have -lfreetype
-    assert "build $builddir/app: link_cxx" in content
+    assert f"build $builddir/app{EXE_EXT}: link_cxx" in content
     lines = content.splitlines()
     for i, line in enumerate(lines):
-        if "build $builddir/app: link_cxx" in line:
+        if f"build $builddir/app{EXE_EXT}: link_cxx" in line:
             assert "-lfreetype" in lines[i + 1]
             break
     else:
@@ -117,10 +121,10 @@ def test_static_private_link_only_propagation(tmp_path):
     else:
         pytest.fail("Could not find build statement for app_main.o")
 
-    # app link command SHOULD have lib2.a
+    # app link command SHOULD have lib2 static library
     found_app_link = False
     for i, line in enumerate(content.splitlines()):
-        if "build $builddir/app: link_cxx" in line:
+        if f"build $builddir/app{EXE_EXT}: link_cxx" in line:
             found_app_link = True
             # Check this line and subsequent lines (Ninja uses $ for continuation)
             full_build_stmt = line
@@ -128,7 +132,7 @@ def test_static_private_link_only_propagation(tmp_path):
             while full_build_stmt.endswith("$") and j + 1 < len(content.splitlines()):
                 j += 1
                 full_build_stmt += content.splitlines()[j]
-            assert "$builddir/liblib2.a" in full_build_stmt
+            assert f"$builddir/liblib2{LIB_EXT}" in full_build_stmt
             break
     assert found_app_link, "Could not find build statement for app"
 

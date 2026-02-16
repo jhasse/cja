@@ -19,7 +19,7 @@ def test_cmake_current_list_file(tmp_path: Path) -> None:
     sub_cmake = sub_dir / "CMakeLists.txt"
     sub_cmake.write_text("set(SUB_FILE ${CMAKE_CURRENT_LIST_FILE} PARENT_SCOPE)")
 
-    from cninja.generator import configure
+    from cja.generator import configure
 
     ctx = configure(source_dir, "build")
 
@@ -40,7 +40,7 @@ def test_print_location(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> N
 
     (source_dir / "CMakeLists.txt").write_text("add_subdirectory(subdir)")
 
-    from cninja.generator import configure
+    from cja.generator import configure
 
     configure(source_dir, "build")
 

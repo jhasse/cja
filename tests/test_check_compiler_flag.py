@@ -2,8 +2,8 @@
 
 from pathlib import Path
 
-from cninja.generator import BuildContext, process_commands
-from cninja.parser import Command
+from cja.generator import BuildContext, process_commands
+from cja.parser import Command
 
 
 def test_check_cxx_compiler_flag_supported() -> None:

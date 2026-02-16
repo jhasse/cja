@@ -1,4 +1,4 @@
-"""Command-line interface for cninja."""
+"""Command-line interface for cja."""
 
 import argparse
 import subprocess
@@ -148,9 +148,9 @@ def _run_ninja(args: argparse.Namespace, target: str | None) -> int:
 
 
 def main() -> int:
-    """Main entry point for cninja CLI."""
+    """Main entry point for cja CLI."""
     parser = argparse.ArgumentParser(
-        prog="cninja",
+        prog="cja",
         description="A CMake reimplementation in Python with Ninja generator",
     )
 

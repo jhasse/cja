@@ -1,11 +1,12 @@
 """Tests for find_program command."""
 
 from pathlib import Path
+import os
 
 import pytest
 
-from cninja.generator import BuildContext, process_commands
-from cninja.parser import Command
+from cja.generator import BuildContext, process_commands
+from cja.parser import Command
 
 
 def test_find_program_basic() -> None:
@@ -15,7 +16,7 @@ def test_find_program_basic() -> None:
     process_commands(commands, ctx)
 
     assert "PYTHON" in ctx.variables
-    assert ctx.variables["PYTHON"].endswith(("python3", "python"))
+    assert os.path.basename(ctx.variables["PYTHON"]).lower().startswith(("python3", "python"))
     assert "NOTFOUND" not in ctx.variables["PYTHON"]
 
 

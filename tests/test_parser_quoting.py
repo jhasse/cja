@@ -1,6 +1,6 @@
 """Test CMake-like argument parsing."""
 
-from cninja.parser import parse
+from cja.parser import parse
 
 
 def test_mixed_quoting() -> None:

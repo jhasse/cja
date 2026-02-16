@@ -1,8 +1,8 @@
 """Integration tests for fixing infinite recursion bugs."""
 
 from pathlib import Path
-from cninja.generator import BuildContext, process_commands
-from cninja.parser import Command
+from cja.generator import BuildContext, process_commands
+from cja.parser import Command
 
 
 def test_find_path_no_recursion(tmp_path: Path) -> None:

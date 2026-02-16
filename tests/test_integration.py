@@ -1,13 +1,17 @@
-"""Integration tests for cninja."""
+"""Integration tests for cja."""
 
 import shutil
 import subprocess
+import platform
+import pytest
 from pathlib import Path
 
-from cninja import configure
+from cja import configure
 
 
 EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
+EXE_EXT = ".exe" if platform.system() == "Windows" else ""
+LIB_EXT = ".lib" if platform.system() == "Windows" else ".a"
 
 
 def test_hello_example(tmp_path: Path) -> None:
@@ -34,7 +38,7 @@ def test_hello_example(tmp_path: Path) -> None:
 
     # Check executable was created in build dir
     build_dir = source_dir / "build"
-    hello_exe = build_dir / "hello"
+    hello_exe = build_dir / f"hello{EXE_EXT}"
     assert hello_exe.exists()
 
     # Run the executable and check output
@@ -71,12 +75,12 @@ def test_libmath_example(tmp_path: Path) -> None:
 
     # Check library and executable were created in build dir
     build_dir = source_dir / "build"
-    assert (build_dir / "libmath.a").exists()
-    assert (build_dir / "calculator").exists()
+    assert (build_dir / f"libmath{LIB_EXT}").exists()
+    assert (build_dir / f"calculator{EXE_EXT}").exists()
 
     # Run the executable and check output
     result = subprocess.run(
-        [str(build_dir / "calculator")],
+        [str(build_dir / f"calculator{EXE_EXT}")],
         capture_output=True,
         text=True,
     )
@@ -100,7 +104,7 @@ def test_objlib_example(tmp_path: Path) -> None:
 
     # Verify no .a file is created for OBJECT library
     content = build_ninja.read_text()
-    assert "libutils.a" not in content
+    assert f"libutils{LIB_EXT}" not in content
 
     # Build with ninja (run from source dir)
     result = subprocess.run(
@@ -113,14 +117,64 @@ def test_objlib_example(tmp_path: Path) -> None:
 
     # Check executable was created in build dir (but no .a file)
     build_dir = source_dir / "build"
-    assert (build_dir / "app").exists()
-    assert not (build_dir / "libutils.a").exists()
+    assert (build_dir / f"app{EXE_EXT}").exists()
+    assert not (build_dir / f"libutils{LIB_EXT}").exists()
 
     # Run the executable and check output
     result = subprocess.run(
-        [str(build_dir / "app")],
+        [str(build_dir / f"app{EXE_EXT}")],
         capture_output=True,
         text=True,
     )
     assert result.returncode == 0
     assert "Value: 42" in result.stdout
+
+
+def test_manifest_example(tmp_path: Path) -> None:
+    """Test building the manifest example with .manifest as source (auto .rc + llvm-rc)."""
+    source_dir = tmp_path / "manifest"
+    shutil.copytree(EXAMPLES_DIR / "manifest", source_dir)
+
+    # Configure
+    configure(source_dir, "build")
+
+    build_ninja = source_dir / "build.ninja"
+    assert build_ninja.exists()
+
+    # Build with ninja
+    result = subprocess.run(
+        ["ninja"],
+        cwd=source_dir,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, f"ninja failed: {result.stderr}"
+
+    build_dir = source_dir / "build"
+    app_exe = build_dir / f"app{EXE_EXT}"
+    assert app_exe.exists()
+
+    # Run and verify output
+    result = subprocess.run(
+        [str(app_exe)],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    assert "Hello from manifest example" in result.stdout
+
+
+def test_manifest_example_ninja_content(tmp_path: Path) -> None:
+    """Verify manifest example generates rc rule, .res, and auto-generated .rc (Windows)."""
+    source_dir = tmp_path / "manifest"
+    shutil.copytree(EXAMPLES_DIR / "manifest", source_dir)
+    configure(source_dir, "build")
+
+    content = (source_dir / "build.ninja").read_text()
+    if platform.system() == "Windows":
+        assert 'rule rc' in content
+        assert "app_app.res" in content
+        # Auto-generated .rc references manifest
+        generated_rc = source_dir / "build" / "app_app.rc"
+        assert generated_rc.exists()
+        assert "RT_MANIFEST" in generated_rc.read_text()

@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from cninja.generator import BuildContext, process_commands
-from cninja.parser import Command
+from cja.generator import BuildContext, process_commands
+from cja.parser import Command
 
 
 def test_include_unknown_module_strict(capsys: pytest.CaptureFixture[str]) -> None:

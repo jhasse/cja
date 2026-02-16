@@ -1,8 +1,8 @@
 """Tests for add_subdirectory command."""
 
 from pathlib import Path
-from cninja.generator import BuildContext, process_commands
-from cninja.parser import Command
+from cja.generator import BuildContext, process_commands
+from cja.parser import Command
 
 
 def test_add_subdirectory(tmp_path: Path) -> None:
@@ -62,7 +62,7 @@ def test_add_subdirectory_ninja(tmp_path: Path) -> None:
     (sub_dir / "CMakeLists.txt").write_text("add_executable(sub_exe main.c)")
     (sub_dir / "main.c").write_text("int main() { return 0; }")
 
-    from cninja.generator import configure
+    from cja.generator import configure
 
     configure(source_dir, "build")
 

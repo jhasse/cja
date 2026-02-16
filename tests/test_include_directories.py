@@ -3,8 +3,8 @@
 import shutil
 from pathlib import Path
 
-from cninja.generator import BuildContext, configure, process_commands
-from cninja.parser import Command
+from cja.generator import BuildContext, configure, process_commands
+from cja.parser import Command
 
 EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
 

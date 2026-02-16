@@ -2,7 +2,7 @@
 
 import platform
 from pathlib import Path
-from cninja.generator import configure
+from cja.generator import configure
 
 
 def test_cmake_system_name(tmp_path: Path) -> None:
@@ -13,5 +13,10 @@ def test_cmake_system_name(tmp_path: Path) -> None:
 
     ctx = configure(source_dir, "build")
 
-    expected_system_name = "Darwin" if platform.system() == "Darwin" else "Linux"
+    if platform.system() == "Darwin":
+        expected_system_name = "Darwin"
+    elif platform.system() == "Windows":
+        expected_system_name = "Windows"
+    else:
+        expected_system_name = "Linux"
     assert ctx.variables["CMAKE_SYSTEM_NAME"] == expected_system_name

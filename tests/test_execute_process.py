@@ -1,11 +1,10 @@
 """Tests for execute_process command."""
 
 from pathlib import Path
-
+import sys
 import pytest
-
-from cninja.generator import BuildContext, process_commands
-from cninja.parser import Command
+from cja.generator import BuildContext, process_commands
+from cja.parser import Command
 
 
 def test_execute_process_basic() -> None:
@@ -14,7 +13,14 @@ def test_execute_process_basic() -> None:
     commands = [
         Command(
             name="execute_process",
-            args=["COMMAND", "echo", "hello", "OUTPUT_VARIABLE", "OUT"],
+            args=[
+                "COMMAND",
+                sys.executable,
+                "-c",
+                "print('hello')",
+                "OUTPUT_VARIABLE",
+                "OUT",
+            ],
             line=1,
         )
     ]
@@ -30,7 +36,14 @@ def test_execute_process_result_variable() -> None:
     commands = [
         Command(
             name="execute_process",
-            args=["COMMAND", "true", "RESULT_VARIABLE", "RES"],
+            args=[
+                "COMMAND",
+                sys.executable,
+                "-c",
+                "import sys; sys.exit(0)",
+                "RESULT_VARIABLE",
+                "RES",
+            ],
             line=1,
         )
     ]
@@ -46,8 +59,12 @@ def test_execute_process_strip_whitespace() -> None:
         Command(
             name="execute_process",
             args=[
-                "COMMAND", "echo", "hello",
-                "OUTPUT_VARIABLE", "OUT",
+                "COMMAND",
+                sys.executable,
+                "-c",
+                "print('hello')",
+                "OUTPUT_VARIABLE",
+                "OUT",
                 "OUTPUT_STRIP_TRAILING_WHITESPACE",
             ],
             line=1,
@@ -69,9 +86,14 @@ def test_execute_process_working_directory(tmp_path: Path) -> None:
         Command(
             name="execute_process",
             args=[
-                "COMMAND", "pwd",
-                "WORKING_DIRECTORY", str(subdir),
-                "OUTPUT_VARIABLE", "OUT",
+                "COMMAND",
+                sys.executable,
+                "-c",
+                "import os\nprint(os.getcwd())",
+                "WORKING_DIRECTORY",
+                str(subdir),
+                "OUTPUT_VARIABLE",
+                "OUT",
                 "OUTPUT_STRIP_TRAILING_WHITESPACE",
             ],
             line=1,
@@ -89,8 +111,12 @@ def test_execute_process_error_variable() -> None:
         Command(
             name="execute_process",
             args=[
-                "COMMAND", "sh", "-c", "echo error >&2",
-                "ERROR_VARIABLE", "ERR",
+                "COMMAND",
+                sys.executable,
+                "-c",
+                "import sys\nprint('error', file=sys.stderr)",
+                "ERROR_VARIABLE",
+                "ERR",
                 "ERROR_STRIP_TRAILING_WHITESPACE",
             ],
             line=1,
@@ -108,8 +134,10 @@ def test_execute_process_command_not_found() -> None:
         Command(
             name="execute_process",
             args=[
-                "COMMAND", "nonexistent_command_12345",
-                "RESULT_VARIABLE", "RES",
+                "COMMAND",
+                "nonexistent_command_12345",
+                "RESULT_VARIABLE",
+                "RES",
             ],
             line=1,
         )
@@ -119,7 +147,9 @@ def test_execute_process_command_not_found() -> None:
     assert ctx.variables["RES"] == "1"
 
 
-def test_execute_process_command_error_is_fatal_any(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_execute_process_command_error_is_fatal_any(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """COMMAND_ERROR_IS_FATAL ANY should raise on non-zero exit."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
 

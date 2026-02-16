@@ -1,7 +1,7 @@
 """Tests for CMAKE_CURRENT_LIST_DIR variable."""
 
 from pathlib import Path
-from cninja.generator import configure
+from cja.generator import configure
 
 
 def test_cmake_current_list_dir(tmp_path: Path) -> None:

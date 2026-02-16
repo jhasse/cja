@@ -1,9 +1,12 @@
 """Tests for install command."""
 
 from pathlib import Path
+import platform
 
-from cninja.generator import BuildContext, process_commands, generate_ninja
-from cninja.parser import Command
+from cja.generator import BuildContext, process_commands, generate_ninja
+from cja.parser import Command
+
+EXE_EXT = ".exe" if platform.system() == "Windows" else ""
 
 
 def test_install_targets(tmp_path: Path) -> None:
@@ -39,19 +42,20 @@ def test_install_targets(tmp_path: Path) -> None:
     generate_ninja(ctx, ninja_path, "build")
 
     ninja_content = ninja_path.read_text()
+    rel_dest = str(dest_path.relative_to(tmp_path))
 
     # Check for install_file rule
     assert "rule install_file" in ninja_content
 
     # Check for individual install build statement
     # src is $builddir/myapp
-    expected_dest = f"{dest_path}/myapp"
+    expected_dest = f"{rel_dest}/myapp{EXE_EXT}"
     assert "install_file" in ninja_content
     assert str(expected_dest) in ninja_content
-    assert "$builddir/myapp" in ninja_content
+    assert f"$builddir/myapp{EXE_EXT}" in ninja_content
     # Check for out_dir variable (may be wrapped across lines due to long paths)
     assert "out_dir =" in ninja_content
-    assert str(dest_path) in ninja_content
+    assert rel_dest in ninja_content
 
     # Check for phony install target
     assert "build install: phony" in ninja_content
