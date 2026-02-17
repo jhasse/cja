@@ -38,6 +38,7 @@ def cmd_configure(args: argparse.Namespace) -> int:
             variables=variables if variables else None,
             trace=args.trace,
             strict=args.strict,
+            regenerate_during_build=args.regenerate_during_build,
         )
         return 0
     except FileNotFoundError as e:
@@ -189,6 +190,12 @@ def main() -> int:
         nargs="+",
         metavar="command",
         help="CMake-like command mode (e.g., -E make_directory dir...)",
+    )
+
+    parser.add_argument(
+        "--regenerate-during-build",
+        action="store_true",
+        help=argparse.SUPPRESS,
     )
 
     # Build subcommand

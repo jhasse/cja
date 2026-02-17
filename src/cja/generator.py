@@ -2660,7 +2660,7 @@ def generate_ninja(
                     return f"-D{name}="
                 return f"-D{name}={value}"
 
-            reconfigure_cmd_parts = ["cja"]
+            reconfigure_cmd_parts = ["cja", "--regenerate-during-build"]
             if builddir != "build":
                 reconfigure_cmd_parts += ["-B", "$builddir"]
             for var_name in sorted(ctx.cache_variables):
@@ -2682,7 +2682,6 @@ def generate_ninja(
                 "reconfigure",
                 command=reconfigure_cmd,
                 generator=True,
-                restat=True,
                 pool="console",
             )
             n.newline()
@@ -3363,6 +3362,7 @@ def configure(
     variables: dict[str, str] | None = None,
     trace: bool = False,
     strict: bool = False,
+    regenerate_during_build: bool = False,
 ) -> BuildContext:
     """Configure a CMake project and generate build.ninja.
 
@@ -3372,6 +3372,7 @@ def configure(
         variables: Optional dict of variables to set (e.g., from -D flags)
         trace: If True, print each command as it's processed
         strict: If True, error on unsupported commands instead of ignoring them
+        regenerate_during_build: If True, we were triggered during build
     """
     source_dir = source_dir.resolve()
     cmake_file = source_dir / "CMakeLists.txt"
@@ -3430,6 +3431,7 @@ def configure(
 
     # Generate ninja manifest in source directory (named after build dir)
     output_path = source_dir / f"{build_dir}.ninja"
+    manifest_existed = output_path.exists()
     generate_ninja(ctx, output_path, build_dir, strict=strict)
 
     # Generate compilation database
@@ -3443,6 +3445,24 @@ def configure(
     except subprocess.CalledProcessError, FileNotFoundError:
         # Ignore errors if ninja is not found or fails
         pass
+
+    # Don't cause unnecessary rebuilds when we the users runs cja explicitly:
+    if not regenerate_during_build and manifest_existed:
+        restat_cmd = [
+            "ninja",
+            "-t",
+            "restat",
+            f"--builddir={build_dir}",
+            f"{build_dir}.ninja",
+        ]
+        try:
+            subprocess.check_output(
+                restat_cmd, stderr=subprocess.STDOUT
+            )
+        except subprocess.CalledProcessError as e:
+            print(
+                f"{colored('warning:', 'magenta', attrs=['bold'])} `{' '.join(restat_cmd)}` failed with exit code {e.returncode}:\n{e.output.decode().rstrip()}"
+            )
 
     print(f"{colored('Configured', 'green', attrs=['bold'])} {build_dir}.ninja")
     return ctx
