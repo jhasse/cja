@@ -117,3 +117,39 @@ def test_target_include_directories_public_propagates(tmp_path: Path) -> None:
     ninja_content = build_ninja.read_text()
     # The -Imyinclude should appear for the calculator executable too
     assert f"-I{source_dir}/myinclude" in ninja_content
+
+
+def test_target_include_directories_build_install_interface(capsys) -> None:
+    """BUILD_INTERFACE entries should be used and INSTALL_INTERFACE ignored."""
+    ctx = BuildContext(source_dir=Path("/project"), build_dir=Path("/project/build"))
+    ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = "/project/src"
+    ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = "/project/build"
+    ctx.variables["CMAKE_INSTALL_INCLUDEDIR"] = "include"
+
+    commands = [
+        Command(name="add_library", args=["box2d", "lib.c"], line=1),
+        Command(
+            name="target_include_directories",
+            args=[
+                "box2d",
+                "PUBLIC",
+                "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../include>",
+                "$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>",
+                "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>",
+                "PRIVATE",
+                "${CMAKE_CURRENT_SOURCE_DIR}",
+            ],
+            line=2,
+        ),
+    ]
+    process_commands(commands, ctx)
+
+    lib = ctx.get_library("box2d")
+    assert lib is not None
+    assert "/project/include" in lib.public_include_directories
+    assert "/project/build" in lib.public_include_directories
+    assert "/project/src" in lib.include_directories
+    assert all("include" != p for p in lib.public_include_directories)
+
+    captured = capsys.readouterr()
+    assert "generator expressions in target_include_directories are not yet supported" not in captured.err

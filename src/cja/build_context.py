@@ -182,8 +182,9 @@ class BuildContext:
         for _ in range(10):
             # Expand $ENV{VAR} first
             expanded = re.sub(r"\$ENV\{(\w+)\}", replace_env, result)
-            # Then ${VAR}
-            expanded = re.sub(r"\$\{(\w+)\}", replace_normal, expanded)
+            # Then ${VAR}; match innermost braces first to support nested names like
+            # ${CPM_PACKAGE_${PACKAGE}_SOURCE_DIR}.
+            expanded = re.sub(r"\$\{([^{}]+)\}", replace_normal, expanded)
             if expanded == result:
                 break
             result = expanded

@@ -91,3 +91,37 @@ def test_set_expands_variable_name() -> None:
     ]
     process_commands(commands, ctx)
     assert ctx.variables["FOO"] == "bar"
+
+
+def test_set_expands_nested_variable_reference() -> None:
+    """Nested variable references like ${A_${B}_C} should expand in passes."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="set", args=["PACKAGE", "Box2D"], line=1),
+        Command(name="set", args=["CPM_PACKAGE_Box2D_SOURCE_DIR", "/tmp/box2d"], line=2),
+        Command(
+            name="set",
+            args=["OUT", "${CPM_PACKAGE_${PACKAGE}_SOURCE_DIR}"],
+            line=3,
+        ),
+    ]
+    process_commands(commands, ctx)
+    assert ctx.variables["OUT"] == "/tmp/box2d"
+
+
+def test_set_cache_persists_outside_function() -> None:
+    """set(... CACHE ...) inside a function should persist globally."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="function", args=["set_cached"], line=1),
+        Command(
+            name="set",
+            args=["CACHED_VAR", "cached-value", "CACHE", "STRING", "doc"],
+            line=2,
+        ),
+        Command(name="endfunction", args=[], line=3),
+        Command(name="set_cached", args=[], line=4),
+    ]
+    process_commands(commands, ctx)
+    assert ctx.variables["CACHED_VAR"] == "cached-value"
+    assert "CACHED_VAR" in ctx.cache_variables

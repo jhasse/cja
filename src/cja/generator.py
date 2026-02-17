@@ -325,6 +325,7 @@ def handle_add_subdirectory(
             saved_current_list_file = ctx.current_list_file
             saved_parent_directory = ctx.parent_directory
             saved_vars = ctx.variables.copy()
+            saved_parent_scope_vars = ctx.parent_scope_vars
             ctx.parent_scope_vars = {}
 
             # Update current_source_dir for the subdirectory
@@ -343,6 +344,7 @@ def handle_add_subdirectory(
             finally:
                 # Apply PARENT_SCOPE changes
                 parent_scope_updates = ctx.parent_scope_vars
+                ctx.parent_scope_vars = saved_parent_scope_vars
 
                 # Restore state
                 ctx.current_source_dir = saved_current_source_dir
@@ -682,6 +684,7 @@ def process_commands(
                         saved_current_list_file = ctx.current_list_file
                         saved_parent_directory = ctx.parent_directory
                         saved_vars = ctx.variables.copy()
+                        saved_parent_scope_vars = ctx.parent_scope_vars
                         ctx.parent_scope_vars = {}
 
                         ctx.current_source_dir = actual_src_dir
@@ -699,18 +702,23 @@ def process_commands(
                             saved_current_list_file: Path = saved_current_list_file,
                             saved_parent_directory: str = saved_parent_directory,
                             saved_vars: dict[str, str] = saved_vars,
+                            saved_parent_scope_vars: dict[str, str | None] = saved_parent_scope_vars,
                         ) -> None:
+                            cache_updates = {
+                                k: v for k, v in ctx.variables.items() if k in ctx.cache_variables
+                            }
                             parent_scope_updates = ctx.parent_scope_vars
+                            ctx.parent_scope_vars = saved_parent_scope_vars
                             ctx.current_source_dir = saved_current_source_dir
                             ctx.current_list_file = saved_current_list_file
                             ctx.parent_directory = saved_parent_directory
                             ctx.variables = saved_vars
+                            ctx.variables.update(cache_updates)
                             for var, val in parent_scope_updates.items():
                                 if val is None:
                                     ctx.variables.pop(var, None)
                                 else:
                                     ctx.variables[var] = val
-                            ctx.parent_scope_vars.clear()
                             ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = str(
                                 saved_current_source_dir
                             )
@@ -955,6 +963,7 @@ def process_commands(
                         saved_current_list_file = ctx.current_list_file
                         saved_parent_directory = ctx.parent_directory
                         saved_vars = ctx.variables.copy()
+                        saved_parent_scope_vars = ctx.parent_scope_vars
                         ctx.parent_scope_vars = {}
 
                         ctx.current_source_dir = sub_source_dir
@@ -972,18 +981,23 @@ def process_commands(
                             saved_current_list_file: Path = saved_current_list_file,
                             saved_parent_directory: str = saved_parent_directory,
                             saved_vars: dict[str, str] = saved_vars,
+                            saved_parent_scope_vars: dict[str, str | None] = saved_parent_scope_vars,
                         ) -> None:
+                            cache_updates = {
+                                k: v for k, v in ctx.variables.items() if k in ctx.cache_variables
+                            }
                             parent_scope_updates = ctx.parent_scope_vars
+                            ctx.parent_scope_vars = saved_parent_scope_vars
                             ctx.current_source_dir = saved_current_source_dir
                             ctx.current_list_file = saved_current_list_file
                             ctx.parent_directory = saved_parent_directory
                             ctx.variables = saved_vars
+                            ctx.variables.update(cache_updates)
                             for var, val in parent_scope_updates.items():
                                 if val is None:
                                     ctx.variables.pop(var, None)
                                 else:
                                     ctx.variables[var] = val
-                            ctx.parent_scope_vars.clear()
                             ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = str(
                                 saved_current_source_dir
                             )
@@ -2622,7 +2636,8 @@ int main() {{
                     extra_args = args[len(func_def.params) :]
                     ctx.variables["ARGN"] = ";".join(extra_args)
 
-                    ctx.parent_scope_vars.clear()
+                    saved_parent_scope_vars = ctx.parent_scope_vars
+                    ctx.parent_scope_vars = {}
 
                     ctx.current_list_file = func_def.defining_file
                     ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(
@@ -2637,17 +2652,22 @@ int main() {{
                         saved_current_source_dir: Path = saved_current_source_dir,
                         saved_current_list_file: Path = saved_current_list_file,
                         saved_parent_directory: str = saved_parent_directory,
+                        saved_parent_scope_vars: dict[str, str | None] = saved_parent_scope_vars,
                     ) -> None:
+                        cache_updates = {
+                            k: v for k, v in ctx.variables.items() if k in ctx.cache_variables
+                        }
                         for var_name, var_value in ctx.parent_scope_vars.items():
                             if var_value is None:
                                 saved_vars.pop(var_name, None)
                             else:
                                 saved_vars[var_name] = var_value
-                        ctx.parent_scope_vars.clear()
+                        ctx.parent_scope_vars = saved_parent_scope_vars
                         ctx.current_source_dir = saved_current_source_dir
                         ctx.current_list_file = saved_current_list_file
                         ctx.parent_directory = saved_parent_directory
                         ctx.variables = saved_vars
+                        ctx.variables.update(cache_updates)
                         ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = str(
                             saved_current_source_dir
                         )

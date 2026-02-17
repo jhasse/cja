@@ -20,6 +20,13 @@ from .targets import Executable, Library
 from .utils import resolve_cmake_path, strip_generator_expressions, to_posix_path
 
 
+def _is_supported_include_dir_genex(value: str) -> bool:
+    """Return True for include-dir generator expressions we intentionally support."""
+    return bool(
+        re.fullmatch(r"\$<(BUILD_INTERFACE|INSTALL_INTERFACE):[^>]*>", value)
+    )
+
+
 def handle_cmake_policy(
     ctx: BuildContext,
     cmd: Command,
@@ -323,14 +330,17 @@ def handle_target_include_directories(
                 # Expand variables and resolve relative paths
                 expanded = ctx.expand_variables(arg, strict, cmd.line)
                 if "$<" in expanded:
-                    ctx.print_warning(
-                        f"generator expressions in target_include_directories are not yet supported: {arg}",
-                        cmd.line,
-                    )
+                    if not _is_supported_include_dir_genex(expanded):
+                        ctx.print_warning(
+                            f"generator expressions in target_include_directories are not yet supported: {arg}",
+                            cmd.line,
+                        )
                 expanded = strip_generator_expressions(expanded)
                 if not expanded:
                     continue
                 expanded = resolve_cmake_path(expanded, ctx.current_source_dir)
+                if Path(expanded).is_absolute():
+                    expanded = str(Path(expanded).resolve())
                 if visibility == "PUBLIC":
                     public_dirs.append(expanded)
                     target_dirs.append(expanded)
@@ -1321,12 +1331,14 @@ def handle_set(
         filtered_values: list[str] = []
         has_force = False
         has_parent_scope = False
+        has_cache = False
         skip_next = 0
         for idx, val in enumerate(values):
             if skip_next > 0:
                 skip_next -= 1
                 continue
             if val == "CACHE":
+                has_cache = True
                 # CACHE TYPE "docstring" [FORCE] - skip type and docstring
                 skip_next = 2
                 continue
@@ -1349,6 +1361,9 @@ def handle_set(
                 ctx.parent_scope_vars[var_name] = ""
         elif filtered_values:
             ctx.variables[var_name] = ";".join(filtered_values)
+            if has_cache:
+                # Cache variables are global and survive function/directory scopes.
+                ctx.cache_variables.add(var_name)
         else:
             # set(VAR) with no value unsets the variable
             ctx.variables.pop(var_name, None)

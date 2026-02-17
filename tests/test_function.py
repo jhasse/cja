@@ -102,6 +102,25 @@ def test_function_parent_scope() -> None:
     assert ctx.variables["MY_VAR"] == "my_value"
 
 
+def test_parent_scope_survives_nested_function_calls() -> None:
+    """PARENT_SCOPE updates in caller must survive nested function invocation."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="function", args=["inner"], line=1),
+        Command(name="set", args=["INNER_SET", "yes", "PARENT_SCOPE"], line=2),
+        Command(name="endfunction", args=[], line=3),
+        Command(name="function", args=["outer"], line=4),
+        Command(name="set", args=["OUTER_SET", "yes", "PARENT_SCOPE"], line=5),
+        Command(name="inner", args=[], line=6),
+        Command(name="endfunction", args=[], line=7),
+        Command(name="outer", args=[], line=8),
+    ]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["OUTER_SET"] == "yes"
+    assert "INNER_SET" not in ctx.variables
+
+
 def test_function_argv_indexed() -> None:
     """Test ARGV0, ARGV1, etc. variables."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
