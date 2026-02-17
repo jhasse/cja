@@ -10,12 +10,18 @@ jobs:
   test:
     runs-on: ubuntu-latest
     container: fedora:43
+    env:
+      UV_LINK_MODE: copy
+      FORCE_COLOR: "1"
 
     steps:
     - uses: actions/checkout@v4
 
     - name: Install uv
-      run: sudo dnf install -y uv python ninja gcc-c++ zlib-devel gtest-devel libwebp-devel libvorbis-devel
+      run: sudo dnf install -y uv python ninja gcc-c++ zlib-devel gtest-devel libwebp-devel libvorbis-devel ruff
+
+    - name: Lint code
+      run: uv run ruff check
 
     - name: Run tests
-      run: uv run pytest --color=yes
+      run: uv run pytest
