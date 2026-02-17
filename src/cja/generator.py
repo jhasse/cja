@@ -559,6 +559,7 @@ def process_commands(
 
                 if not src_dir.exists():
                     print(f"Cloning {name} from {git_repo}")
+                    fetch_cmd_line = frame.fetchcontent_cmd.line if frame.fetchcontent_cmd else 0
                     try:
                         clone_cmd = ["git", "clone"]
                         if git_tag:
@@ -569,16 +570,17 @@ def process_commands(
                         if strict:
                             ctx.print_error(
                                 "git is required for FetchContent GIT_REPOSITORY",
-                                cmd.line,
+                                fetch_cmd_line,
                             )
                             sys.exit(1)
                     except subprocess.CalledProcessError:
                         if strict:
                             ctx.print_error(
-                                f"git clone failed for {git_repo}", cmd.line
+                                f"git clone failed for {git_repo}", fetch_cmd_line
                             )
                             sys.exit(1)
                 elif git_tag:
+                    fetch_cmd_line = frame.fetchcontent_cmd.line if frame.fetchcontent_cmd else 0
                     try:
                         subprocess.run(
                             ["git", "-C", str(src_dir), "checkout", git_tag], check=True
@@ -587,7 +589,7 @@ def process_commands(
                         if strict:
                             ctx.print_error(
                                 f"git checkout failed for {git_repo} ({git_tag})",
-                                cmd.line,
+                                fetch_cmd_line,
                             )
                             sys.exit(1)
 

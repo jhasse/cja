@@ -3,7 +3,6 @@
 import shutil
 import subprocess
 import platform
-import pytest
 from pathlib import Path
 
 from cja import configure
