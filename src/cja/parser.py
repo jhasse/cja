@@ -16,6 +16,11 @@ class Command:
 
 def tokenize(content: str) -> list[tuple[str, int]]:
     """Tokenize CMake content into tokens with line numbers."""
+    # UTF-8 BOM appears in some upstream CMakeLists.txt files (e.g. Box2D).
+    # Treat it as a file marker, not part of the first command token.
+    if content.startswith("\ufeff"):
+        content = content[1:]
+
     tokens: list[tuple[str, int]] = []
     i = 0
     line = 1
