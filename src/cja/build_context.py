@@ -81,7 +81,7 @@ class BuildContext:
     source_file_properties: dict[str, SourceFileProperties] = field(
         default_factory=dict
     )  # Properties for source files
-    parent_scope_vars: dict[str, str] = field(
+    parent_scope_vars: dict[str, str | None] = field(
         default_factory=dict
     )  # For PARENT_SCOPE in functions
     fetched_content: dict[str, FetchContentInfo] = field(

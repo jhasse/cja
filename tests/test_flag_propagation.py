@@ -28,10 +28,12 @@ def test_public_flags_propagation_to_library(tmp_path):
 
     # Check that lib1 has the definition
     lib1 = ctx.get_library("lib1")
+    assert lib1 is not None
     assert "LIB1_PUB" in lib1.public_compile_definitions
 
     # Check that lib2 doesn't have it in its OWN definitions, but it should be used during compilation
     lib2 = ctx.get_library("lib2")
+    assert lib2 is not None
     assert "LIB1_PUB" not in lib2.compile_definitions
 
     # Generate ninja and check the compile command for lib2

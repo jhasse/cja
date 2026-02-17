@@ -18,10 +18,13 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Install uv
-      run: sudo dnf install -y uv python ninja gcc-c++ zlib-devel gtest-devel libwebp-devel libvorbis-devel ruff
+      run: sudo dnf install -y uv python ninja gcc-c++ zlib-devel gtest-devel libwebp-devel libvorbis-devel ruff nodejs
 
     - name: Lint code
-      run: uv run ruff check
+      run: |
+        uv run ruff check
+        uv pip install pyright
+        uv run pyright
 
     - name: Run tests
       run: uv run pytest

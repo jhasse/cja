@@ -543,6 +543,7 @@ def process_commands(
             url_hash = None
             git_repo = None
             git_tag = None
+            src_dir: Path | None = None
             arg_idx = 0
             while arg_idx < len(info.args):
                 if info.args[arg_idx] == "URL" and arg_idx + 1 < len(info.args):
@@ -653,7 +654,7 @@ def process_commands(
                             )
                             sys.exit(1)
 
-            if url or git_repo:
+            if (url or git_repo) and src_dir is not None:
                 ctx.variables[f"{name.lower()}_SOURCE_DIR"] = str(src_dir)
                 ctx.variables[f"{name.lower()}_BINARY_DIR"] = str(
                     ctx.build_dir / "_deps" / f"{name.lower()}-build"
@@ -697,7 +698,7 @@ def process_commands(
                         )
                         ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(ctx.build_dir)
 
-                        def on_exit(
+                        def on_exit_fetchcontent(
                             saved_current_source_dir: Path = saved_current_source_dir,
                             saved_current_list_file: Path = saved_current_list_file,
                             saved_parent_directory: str = saved_parent_directory,
@@ -732,7 +733,9 @@ def process_commands(
                                 ctx.build_dir
                             )
 
-                        stack.append(Frame(commands=sub_commands, on_exit=on_exit))
+                        stack.append(
+                            Frame(commands=sub_commands, on_exit=on_exit_fetchcontent)
+                        )
             continue
 
         current_commands = cast(list[Command], frame.commands)
@@ -976,7 +979,7 @@ def process_commands(
                         )
                         ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(ctx.build_dir)
 
-                        def on_exit(
+                        def on_exit_add_subdirectory(
                             saved_current_source_dir: Path = saved_current_source_dir,
                             saved_current_list_file: Path = saved_current_list_file,
                             saved_parent_directory: str = saved_parent_directory,
@@ -1011,7 +1014,9 @@ def process_commands(
                                 ctx.build_dir
                             )
 
-                        stack.append(Frame(commands=sub_commands, on_exit=on_exit))
+                        stack.append(
+                            Frame(commands=sub_commands, on_exit=on_exit_add_subdirectory)
+                        )
                     elif strict:
                         ctx.print_error(
                             f'add_subdirectory given source "{sub_dir_name}" which does not exist.',
@@ -1135,7 +1140,9 @@ def process_commands(
                                 inc_file.parent
                             )
 
-                            def on_exit(saved_list_file: Path = saved_list_file) -> None:
+                            def on_exit_include(
+                                saved_list_file: Path = saved_list_file,
+                            ) -> None:
                                 ctx.current_list_file = saved_list_file
                                 ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(
                                     saved_list_file
@@ -1145,7 +1152,11 @@ def process_commands(
                                 )
 
                             stack.append(
-                                Frame(commands=inc_commands, on_exit=on_exit, kind="include")
+                                Frame(
+                                    commands=inc_commands,
+                                    on_exit=on_exit_include,
+                                    kind="include",
+                                )
                             )
                             frame.pc += 1
                             continue
@@ -2277,13 +2288,15 @@ int main() {{
                             saved_list_file = ctx.current_list_file
                             ctx.current_list_file = found_file
 
-                            def on_exit(saved_list_file: Path = saved_list_file) -> None:
+                            def on_exit_find_package(
+                                saved_list_file: Path = saved_list_file,
+                            ) -> None:
                                 ctx.current_list_file = saved_list_file
 
                             stack.append(
                                 Frame(
                                     commands=find_commands,
-                                    on_exit=on_exit,
+                                    on_exit=on_exit_find_package,
                                     kind="include",
                                 )
                             )
@@ -2647,7 +2660,7 @@ int main() {{
                         func_def.defining_file.parent
                     )
 
-                    def on_exit(
+                    def on_exit_function(
                         saved_vars: dict[str, str] = saved_vars,
                         saved_current_source_dir: Path = saved_current_source_dir,
                         saved_current_list_file: Path = saved_current_list_file,
@@ -2681,7 +2694,11 @@ int main() {{
 
                     frame.pc += 1
                     stack.append(
-                        Frame(commands=func_def.body, on_exit=on_exit, kind="function")
+                        Frame(
+                            commands=func_def.body,
+                            on_exit=on_exit_function,
+                            kind="function",
+                        )
                     )
                     continue
                 elif name in ctx.macros:
