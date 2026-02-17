@@ -31,6 +31,7 @@ from .build_context import (
 from .commands import (
     handle_add_executable,
     handle_add_library,
+    handle_configure_file,
     handle_file,
     handle_function,
     handle_get_directory_property,
@@ -1508,6 +1509,9 @@ int main() {{
 
             case "file":
                 handle_file(ctx, cmd, args, strict)
+
+            case "configure_file":
+                handle_configure_file(ctx, cmd, args, strict)
 
             case "add_compile_options":
                 # add_compile_options adds flags to all targets

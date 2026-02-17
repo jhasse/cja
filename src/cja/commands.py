@@ -17,7 +17,12 @@ from .syntax import (
 )
 from .parser import Command
 from .targets import Executable, Library
-from .utils import resolve_cmake_path, strip_generator_expressions, to_posix_path
+from .utils import (
+    is_truthy,
+    resolve_cmake_path,
+    strip_generator_expressions,
+    to_posix_path,
+)
 
 
 def _is_supported_include_dir_genex(value: str) -> bool:
@@ -1920,3 +1925,104 @@ def handle_file(
         # file(LOCK <path> [DIRECTORY] [RELEASE] [GUARD <FUNCTION|FILE|PROCESS>] [RESULT_VARIABLE <variable>] [TIMEOUT <seconds>])
         # Stub for now, just succeeds
         pass
+
+
+def handle_configure_file(
+    ctx: BuildContext,
+    cmd: Command,
+    args: list[str],
+    strict: bool,
+) -> None:
+    """Handle configure_file() command."""
+    # configure_file(<input> <output> [COPYONLY] [@ONLY] [ESCAPE_QUOTES] [NEWLINE_STYLE ...])
+    if len(args) < 2:
+        if strict:
+            ctx.print_error("configure_file requires input and output", cmd.line)
+            sys.exit(1)
+        return
+
+    input_path = ctx.expand_variables(args[0], strict, cmd.line)
+    output_path = ctx.expand_variables(args[1], strict, cmd.line)
+
+    copyonly = "COPYONLY" in args[2:]
+    at_only = "@ONLY" in args[2:]
+    escape_quotes = "ESCAPE_QUOTES" in args[2:]
+
+    src = Path(input_path)
+    if not src.is_absolute():
+        src = ctx.current_source_dir / src
+
+    dst = Path(output_path)
+    if not dst.is_absolute():
+        current_binary_dir = Path(
+            ctx.variables.get("CMAKE_CURRENT_BINARY_DIR", str(ctx.build_dir))
+        )
+        dst = current_binary_dir / dst
+
+    if not src.exists():
+        if strict:
+            ctx.print_error(f"configure_file input does not exist: {src}", cmd.line)
+            sys.exit(1)
+        return
+
+    content = src.read_text()
+    if not copyonly:
+        # Handle CMake template lines:
+        #   #cmakedefine VAR [value...]
+        #   #cmakedefine01 VAR
+        def replace_cmakedefine_line(line: str) -> str:
+            newline = ""
+            if line.endswith("\r\n"):
+                line_core = line[:-2]
+                newline = "\r\n"
+            elif line.endswith("\n"):
+                line_core = line[:-1]
+                newline = "\n"
+            else:
+                line_core = line
+
+            m01 = re.match(
+                r"^(\s*)#cmakedefine01\s+([A-Za-z_][A-Za-z0-9_]*)\s*(.*)$",
+                line_core,
+            )
+            if m01:
+                indent, var_name, trailing = m01.groups()
+                defined = "1" if is_truthy(ctx.variables.get(var_name, "")) else "0"
+                if trailing:
+                    return f"{indent}#define {var_name} {defined} {trailing}{newline}"
+                return f"{indent}#define {var_name} {defined}{newline}"
+
+            m = re.match(
+                r"^(\s*)#cmakedefine\s+([A-Za-z_][A-Za-z0-9_]*)(.*)$",
+                line_core,
+            )
+            if not m:
+                return line
+
+            indent, var_name, suffix = m.groups()
+            if is_truthy(ctx.variables.get(var_name, "")):
+                return f"{indent}#define {var_name}{suffix}{newline}"
+            return f"{indent}/* #undef {var_name} */{newline}"
+
+        content = "".join(replace_cmakedefine_line(line) for line in content.splitlines(keepends=True))
+
+        # @VAR@ replacement
+        def replace_at_var(match: re.Match[str]) -> str:
+            var_name = match.group(1)
+            value = ctx.variables.get(var_name, "")
+            if value == "" and var_name not in ctx.variables and strict:
+                ctx.print_error(f"undefined variable referenced: {var_name}", cmd.line)
+                sys.exit(1)
+            return value
+
+        content = re.sub(r"@([A-Za-z_][A-Za-z0-9_]*)@", replace_at_var, content)
+
+        # ${VAR} replacement (unless @ONLY)
+        if not at_only:
+            content = ctx.expand_variables(content, strict, cmd.line)
+
+        if escape_quotes:
+            content = content.replace('"', '\\"')
+
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_text(content)
