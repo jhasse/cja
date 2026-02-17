@@ -123,6 +123,17 @@ def _infer_compiler_id(compiler: str) -> str:
     return "Unknown"
 
 
+def _detect_host_system_processor() -> str:
+    """Detect host CPU architecture string for CMAKE_HOST_SYSTEM_PROCESSOR."""
+    machine = platform.machine().strip()
+    if machine:
+        return machine
+    processor = platform.processor().strip()
+    if processor:
+        return processor
+    return "unknown"
+
+
 @dataclass
 class Frame:
     commands: list[Command] | None
@@ -3492,6 +3503,7 @@ def configure(
     ctx.variables["CMAKE_FIND_PACKAGE_REDIRECTS_DIR"] = str(
         ctx.build_dir / "CMakeFiles" / "pkgRedirects"
     )
+    ctx.variables["CMAKE_HOST_SYSTEM_PROCESSOR"] = _detect_host_system_processor()
 
     if platform.system() == "Darwin":
         ctx.variables["CMAKE_SYSTEM_NAME"] = "Darwin"
