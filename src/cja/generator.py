@@ -820,12 +820,29 @@ def process_commands(
                     ),
                     None,
                 )
-                if func_index is None:
-                    raise ReturnFromFunction()
-                while len(stack) > func_index:
-                    popped = stack.pop()
-                    if popped.on_exit:
-                        popped.on_exit()
+                if func_index is not None:
+                    while len(stack) > func_index:
+                        popped = stack.pop()
+                        if popped.on_exit:
+                            popped.on_exit()
+                    continue
+
+                include_index = next(
+                    (
+                        i
+                        for i in range(len(stack) - 1, -1, -1)
+                        if stack[i].kind == "include"
+                    ),
+                    None,
+                )
+                if include_index is not None:
+                    while len(stack) > include_index:
+                        popped = stack.pop()
+                        if popped.on_exit:
+                            popped.on_exit()
+                    continue
+
+                raise ReturnFromFunction()
                 continue
 
             case "cmake_policy":
@@ -1104,7 +1121,7 @@ def process_commands(
                                 inc_file.parent
                             )
 
-                            def on_exit() -> None:
+                            def on_exit(saved_list_file: Path = saved_list_file) -> None:
                                 ctx.current_list_file = saved_list_file
                                 ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(
                                     saved_list_file
@@ -1113,7 +1130,9 @@ def process_commands(
                                     saved_list_file.parent
                                 )
 
-                            stack.append(Frame(commands=inc_commands, on_exit=on_exit))
+                            stack.append(
+                                Frame(commands=inc_commands, on_exit=on_exit, kind="include")
+                            )
                             frame.pc += 1
                             continue
                         elif strict:
@@ -2244,10 +2263,16 @@ int main() {{
                             saved_list_file = ctx.current_list_file
                             ctx.current_list_file = found_file
 
-                            def on_exit() -> None:
+                            def on_exit(saved_list_file: Path = saved_list_file) -> None:
                                 ctx.current_list_file = saved_list_file
 
-                            stack.append(Frame(commands=find_commands, on_exit=on_exit))
+                            stack.append(
+                                Frame(
+                                    commands=find_commands,
+                                    on_exit=on_exit,
+                                    kind="include",
+                                )
+                            )
                             frame.pc += 1
                             continue
                         else:

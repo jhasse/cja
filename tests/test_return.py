@@ -61,3 +61,23 @@ def test_return_preserves_parent_scope() -> None:
     assert ctx.variables["VAR1"] == "one"
     assert ctx.variables["VAR2"] == "two"
     assert "VAR3" not in ctx.variables
+
+
+def test_return_exits_included_cmake_file(tmp_path: Path) -> None:
+    """return() in include() should stop processing included file only."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    (source_dir / "inc.cmake").write_text(
+        "set(BEFORE yes)\nreturn()\nset(AFTER yes)\n"
+    )
+
+    ctx = BuildContext(source_dir=source_dir, build_dir=tmp_path / "build")
+    commands = [
+        Command(name="include", args=["inc.cmake"], line=1),
+        Command(name="set", args=["OUTER", "yes"], line=2),
+    ]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["BEFORE"] == "yes"
+    assert "AFTER" not in ctx.variables
+    assert ctx.variables["OUTER"] == "yes"
