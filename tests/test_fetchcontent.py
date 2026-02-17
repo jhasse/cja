@@ -38,6 +38,8 @@ def test_fetchcontent_url(tmp_path: Path) -> None:
     assert any(lib.name == "mylib" for lib in ctx.libraries)
     assert ctx.variables["mylib_POPULATED"] == "TRUE"
     assert "mylib_SOURCE_DIR" in ctx.variables
+    assert ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] == str(source_dir)
+    assert ctx.variables["CMAKE_CURRENT_LIST_FILE"] == str(source_dir / "CMakeLists.txt")
 
 
 def test_fetchcontent_hash(tmp_path: Path) -> None:

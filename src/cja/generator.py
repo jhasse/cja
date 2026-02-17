@@ -680,11 +680,13 @@ def process_commands(
 
                         saved_current_source_dir = ctx.current_source_dir
                         saved_current_list_file = ctx.current_list_file
+                        saved_parent_directory = ctx.parent_directory
                         saved_vars = ctx.variables.copy()
                         ctx.parent_scope_vars = {}
 
                         ctx.current_source_dir = actual_src_dir
                         ctx.current_list_file = sub_cmakelists
+                        ctx.parent_directory = str(saved_current_source_dir)
                         ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = str(actual_src_dir)
                         ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(sub_cmakelists)
                         ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
@@ -695,11 +697,13 @@ def process_commands(
                         def on_exit(
                             saved_current_source_dir: Path = saved_current_source_dir,
                             saved_current_list_file: Path = saved_current_list_file,
+                            saved_parent_directory: str = saved_parent_directory,
                             saved_vars: dict[str, str] = saved_vars,
                         ) -> None:
                             parent_scope_updates = ctx.parent_scope_vars
                             ctx.current_source_dir = saved_current_source_dir
                             ctx.current_list_file = saved_current_list_file
+                            ctx.parent_directory = saved_parent_directory
                             ctx.variables = saved_vars
                             for var, val in parent_scope_updates.items():
                                 if val is None:
@@ -707,6 +711,18 @@ def process_commands(
                                 else:
                                     ctx.variables[var] = val
                             ctx.parent_scope_vars.clear()
+                            ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = str(
+                                saved_current_source_dir
+                            )
+                            ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(
+                                saved_current_list_file
+                            )
+                            ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
+                                saved_current_list_file.parent
+                            )
+                            ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(
+                                ctx.build_dir
+                            )
 
                         stack.append(Frame(commands=sub_commands, on_exit=on_exit))
             continue
@@ -2564,7 +2580,9 @@ int main() {{
                     func_def = ctx.functions[name]
                     # Save current variables for function scope
                     saved_vars = ctx.variables.copy()
+                    saved_current_source_dir = ctx.current_source_dir
                     saved_current_list_file = ctx.current_list_file
+                    saved_parent_directory = ctx.parent_directory
 
                     # Set up function arguments
                     ctx.variables["ARGC"] = str(len(args))
@@ -2589,15 +2607,32 @@ int main() {{
                         func_def.defining_file.parent
                     )
 
-                    def on_exit() -> None:
+                    def on_exit(
+                        saved_vars: dict[str, str] = saved_vars,
+                        saved_current_source_dir: Path = saved_current_source_dir,
+                        saved_current_list_file: Path = saved_current_list_file,
+                        saved_parent_directory: str = saved_parent_directory,
+                    ) -> None:
                         for var_name, var_value in ctx.parent_scope_vars.items():
                             if var_value is None:
                                 saved_vars.pop(var_name, None)
                             else:
                                 saved_vars[var_name] = var_value
                         ctx.parent_scope_vars.clear()
+                        ctx.current_source_dir = saved_current_source_dir
                         ctx.current_list_file = saved_current_list_file
+                        ctx.parent_directory = saved_parent_directory
                         ctx.variables = saved_vars
+                        ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = str(
+                            saved_current_source_dir
+                        )
+                        ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(
+                            saved_current_list_file
+                        )
+                        ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
+                            saved_current_list_file.parent
+                        )
+                        ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(ctx.build_dir)
 
                     frame.pc += 1
                     stack.append(
@@ -2608,6 +2643,9 @@ int main() {{
                     macro_def = ctx.macros[name]
                     # Macros don't create a new scope - they operate in the caller's scope
                     # Save the special variables so we can restore them after
+                    saved_current_source_dir = ctx.current_source_dir
+                    saved_current_list_file = ctx.current_list_file
+                    saved_parent_directory = ctx.parent_directory
                     saved_argc = ctx.variables.get("ARGC", "")
                     saved_argv = ctx.variables.get("ARGV", "")
                     saved_argn = ctx.variables.get("ARGN", "")
@@ -2645,7 +2683,16 @@ int main() {{
                     extra_args = args[len(macro_def.params) :]
                     ctx.variables["ARGN"] = ";".join(extra_args)
 
-                    def on_exit() -> None:
+                    def on_exit(
+                        saved_current_source_dir: Path = saved_current_source_dir,
+                        saved_current_list_file: Path = saved_current_list_file,
+                        saved_parent_directory: str = saved_parent_directory,
+                        saved_argc: str = saved_argc,
+                        saved_argv: str = saved_argv,
+                        saved_argn: str = saved_argn,
+                        saved_argv_vars: dict[str, str] = saved_argv_vars,
+                        saved_params: dict[str, str] = saved_params,
+                    ) -> None:
                         if saved_argc:
                             ctx.variables["ARGC"] = saved_argc
                         else:
@@ -2673,6 +2720,20 @@ int main() {{
                                 ctx.variables[param] = saved_params[param]
                             else:
                                 ctx.variables.pop(param, None)
+
+                        ctx.current_source_dir = saved_current_source_dir
+                        ctx.current_list_file = saved_current_list_file
+                        ctx.parent_directory = saved_parent_directory
+                        ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = str(
+                            saved_current_source_dir
+                        )
+                        ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(
+                            saved_current_list_file
+                        )
+                        ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
+                            saved_current_list_file.parent
+                        )
+                        ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(ctx.build_dir)
 
                     frame.pc += 1
                     stack.append(Frame(commands=macro_def.body, on_exit=on_exit))
