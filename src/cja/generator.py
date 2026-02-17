@@ -78,6 +78,51 @@ class ReturnFromFunction(Exception):
     pass
 
 
+def _infer_compiler_id(compiler: str) -> str:
+    """Infer CMake-style compiler ID from a compiler command."""
+    parts = shlex.split(compiler) if compiler else []
+    if not parts:
+        return "Unknown"
+    tool = parts[0]
+    if Path(tool).name.lower() in ("ccache", "sccache") and len(parts) > 1:
+        tool = parts[1]
+    base = Path(tool).name.lower()
+
+    if base in ("clang", "clang++", "clang-cl") or "clang" in base:
+        return "Clang"
+    if base in ("gcc", "g++") or base.startswith("gcc-") or base.startswith("g++-"):
+        return "GNU"
+    if base in ("cl", "cl.exe"):
+        return "MSVC"
+    if base in ("icx", "icpx", "dpcpp"):
+        return "IntelLLVM"
+    if base in ("icc", "icpc"):
+        return "Intel"
+
+    # Fallback for generic compiler driver names like cc/c++.
+    try:
+        out = subprocess.check_output(
+            parts + ["--version"],
+            stderr=subprocess.STDOUT,
+            text=True,
+        ).lower()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return "Unknown"
+
+    if "clang" in out:
+        return "Clang"
+    if "gcc" in out or "gnu" in out:
+        return "GNU"
+    if "microsoft" in out or "msvc" in out:
+        return "MSVC"
+    if "intel" in out and ("llvm" in out or "oneapi" in out):
+        return "IntelLLVM"
+    if "intel" in out:
+        return "Intel"
+
+    return "Unknown"
+
+
 @dataclass
 class Frame:
     commands: list[Command] | None
@@ -3464,6 +3509,10 @@ def configure(
         ctx.c_compiler = ctx.variables["CMAKE_C_COMPILER"]
     if "CMAKE_CXX_COMPILER" in ctx.variables:
         ctx.cxx_compiler = ctx.variables["CMAKE_CXX_COMPILER"]
+    ctx.variables["CMAKE_C_COMPILER"] = ctx.c_compiler
+    ctx.variables["CMAKE_CXX_COMPILER"] = ctx.cxx_compiler
+    ctx.variables["CMAKE_C_COMPILER_ID"] = _infer_compiler_id(ctx.c_compiler)
+    ctx.variables["CMAKE_CXX_COMPILER_ID"] = _infer_compiler_id(ctx.cxx_compiler)
 
     process_commands(commands, ctx, trace, strict)
 

@@ -79,7 +79,7 @@ def test_default_compilers(tmp_path: Path) -> None:
     )
     (source_dir / "main.c").write_text("int main() { return 0; }")
 
-    configure(source_dir, "build")
+    ctx = configure(source_dir, "build")
 
     ninja_file = source_dir / "build.ninja"
     content = ninja_file.read_text()
@@ -88,6 +88,35 @@ def test_default_compilers(tmp_path: Path) -> None:
     if platform.system() == "Windows":
         assert "cc = clang" in content
         assert "cxx = clang++" in content
+        assert ctx.variables["CMAKE_C_COMPILER"] == "clang"
+        assert ctx.variables["CMAKE_CXX_COMPILER"] == "clang++"
+        assert ctx.variables["CMAKE_C_COMPILER_ID"] == "Clang"
+        assert ctx.variables["CMAKE_CXX_COMPILER_ID"] == "Clang"
     else:
         assert "cc = cc" in content
         assert "cxx = c++" in content
+        assert ctx.variables["CMAKE_C_COMPILER"] == "cc"
+        assert ctx.variables["CMAKE_CXX_COMPILER"] == "c++"
+        assert ctx.variables["CMAKE_C_COMPILER_ID"] != "Unknown"
+        assert ctx.variables["CMAKE_CXX_COMPILER_ID"] != "Unknown"
+
+
+def test_compiler_id_variables(tmp_path: Path) -> None:
+    """Test that CMAKE_<LANG>_COMPILER_ID variables are populated."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    (source_dir / "CMakeLists.txt").write_text("project(test_compiler_ids)")
+
+    ctx = configure(
+        source_dir,
+        "build",
+        variables={
+            "CMAKE_C_COMPILER": "gcc",
+            "CMAKE_CXX_COMPILER": "clang++",
+        },
+    )
+
+    assert ctx.variables["CMAKE_C_COMPILER"] == "gcc"
+    assert ctx.variables["CMAKE_CXX_COMPILER"] == "clang++"
+    assert ctx.variables["CMAKE_C_COMPILER_ID"] == "GNU"
+    assert ctx.variables["CMAKE_CXX_COMPILER_ID"] == "Clang"
