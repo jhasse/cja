@@ -21,6 +21,8 @@ class Library:
     public_compile_definitions: list[str] = field(
         default_factory=list
     )  # PUBLIC definitions
+    compile_options: list[str] = field(default_factory=list)  # PRIVATE options
+    public_compile_options: list[str] = field(default_factory=list)  # PUBLIC options
     link_directories: list[str] = field(
         default_factory=list
     )  # PRIVATE link directories
@@ -46,6 +48,7 @@ class Executable:
     compile_features: list[str] = field(default_factory=list)
     include_directories: list[str] = field(default_factory=list)
     compile_definitions: list[str] = field(default_factory=list)
+    compile_options: list[str] = field(default_factory=list)
     link_directories: list[str] = field(default_factory=list)
     properties: dict[str, str] = field(default_factory=dict)
 

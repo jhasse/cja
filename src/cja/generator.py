@@ -48,6 +48,7 @@ from .commands import (
     handle_set_target_properties,
     handle_string,
     handle_target_compile_definitions,
+    handle_target_compile_options,
     handle_target_compile_features,
     handle_target_include_directories,
     handle_target_link_directories,
@@ -1377,6 +1378,9 @@ int main() {{
 
             case "target_compile_definitions":
                 handle_target_compile_definitions(ctx, cmd, args, strict)
+
+            case "target_compile_options":
+                handle_target_compile_options(ctx, cmd, args, strict)
 
             case "include_directories":
                 handle_include_directories(ctx, cmd, args, strict)
@@ -2971,6 +2975,10 @@ def generate_ninja(
                 lib_compile_flags.append(f"-D{strip_generator_expressions(definition)}")
             for definition in lib.compile_definitions:
                 lib_compile_flags.append(f"-D{strip_generator_expressions(definition)}")
+            for option in lib.compile_options:
+                opt = strip_generator_expressions(option)
+                if opt:
+                    lib_compile_flags.append(opt)
             for feature in lib.compile_features:
                 flag = compile_feature_to_flag(feature)
                 if flag:
@@ -3000,6 +3008,10 @@ def generate_ninja(
                         def_flag = f"-D{strip_generator_expressions(definition)}"
                         if def_flag not in lib_compile_flags:
                             lib_compile_flags.append(def_flag)
+                    for option in dep_lib.public_compile_options:
+                        opt = strip_generator_expressions(option)
+                        if opt and opt not in lib_compile_flags:
+                            lib_compile_flags.append(opt)
                 if dep_name in ctx.imported_targets:
                     imported = ctx.imported_targets[dep_name]
                     if imported.cflags:
@@ -3120,6 +3132,10 @@ def generate_ninja(
                 compile_flags.append(f"-D{strip_generator_expressions(definition)}")
             for definition in exe.compile_definitions:
                 compile_flags.append(f"-D{strip_generator_expressions(definition)}")
+            for option in exe.compile_options:
+                opt = strip_generator_expressions(option)
+                if opt:
+                    compile_flags.append(opt)
             for feature in exe.compile_features:
                 flag = compile_feature_to_flag(feature)
                 if flag:
@@ -3148,6 +3164,10 @@ def generate_ninja(
                         def_flag = f"-D{strip_generator_expressions(definition)}"
                         if def_flag not in compile_flags:
                             compile_flags.append(def_flag)
+                    for option in linked_lib.public_compile_options:
+                        opt = strip_generator_expressions(option)
+                        if opt and opt not in compile_flags:
+                            compile_flags.append(opt)
                 # Check for cflags from imported targets
                 if lib_name in ctx.imported_targets:
                     imported = ctx.imported_targets[lib_name]

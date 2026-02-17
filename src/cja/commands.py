@@ -403,6 +403,58 @@ def handle_target_compile_definitions(
                 exe.compile_definitions.extend(public_defs)
 
 
+def handle_target_compile_options(
+    ctx: BuildContext,
+    cmd: Command,
+    args: list[str],
+    strict: bool,
+) -> None:
+    """Handle target_compile_options() command."""
+    if len(args) >= 2:
+        target_name = args[0]
+        public_opts: list[str] = []
+        target_opts: list[str] = []
+        visibility = "PUBLIC"  # Default visibility
+        for arg in args[1:]:
+            if arg == "PUBLIC":
+                visibility = "PUBLIC"
+            elif arg == "INTERFACE":
+                visibility = "INTERFACE"
+            elif arg == "PRIVATE":
+                visibility = "PRIVATE"
+            elif arg == "BEFORE":
+                # BEFORE affects ordering only; ignored for now.
+                pass
+            else:
+                expanded = ctx.expand_variables(arg, strict, cmd.line)
+                if "$<" in expanded:
+                    ctx.print_warning(
+                        f"generator expressions in target_compile_options are not yet supported: {arg}",
+                        cmd.line,
+                    )
+                expanded = strip_generator_expressions(expanded)
+                if not expanded:
+                    continue
+                if visibility == "PUBLIC":
+                    public_opts.append(expanded)
+                    target_opts.append(expanded)
+                elif visibility == "INTERFACE":
+                    public_opts.append(expanded)
+                else:
+                    target_opts.append(expanded)
+        # Add options to library or executable
+        lib = ctx.get_library(target_name)
+        if lib:
+            lib.compile_options.extend(target_opts)
+            lib.public_compile_options.extend(public_opts)
+        else:
+            exe = ctx.get_executable(target_name)
+            if exe:
+                # Executables don't propagate, so all options are local.
+                exe.compile_options.extend(target_opts)
+                exe.compile_options.extend(public_opts)
+
+
 def handle_set_target_properties(
     ctx: BuildContext,
     cmd: Command,
@@ -857,11 +909,13 @@ def handle_add_library(
                         lib_type=lib.lib_type,
                         include_directories=lib.include_directories,
                         compile_definitions=lib.compile_definitions,
+                        compile_options=lib.compile_options,
                         compile_features=lib.compile_features,
                         link_libraries=lib.link_libraries,
                         link_directories=lib.link_directories,
                         public_include_directories=lib.public_include_directories,
                         public_compile_definitions=lib.public_compile_definitions,
+                        public_compile_options=lib.public_compile_options,
                         public_compile_features=lib.public_compile_features,
                         public_link_directories=lib.public_link_directories,
                         is_alias=True,
