@@ -772,7 +772,38 @@ def process_commands(
                 continue
 
             case "cmake_minimum_required":
-                pass
+                if not args:
+                    if strict:
+                        ctx.print_error(
+                            "cmake_minimum_required requires VERSION argument",
+                            cmd.line,
+                        )
+                        sys.exit(1)
+                    frame.pc += 1
+                    continue
+
+                version = ""
+                i = 0
+                while i < len(args):
+                    arg = args[i]
+                    if arg == "VERSION" and i + 1 < len(args):
+                        version = args[i + 1]
+                        break
+                    i += 1
+
+                if not version:
+                    if strict:
+                        ctx.print_error(
+                            "cmake_minimum_required missing VERSION argument",
+                            cmd.line,
+                        )
+                        sys.exit(1)
+                    frame.pc += 1
+                    continue
+
+                # CMake accepts a policy max range in the form "x.y...a.b".
+                minimum_version = version.split("...", 1)[0]
+                ctx.variables["CMAKE_MINIMUM_REQUIRED_VERSION"] = minimum_version
 
             case "project":
                 if args:
