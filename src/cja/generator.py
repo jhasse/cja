@@ -38,6 +38,7 @@ from .commands import (
     handle_get_property,
     handle_include_directories,
     handle_cmake_parse_arguments,
+    handle_cmake_dependent_option,
     handle_list,
     handle_macro,
     handle_math,
@@ -956,6 +957,9 @@ def process_commands(
             case "option":
                 handle_option(ctx, args)
 
+            case "cmake_dependent_option":
+                handle_cmake_dependent_option(ctx, cmd, args, strict)
+
             case "cmake_parse_arguments":
                 handle_cmake_parse_arguments(ctx, cmd, strict)
 
@@ -978,6 +982,7 @@ def process_commands(
                         "CheckCXXCompilerFlag",
                         "CheckCCompilerFlag",
                         "CheckCXXSymbolExists",
+                        "CMakeDependentOption",
                         "FetchContent",
                         "FindPackageHandleStandardArgs",
                         "GNUInstallDirs",

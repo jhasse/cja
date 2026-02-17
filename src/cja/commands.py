@@ -13,6 +13,7 @@ from .syntax import (
     FunctionDef,
     MacroDef,
     SourceFileProperties,
+    evaluate_condition,
 )
 from .parser import Command
 from .targets import Executable, Library
@@ -969,7 +970,7 @@ def handle_list(
                     idx = int(idx_str)
                     if -len(items) <= idx < len(items):
                         result.append(items[idx])
-                except (ValueError, IndexError):
+                except ValueError, IndexError:
                     pass
             ctx.variables[out_var] = ";".join(result)
 
@@ -1335,6 +1336,44 @@ def handle_option(
             if len(args) >= 3:
                 value = args[2]
             ctx.variables[var_name] = value
+
+
+def handle_cmake_dependent_option(
+    ctx: BuildContext,
+    cmd: Command,
+    args: list[str],
+    strict: bool,
+) -> None:
+    """Handle cmake_dependent_option() command."""
+    # cmake_dependent_option(<var> "<help>" <value> <depends> <force>)
+    if len(args) < 5:
+        if strict:
+            ctx.print_error(
+                "cmake_dependent_option requires variable, help, value, depends, and force value",
+                cmd.line,
+            )
+            sys.exit(1)
+        return
+
+    option_name = args[0]
+    default_value = ctx.expand_variables(args[2], strict, cmd.line)
+    depends_expr = ctx.expand_variables(args[3], strict, cmd.line)
+    force_value = ctx.expand_variables(args[4], strict, cmd.line)
+
+    clauses = [clause.strip() for clause in depends_expr.split(";") if clause.strip()]
+    condition_met = True
+    for clause in clauses:
+        if not evaluate_condition(clause.split(), ctx.variables):
+            condition_met = False
+            break
+
+    if condition_met:
+        # Behaves like option(): don't override an already-defined value.
+        if option_name not in ctx.variables:
+            ctx.variables[option_name] = default_value
+    else:
+        # When dependency is not satisfied, force to fallback value.
+        ctx.variables[option_name] = force_value
 
 
 def handle_cmake_parse_arguments(
