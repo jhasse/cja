@@ -3,6 +3,8 @@
 import pytest
 from pathlib import Path
 
+import termcolor
+
 
 def test_cmake_current_list_file(tmp_path: Path) -> None:
     """Test CMAKE_CURRENT_LIST_FILE in main and subdirectory."""
@@ -27,8 +29,15 @@ def test_cmake_current_list_file(tmp_path: Path) -> None:
     assert ctx.variables["SUB_FILE"] == str(sub_cmake.resolve())
 
 
-def test_print_location(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_print_location(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Test that print_warning uses the correct filename in location."""
+    monkeypatch.delenv("FORCE_COLOR", raising=False)
+    termcolor.can_colorize.cache_clear()
+
     source_dir = tmp_path / "src"
     source_dir.mkdir()
 
