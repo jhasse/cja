@@ -887,6 +887,10 @@ def process_commands(
                             version = args[ver_idx + 1]
                             ctx.variables["PROJECT_VERSION"] = version
                             ctx.variables[f"{args[0]}_VERSION"] = version
+
+                            # Workaround for https://github.com/erincatto/box2d/pull/1033:
+                            ctx.variables[f"{args[0].upper()}_VERSION"] = version
+
                             ctx.variables["CMAKE_PROJECT_VERSION"] = version
                             parts = version.split(".")
                             for i, suffix in enumerate(
