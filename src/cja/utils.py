@@ -1,4 +1,5 @@
 from pathlib import Path
+import posixpath
 import re
 
 
@@ -22,15 +23,19 @@ def is_cmake_absolute_path(path_str: str) -> bool:
 
 def resolve_cmake_path(path_str: str, base_dir: Path) -> str:
     """Resolve a CMake path while preserving native absolute path formatting."""
+
+    def _normalize(path: str) -> str:
+        # cja paths are slash-based across platforms; normalize lexically
+        # (collapse "." and "..") without touching the filesystem.
+        return posixpath.normpath(path.replace("\\", "/"))
+
     if is_cmake_absolute_path(path_str):
-        if path_str.startswith("/"):
-            return path_str.replace("\\", "/")
-        return str(Path(path_str))
+        return _normalize(path_str)
     resolved = base_dir / path_str
     base_str = str(base_dir)
     if base_str.startswith("\\") and not _DRIVE_PATH_RE.match(base_str):
-        return to_posix_path(resolved)
-    return str(resolved)
+        return _normalize(to_posix_path(resolved))
+    return _normalize(str(resolved))
 
 
 def make_relative(path_str: str, root: Path) -> str:
