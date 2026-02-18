@@ -1,5 +1,6 @@
 """Tests for target_include_directories command."""
 
+import os
 import shutil
 from pathlib import Path
 
@@ -121,9 +122,23 @@ def test_target_include_directories_public_propagates(tmp_path: Path) -> None:
 
 def test_target_include_directories_build_install_interface(capsys) -> None:
     """BUILD_INTERFACE entries should be used and INSTALL_INTERFACE ignored."""
-    ctx = BuildContext(source_dir=Path("/project"), build_dir=Path("/project/build"))
-    ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = "/project/src"
-    ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = "/project/build"
+    if os.name == "nt":
+        current_source_dir = "C:/project/src"
+        current_binary_dir = "C:/project/build"
+        expected_public_include = str(Path("C:/project/include").resolve())
+        expected_public_build = str(Path("C:/project/build").resolve())
+        expected_private_src = str(Path("C:/project/src").resolve())
+        ctx = BuildContext(source_dir=Path("C:/project"), build_dir=Path("C:/project/build"))
+    else:
+        current_source_dir = "/project/src"
+        current_binary_dir = "/project/build"
+        expected_public_include = "/project/include"
+        expected_public_build = "/project/build"
+        expected_private_src = "/project/src"
+        ctx = BuildContext(source_dir=Path("/project"), build_dir=Path("/project/build"))
+
+    ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = current_source_dir
+    ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = current_binary_dir
     ctx.variables["CMAKE_INSTALL_INCLUDEDIR"] = "include"
 
     commands = [
@@ -146,9 +161,9 @@ def test_target_include_directories_build_install_interface(capsys) -> None:
 
     lib = ctx.get_library("box2d")
     assert lib is not None
-    assert "/project/include" in lib.public_include_directories
-    assert "/project/build" in lib.public_include_directories
-    assert "/project/src" in lib.include_directories
+    assert expected_public_include in lib.public_include_directories
+    assert expected_public_build in lib.public_include_directories
+    assert expected_private_src in lib.include_directories
     assert all("include" != p for p in lib.public_include_directories)
 
     captured = capsys.readouterr()
