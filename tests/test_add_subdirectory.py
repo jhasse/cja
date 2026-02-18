@@ -139,3 +139,19 @@ def test_add_subdirectory_two_levels(tmp_path: Path) -> None:
     process_commands(commands, ctx)
 
     assert ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] == str(source_dir)
+
+
+def test_project_source_dir_is_global_across_subdirectory(tmp_path: Path) -> None:
+    """project(name) in subdirectory should expose name_SOURCE_DIR globally."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    sub_dir = source_dir / "gtest"
+    sub_dir.mkdir()
+
+    (sub_dir / "CMakeLists.txt").write_text("project(gtest)")
+
+    ctx = BuildContext(source_dir=source_dir, build_dir=tmp_path / "build")
+    commands = [Command(name="add_subdirectory", args=["gtest"], line=1)]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["gtest_SOURCE_DIR"] == str(sub_dir.resolve())

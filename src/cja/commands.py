@@ -69,8 +69,12 @@ def handle_project(
         ctx.variables["CMAKE_CXX_FLAGS"] = ""  # TODO: Only set when CXX is enabled
         ctx.variables["PROJECT_SOURCE_DIR"] = str(ctx.current_source_dir)
         ctx.variables["PROJECT_BINARY_DIR"] = str(ctx.build_dir)
-        ctx.variables[f"{args[0]}_SOURCE_DIR"] = str(ctx.current_source_dir)
-        ctx.variables[f"{args[0]}_BINARY_DIR"] = str(ctx.build_dir)
+        source_var = f"{args[0]}_SOURCE_DIR"
+        binary_var = f"{args[0]}_BINARY_DIR"
+        ctx.variables[source_var] = str(ctx.current_source_dir)
+        ctx.variables[binary_var] = str(ctx.build_dir)
+        ctx.cache_variables.add(source_var)
+        ctx.cache_variables.add(binary_var)
 
 
 def _collect_directory_include_dirs(ctx: BuildContext) -> list[str]:

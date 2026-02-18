@@ -964,9 +964,10 @@ def process_commands(
 
             case "project":
                 if args:
-                    ctx.project_name = args[0]
-                    ctx.variables["PROJECT_NAME"] = args[0]
-                    ctx.variables["CMAKE_PROJECT_NAME"] = args[0]
+                    project_name = args[0]
+                    ctx.project_name = project_name
+                    ctx.variables["PROJECT_NAME"] = project_name
+                    ctx.variables["CMAKE_PROJECT_NAME"] = project_name
                     ctx.variables["CMAKE_C_FLAGS"] = (
                         ""  # TODO: Only set when C is enabled
                     )
@@ -975,18 +976,24 @@ def process_commands(
                     )
                     ctx.variables["PROJECT_SOURCE_DIR"] = str(ctx.current_source_dir)
                     ctx.variables["PROJECT_BINARY_DIR"] = str(ctx.build_dir)
-                    ctx.variables[f"{args[0]}_SOURCE_DIR"] = str(ctx.current_source_dir)
-                    ctx.variables[f"{args[0]}_BINARY_DIR"] = str(ctx.build_dir)
+                    source_var = f"{project_name}_SOURCE_DIR"
+                    binary_var = f"{project_name}_BINARY_DIR"
+                    ctx.variables[source_var] = str(ctx.current_source_dir)
+                    ctx.variables[binary_var] = str(ctx.build_dir)
+                    # Keep project source/binary dirs globally visible across scopes
+                    # (e.g. when project() is called in add_subdirectory()).
+                    ctx.cache_variables.add(source_var)
+                    ctx.cache_variables.add(binary_var)
 
                     if "VERSION" in args:
                         ver_idx = args.index("VERSION")
                         if ver_idx + 1 < len(args):
                             version = args[ver_idx + 1]
                             ctx.variables["PROJECT_VERSION"] = version
-                            ctx.variables[f"{args[0]}_VERSION"] = version
+                            ctx.variables[f"{project_name}_VERSION"] = version
 
                             # Workaround for https://github.com/erincatto/box2d/pull/1033:
-                            ctx.variables[f"{args[0].upper()}_VERSION"] = version
+                            ctx.variables[f"{project_name.upper()}_VERSION"] = version
 
                             ctx.variables["CMAKE_PROJECT_VERSION"] = version
                             parts = version.split(".")
@@ -995,7 +1002,7 @@ def process_commands(
                             ):
                                 val = parts[i] if i < len(parts) else ""
                                 ctx.variables[f"PROJECT_VERSION_{suffix}"] = val
-                                ctx.variables[f"{args[0]}_VERSION_{suffix}"] = val
+                                ctx.variables[f"{project_name}_VERSION_{suffix}"] = val
                                 ctx.variables[f"CMAKE_PROJECT_VERSION_{suffix}"] = val
 
             case "enable_language":
