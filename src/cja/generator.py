@@ -2126,6 +2126,65 @@ int main() {{
                         )
                         if not quiet:
                             print(f"{colored('✓', 'green')} {package_name}")
+                    elif package_name in ("Python", "Python3"):
+                        # Minimal support for find_package(Python COMPONENTS Interpreter)
+                        components: list[str] = []
+                        i = 1
+                        while i < len(args):
+                            token = args[i]
+                            if token in ("COMPONENTS", "OPTIONAL_COMPONENTS"):
+                                i += 1
+                                while i < len(args) and args[i] not in (
+                                    "REQUIRED",
+                                    "QUIET",
+                                    "COMPONENTS",
+                                    "OPTIONAL_COMPONENTS",
+                                    "EXACT",
+                                    "MODULE",
+                                    "CONFIG",
+                                    "NO_MODULE",
+                                ):
+                                    components.append(args[i])
+                                    i += 1
+                                continue
+                            i += 1
+
+                        requested_components = set(components)
+                        needs_interpreter = (
+                            not requested_components
+                            or "Interpreter" in requested_components
+                        )
+                        interpreter_path = sys.executable if needs_interpreter else ""
+                        interpreter_found = bool(interpreter_path)
+                        unsupported_components = requested_components - {"Interpreter"}
+                        found = interpreter_found and not unsupported_components
+
+                        ctx.variables[f"{package_name}_FOUND"] = (
+                            "TRUE" if found else "FALSE"
+                        )
+                        if needs_interpreter:
+                            ctx.variables[f"{package_name}_Interpreter_FOUND"] = (
+                                "TRUE" if interpreter_found else "FALSE"
+                            )
+                            if interpreter_found:
+                                ctx.variables[f"{package_name}_EXECUTABLE"] = (
+                                    interpreter_path
+                                )
+                                ctx.imported_targets[
+                                    f"{package_name}::Interpreter"
+                                ] = ImportedTarget()
+
+                        if required and not found:
+                            ctx.print_error(
+                                f"could not find package: {package_name}", cmd.line
+                            )
+                            raise SystemExit(1)
+                        if not quiet:
+                            if found:
+                                print(f"{colored('?', 'green')} {package_name}")
+                            else:
+                                print(f"{colored('?', 'red')} {package_name}")
+
                     elif package_name == "PkgConfig":
                         ctx.variables["PkgConfig_FOUND"] = "TRUE"
                         ctx.variables["PKG_CONFIG_EXECUTABLE"] = "pkg-config"

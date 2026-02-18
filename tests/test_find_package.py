@@ -1,6 +1,7 @@
 """Tests for find_package command."""
 
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -143,3 +144,39 @@ def test_find_package_webp_found() -> None:
     assert ctx.variables["WEBP_FOUND"] == "TRUE"
     assert "WEBP_LIBRARIES" in ctx.variables
     assert "WebP::webp" in ctx.imported_targets
+
+
+def test_find_package_python_interpreter() -> None:
+    """Test find_package(Python COMPONENTS Interpreter)."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(
+            name="find_package",
+            args=["Python", "COMPONENTS", "Interpreter"],
+            line=1,
+        )
+    ]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["Python_FOUND"] == "TRUE"
+    assert ctx.variables["Python_Interpreter_FOUND"] == "TRUE"
+    assert ctx.variables["Python_EXECUTABLE"] == sys.executable
+    assert "Python::Interpreter" in ctx.imported_targets
+
+
+def test_find_package_python3_interpreter() -> None:
+    """Test find_package(Python3 COMPONENTS Interpreter)."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(
+            name="find_package",
+            args=["Python3", "COMPONENTS", "Interpreter"],
+            line=1,
+        )
+    ]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["Python3_FOUND"] == "TRUE"
+    assert ctx.variables["Python3_Interpreter_FOUND"] == "TRUE"
+    assert ctx.variables["Python3_EXECUTABLE"] == sys.executable
+    assert "Python3::Interpreter" in ctx.imported_targets
