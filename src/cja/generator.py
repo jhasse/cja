@@ -1096,6 +1096,7 @@ def process_commands(
                         "CheckCXXCompilerFlag",
                         "CheckCCompilerFlag",
                         "CheckCXXSymbolExists",
+                        "CheckSymbolExists",
                         "CMakeDependentOption",
                         "FetchContent",
                         "FindPackageHandleStandardArgs",

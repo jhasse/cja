@@ -43,6 +43,15 @@ def test_include_known_module_strict() -> None:
     # Should not raise
     process_commands(commands, ctx, strict=True)
 
+def test_include_check_symbol_exists_strict() -> None:
+    """Test that include(CheckSymbolExists) works in strict mode."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="include", args=["CheckSymbolExists"], line=1),
+    ]
+    # Should not raise
+    process_commands(commands, ctx, strict=True)
+
 
 def test_unsupported_command_strict(capsys: pytest.CaptureFixture[str]) -> None:
     """Test that unsupported commands error in strict mode."""
