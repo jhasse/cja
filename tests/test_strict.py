@@ -34,6 +34,26 @@ def test_include_unknown_module_non_strict() -> None:
     process_commands(commands, ctx, strict=False)
 
 
+def test_include_optional_missing_file_strict() -> None:
+    """Test that include(missing.cmake OPTIONAL) does not error in strict mode."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="include", args=["non_existing_file.cmake", "OPTIONAL"], line=1),
+    ]
+    # Should not raise
+    process_commands(commands, ctx, strict=True)
+
+
+def test_include_optional_unknown_module_strict() -> None:
+    """Test that include(Unknown OPTIONAL) does not error in strict mode."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="include", args=["NonExistentModule", "OPTIONAL"], line=1),
+    ]
+    # Should not raise
+    process_commands(commands, ctx, strict=True)
+
+
 def test_include_known_module_strict() -> None:
     """Test that include(known_module) works in strict mode."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))

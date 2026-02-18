@@ -1089,6 +1089,8 @@ def process_commands(
             case "include":
                 if args:
                     module_name = args[0]
+                    include_options = {arg.upper() for arg in args[1:]}
+                    optional_include = "OPTIONAL" in include_options
                     known_modules = {
                         "CMakePackageConfigHelpers",
                         "CTest",
@@ -1162,14 +1164,14 @@ def process_commands(
                             )
                             frame.pc += 1
                             continue
-                        elif strict:
+                        elif strict and not optional_include:
                             ctx.print_error(
                                 f"include() could not find file: {module_name}",
                                 cmd.line,
                             )
                             sys.exit(1)
                     elif module_name not in known_modules:
-                        if strict:
+                        if strict and not optional_include:
                             ctx.print_error(f"unknown module: {module_name}", cmd.line)
                             sys.exit(1)
 
