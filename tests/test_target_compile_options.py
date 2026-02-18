@@ -71,3 +71,29 @@ def test_target_compile_options_visibility(tmp_path: Path) -> None:
     assert "-Wall" in exe_line_block
     assert "-Winvalid-pch" in exe_line_block
     assert "-Werror" not in exe_line_block
+
+
+def test_windows_clang_upgrades_cxx11_in_target_compile_options(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """On Windows clang++, target -std=c++11 should be emitted as -std=c++14."""
+    monkeypatch.setattr("cja.generator.platform.system", lambda: "Windows")
+
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    ctx.cxx_compiler = "clang++"
+    commands = [
+        Command(name="add_executable", args=["myapp", "main.cpp"], line=1),
+        Command(
+            name="target_compile_options",
+            args=["myapp", "PRIVATE", "-std=c++11"],
+            line=2,
+        ),
+    ]
+    process_commands(commands, ctx)
+
+    ninja_path = tmp_path / "build.ninja"
+    generate_ninja(ctx, ninja_path, "build")
+    content = ninja_path.read_text()
+    assert "-std=c++14" in content
+    assert "-std=c++11" not in content

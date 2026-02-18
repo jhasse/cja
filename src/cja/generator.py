@@ -204,6 +204,21 @@ def compile_feature_to_flag(feature: str) -> str | None:
     return None
 
 
+def _is_windows_clangxx(cxx: str) -> bool:
+    if platform.system() != "Windows":
+        return False
+    parts = shlex.split(cxx) if cxx else []
+    tool = parts[0] if parts else cxx
+    name = Path(tool).name.lower()
+    return name in ("clang++", "clang++.exe")
+
+
+def _normalize_windows_clang_cxx_std(flag: str, enabled: bool) -> str:
+    if not enabled:
+        return flag
+    return re.sub(r"(?<!\S)-std=c\+\+11(?=\s|$)", "-std=c++14", flag)
+
+
 def framework_link_flags(lib_path: str) -> list[str] | None:
     """Return macOS framework link flags if lib_path refers to a framework."""
     if platform.system() != "Darwin":
@@ -3038,6 +3053,7 @@ def generate_ninja(
     # Use compilers from context (set via CMAKE_C_COMPILER/CMAKE_CXX_COMPILER or defaults)
     cc = ctx.c_compiler
     cxx = ctx.cxx_compiler
+    windows_clangxx = _is_windows_clangxx(cxx)
 
     # Detect extensions
     exe_ext = ".exe" if platform.system() == "Windows" else ""
@@ -3142,6 +3158,7 @@ def generate_ninja(
         base_cflags = f"-fdiagnostics-color {build_type_flags}".strip()
         c_flags = ctx.variables.get("CMAKE_C_FLAGS", "")
         cxx_flags = ctx.variables.get("CMAKE_CXX_FLAGS", "")
+        cxx_flags = _normalize_windows_clang_cxx_std(cxx_flags, windows_clangxx)
         linker_flags = ctx.variables.get("CMAKE_LINKER_FLAGS", "")
         n.variable("ldflags", linker_flags)
 
@@ -3428,6 +3445,10 @@ def generate_ninja(
                             and not flag.startswith("-std=c++")
                         )
                     ]
+                    source_compile_flags = [
+                        _normalize_windows_clang_cxx_std(flag, windows_clangxx)
+                        for flag in source_compile_flags
+                    ]
 
                 source_vars: dict[str, str | list[str] | None] | None = None
                 if source_compile_flags:
@@ -3587,6 +3608,10 @@ def generate_ninja(
                             flag.startswith("-std=c")
                             and not flag.startswith("-std=c++")
                         )
+                    ]
+                    source_compile_flags = [
+                        _normalize_windows_clang_cxx_std(flag, windows_clangxx)
+                        for flag in source_compile_flags
                     ]
 
                 source_vars: dict[str, str | list[str] | None] | None = None
