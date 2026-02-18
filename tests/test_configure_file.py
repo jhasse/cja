@@ -135,3 +135,26 @@ def test_configure_file_cmakedefine01(tmp_path: Path) -> None:
     out = (tmp_path / "build" / "config.h").read_text()
     assert "#define HAVE_A 1" in out
     assert "#define HAVE_B 0" in out
+
+
+def test_configure_file_undefined_vars_warn_in_strict(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    """Undefined vars in template content should warn, not fail, in strict mode."""
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / "config.in").write_text("A=@MISSING_A@\nB=${MISSING_B}\n")
+
+    ctx = BuildContext(source_dir=src_dir, build_dir=tmp_path / "build")
+    commands = [Command(name="configure_file", args=["config.in", "config.out"], line=1)]
+
+    process_commands(commands, ctx, strict=True)
+
+    out = (tmp_path / "build" / "config.out").read_text()
+    assert out == "A=\nB=\n"
+
+    captured = capsys.readouterr()
+    assert "warning:" in captured.err
+    assert "undefined variable referenced: MISSING_A" in captured.err
+    assert "undefined variable referenced: MISSING_B" in captured.err

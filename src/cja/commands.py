@@ -2010,16 +2010,18 @@ def handle_configure_file(
         def replace_at_var(match: re.Match[str]) -> str:
             var_name = match.group(1)
             value = ctx.variables.get(var_name, "")
-            if value == "" and var_name not in ctx.variables and strict:
-                ctx.print_error(f"undefined variable referenced: {var_name}", cmd.line)
-                sys.exit(1)
+            if value == "" and var_name not in ctx.variables:
+                # In config templates, undefined vars are replaced with empty strings,
+                # even in strict mode; emit a warning for visibility.
+                ctx.print_warning(f"undefined variable referenced: {var_name}", cmd.line)
             return value
 
         content = re.sub(r"@([A-Za-z_][A-Za-z0-9_]*)@", replace_at_var, content)
 
         # ${VAR} replacement (unless @ONLY)
         if not at_only:
-            content = ctx.expand_variables(content, strict, cmd.line)
+            # For template content, undefined ${VAR} should warn, not fail, in strict mode.
+            content = ctx.expand_variables(content, False, cmd.line)
 
         if escape_quotes:
             content = content.replace('"', '\\"')
