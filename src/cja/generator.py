@@ -1174,6 +1174,7 @@ def process_commands(
                     optional_include = "OPTIONAL" in include_options
                     known_modules = {
                         "CMakePackageConfigHelpers",
+                        "CMakeParseArguments",
                         "CTest",
                         "CheckIPOSupported",
                         "CheckCXXCompilerFlag",
