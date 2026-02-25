@@ -3,7 +3,7 @@
 from pathlib import Path
 import platform
 
-from cja.generator import BuildContext, process_commands, generate_ninja
+from cja.generator import BuildContext, configure, process_commands, generate_ninja
 from cja.parser import Command
 
 EXE_EXT = ".exe" if platform.system() == "Windows" else ""
@@ -60,3 +60,29 @@ def test_install_targets(tmp_path: Path) -> None:
     # Check for phony install target
     assert "build install: phony" in ninja_content
     assert str(expected_dest) in ninja_content
+
+
+def test_cmake_install_prefix_default(tmp_path: Path) -> None:
+    """CMAKE_INSTALL_PREFIX should default to <builddir>/install."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    (source_dir / "CMakeLists.txt").write_text("project(test_install_prefix)\n")
+
+    ctx = configure(source_dir, "build")
+
+    assert ctx.variables["CMAKE_INSTALL_PREFIX"] == str(source_dir / "build" / "install")
+
+
+def test_cmake_install_prefix_respects_override(tmp_path: Path) -> None:
+    """-DCMAKE_INSTALL_PREFIX should override the default value."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    (source_dir / "CMakeLists.txt").write_text("project(test_install_prefix)\n")
+
+    ctx = configure(
+        source_dir,
+        "build",
+        variables={"CMAKE_INSTALL_PREFIX": "/opt/custom-prefix"},
+    )
+
+    assert ctx.variables["CMAKE_INSTALL_PREFIX"] == "/opt/custom-prefix"

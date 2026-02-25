@@ -3910,6 +3910,7 @@ def configure(
     ctx.variables["CMAKE_FIND_PACKAGE_REDIRECTS_DIR"] = str(
         ctx.build_dir / "CMakeFiles" / "pkgRedirects"
     )
+    ctx.variables.setdefault("CMAKE_INSTALL_PREFIX", str(ctx.build_dir / "install"))
     ctx.variables["CMAKE_HOST_SYSTEM_PROCESSOR"] = _detect_host_system_processor()
 
     if platform.system() == "Darwin":
