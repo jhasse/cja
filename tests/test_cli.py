@@ -1,6 +1,5 @@
 """Tests for CLI argument handling."""
 
-import shutil
 import subprocess
 import platform
 from pathlib import Path
@@ -10,6 +9,7 @@ import pytest
 
 from cja.cli import parse_define
 from cja.generator import configure
+from tests.helpers import copy_unignored_tree
 
 
 EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
@@ -36,7 +36,7 @@ def test_parse_define_with_equals_in_value() -> None:
 def test_configure_with_variables(tmp_path: Path) -> None:
     """Test configure with variables passed via -D."""
     source_dir = tmp_path / "hello"
-    shutil.copytree(EXAMPLES_DIR / "hello", source_dir)
+    copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
 
     configure(source_dir, "build", variables={"CMAKE_BUILD_TYPE": "Release"})
 
@@ -49,7 +49,7 @@ def test_configure_with_variables(tmp_path: Path) -> None:
 def test_cli_d_flag(tmp_path: Path) -> None:
     """Test cja CLI with -D flag."""
     source_dir = tmp_path / "hello"
-    shutil.copytree(EXAMPLES_DIR / "hello", source_dir)
+    copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
 
     result = subprocess.run(
         ["uv", "run", "cja", "-DCMAKE_BUILD_TYPE=Debug"],
@@ -68,7 +68,7 @@ def test_cli_d_flag(tmp_path: Path) -> None:
 def test_cli_multiple_d_flags(tmp_path: Path) -> None:
     """Test cja CLI with multiple -D flags."""
     source_dir = tmp_path / "hello"
-    shutil.copytree(EXAMPLES_DIR / "hello", source_dir)
+    copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
 
     result = subprocess.run(
         [
@@ -92,7 +92,7 @@ def test_cli_multiple_d_flags(tmp_path: Path) -> None:
 def test_d_flag_overrides_cmake_set(tmp_path: Path) -> None:
     """Test that -D flag overrides set() in CMakeLists.txt."""
     source_dir = tmp_path / "hello"
-    shutil.copytree(EXAMPLES_DIR / "hello", source_dir)
+    copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
 
     # Add CMAKE_BUILD_TYPE=Debug to CMakeLists.txt
     cmake_file = source_dir / "CMakeLists.txt"
@@ -117,7 +117,7 @@ def test_d_flag_overrides_cmake_set(tmp_path: Path) -> None:
 def test_custom_build_dir_ninja_name(tmp_path: Path) -> None:
     """Test that -B custom-dir produces custom-dir.ninja."""
     source_dir = tmp_path / "hello"
-    shutil.copytree(EXAMPLES_DIR / "hello", source_dir)
+    copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
 
     configure(source_dir, "build-release")
 
@@ -129,7 +129,7 @@ def test_custom_build_dir_ninja_name(tmp_path: Path) -> None:
 def test_build_subcommand(tmp_path: Path) -> None:
     """Test cja build subcommand."""
     source_dir = tmp_path / "hello"
-    shutil.copytree(EXAMPLES_DIR / "hello", source_dir)
+    copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
 
     result = subprocess.run(
         ["uv", "run", "cja", "build"],
@@ -147,7 +147,7 @@ def test_build_subcommand(tmp_path: Path) -> None:
 def test_build_subcommand_release(tmp_path: Path) -> None:
     """Test cja build --release subcommand."""
     source_dir = tmp_path / "hello"
-    shutil.copytree(EXAMPLES_DIR / "hello", source_dir)
+    copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
 
     result = subprocess.run(
         ["uv", "run", "cja", "build", "--release"],
@@ -170,7 +170,7 @@ def test_build_subcommand_release(tmp_path: Path) -> None:
 def test_build_subcommand_skips_configure_if_ninja_exists(tmp_path: Path) -> None:
     """Test cja build skips configure if ninja file already exists."""
     source_dir = tmp_path / "hello"
-    shutil.copytree(EXAMPLES_DIR / "hello", source_dir)
+    copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
 
     # First build - should configure
     result1 = subprocess.run(

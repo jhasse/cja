@@ -1,10 +1,10 @@
 """Tests for add_compile_options command."""
 
-import shutil
 from pathlib import Path
 
 from cja.generator import BuildContext, configure, process_commands
 from cja.parser import Command
+from tests.helpers import copy_unignored_tree
 
 EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
 
@@ -24,7 +24,7 @@ def test_add_compile_options_stored() -> None:
 def test_add_compile_options_in_ninja(tmp_path: Path) -> None:
     """Test that add_compile_options flags appear in generated ninja file."""
     source_dir = tmp_path / "hello"
-    shutil.copytree(EXAMPLES_DIR / "hello", source_dir)
+    copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
 
     # Add add_compile_options to CMakeLists.txt
     cmake_file = source_dir / "CMakeLists.txt"

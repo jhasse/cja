@@ -1,11 +1,11 @@
 """Tests for target_include_directories command."""
 
 import os
-import shutil
 from pathlib import Path
 
 from cja.generator import BuildContext, configure, process_commands
 from cja.parser import Command
+from tests.helpers import copy_unignored_tree
 
 EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
 
@@ -71,7 +71,7 @@ def test_target_include_directories_absolute_path() -> None:
 def test_target_include_directories_in_ninja(tmp_path: Path) -> None:
     """Test that target_include_directories appear in generated ninja file."""
     source_dir = tmp_path / "hello"
-    shutil.copytree(EXAMPLES_DIR / "hello", source_dir)
+    copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
 
     # Create an include directory
     include_dir = source_dir / "include"
@@ -97,7 +97,7 @@ def test_target_include_directories_in_ninja(tmp_path: Path) -> None:
 def test_target_include_directories_public_propagates(tmp_path: Path) -> None:
     """Test PUBLIC include directories propagate to linking targets."""
     source_dir = tmp_path / "libmath"
-    shutil.copytree(EXAMPLES_DIR / "libmath", source_dir)
+    copy_unignored_tree(EXAMPLES_DIR / "libmath", source_dir)
 
     # Create include directory
     include_dir = source_dir / "myinclude"

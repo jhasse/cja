@@ -1,11 +1,11 @@
 """Integration tests for cja."""
 
-import shutil
 import subprocess
 import platform
 from pathlib import Path
 
 from cja import configure
+from tests.helpers import copy_unignored_tree
 
 
 EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
@@ -17,7 +17,7 @@ def test_hello_example(tmp_path: Path) -> None:
     """Test building the hello example project."""
     # Copy example to tmp_path since build.ninja is written in source dir
     source_dir = tmp_path / "hello"
-    shutil.copytree(EXAMPLES_DIR / "hello", source_dir)
+    copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
 
     # Configure
     configure(source_dir, "build")
@@ -54,7 +54,7 @@ def test_libmath_example(tmp_path: Path) -> None:
     """Test building the libmath example with static library."""
     # Copy example to tmp_path since build.ninja is written in source dir
     source_dir = tmp_path / "libmath"
-    shutil.copytree(EXAMPLES_DIR / "libmath", source_dir)
+    copy_unignored_tree(EXAMPLES_DIR / "libmath", source_dir)
 
     # Configure
     configure(source_dir, "build")
@@ -92,7 +92,7 @@ def test_objlib_example(tmp_path: Path) -> None:
     """Test building the objlib example with OBJECT library."""
     # Copy example to tmp_path since build.ninja is written in source dir
     source_dir = tmp_path / "objlib"
-    shutil.copytree(EXAMPLES_DIR / "objlib", source_dir)
+    copy_unignored_tree(EXAMPLES_DIR / "objlib", source_dir)
 
     # Configure
     configure(source_dir, "build")
@@ -132,7 +132,7 @@ def test_objlib_example(tmp_path: Path) -> None:
 def test_manifest_example(tmp_path: Path) -> None:
     """Test building the manifest example with .manifest as source (auto .rc + llvm-rc)."""
     source_dir = tmp_path / "manifest"
-    shutil.copytree(EXAMPLES_DIR / "manifest", source_dir)
+    copy_unignored_tree(EXAMPLES_DIR / "manifest", source_dir)
 
     # Configure
     configure(source_dir, "build")
@@ -166,7 +166,7 @@ def test_manifest_example(tmp_path: Path) -> None:
 def test_manifest_example_ninja_content(tmp_path: Path) -> None:
     """Verify manifest example generates rc rule, .res, and auto-generated .rc (Windows)."""
     source_dir = tmp_path / "manifest"
-    shutil.copytree(EXAMPLES_DIR / "manifest", source_dir)
+    copy_unignored_tree(EXAMPLES_DIR / "manifest", source_dir)
     configure(source_dir, "build")
 
     content = (source_dir / "build.ninja").read_text()
