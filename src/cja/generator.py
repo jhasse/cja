@@ -1497,6 +1497,75 @@ int main() {{
 
                     ctx.variables[variable] = "1" if found else ""
 
+            case "try_compile":
+                # Minimal support for:
+                # try_compile(<result> <bindir> SOURCES <src>... [OUTPUT_VARIABLE <var>])
+                if len(args) >= 2:
+                    result_var = args[0]
+                    bindir = Path(args[1])
+                    if not bindir.is_absolute():
+                        bindir = ctx.current_source_dir / bindir
+                    bindir.mkdir(parents=True, exist_ok=True)
+
+                    sources: list[str] = []
+                    output_var = ""
+                    option_tokens = {
+                        "SOURCES",
+                        "OUTPUT_VARIABLE",
+                        "CMAKE_FLAGS",
+                        "COMPILE_DEFINITIONS",
+                        "LINK_LIBRARIES",
+                        "COPY_FILE",
+                        "COPY_FILE_ERROR",
+                        "LINK_OPTIONS",
+                        "LINKER_LANGUAGE",
+                    }
+                    i = 2
+                    while i < len(args):
+                        token = args[i]
+                        if token == "SOURCES":
+                            i += 1
+                            while i < len(args) and args[i] not in option_tokens:
+                                sources.append(args[i])
+                                i += 1
+                            continue
+                        if token == "OUTPUT_VARIABLE" and i + 1 < len(args):
+                            output_var = args[i + 1]
+                            i += 2
+                            continue
+                        # Ignore unsupported options for now.
+                        i += 1
+
+                    success = True
+                    compile_output = ""
+                    if not sources:
+                        success = False
+                    for source in sources:
+                        src_path = Path(source)
+                        if not src_path.is_absolute():
+                            src_path = ctx.current_source_dir / src_path
+                        obj_name = f"{src_path.stem}.o"
+                        obj_path = bindir / obj_name
+                        compiler = (
+                            ctx.cxx_compiler
+                            if src_path.suffix.lower()
+                            in (".cpp", ".cxx", ".cc", ".c++", ".mm", ".mpp")
+                            else ctx.c_compiler
+                        )
+                        result = subprocess.run(
+                            [compiler, "-c", str(src_path), "-o", str(obj_path)],
+                            capture_output=True,
+                            text=True,
+                        )
+                        compile_output += result.stdout
+                        compile_output += result.stderr
+                        if result.returncode != 0:
+                            success = False
+
+                    ctx.variables[result_var] = "TRUE" if success else "FALSE"
+                    if output_var:
+                        ctx.variables[output_var] = compile_output.strip()
+
             case "check_symbol_exists":
                 # check_symbol_exists(<symbol> <files> <variable>)
                 if len(args) >= 3:
