@@ -28,3 +28,10 @@ def test_line_numbers_after_escaped_newline() -> None:
     commands = parse(content)
     assert len(commands) == 2
     assert commands[1].line == 5
+
+
+def test_escaped_variable_marker_in_quoted_string() -> None:
+    content = 'set(X "\\${exec_prefix}")'
+    commands = parse(content)
+    assert len(commands) == 1
+    assert commands[0].args == ["X", r"\${exec_prefix}"]

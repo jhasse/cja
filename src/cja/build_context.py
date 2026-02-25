@@ -155,6 +155,11 @@ class BuildContext:
         allow_undefined_warning: bool = False,
     ) -> str:
         """Expand ${VAR} and $ENV{VAR} references in a string."""
+        escaped_var_marker = "__CJA_ESC_VAR_OPEN__"
+        escaped_env_marker = "__CJA_ESC_ENV_OPEN__"
+        value = value.replace("\\$ENV{", escaped_env_marker)
+        value = value.replace("\\${", escaped_var_marker)
+
         # Common CMake pattern: if ("${VAR}" STREQUAL "") should not warn when VAR is undefined.
         if allow_undefined_empty:
             exact_var = re.fullmatch(r"\$\{(\w+)\}", value)
@@ -183,15 +188,18 @@ class BuildContext:
             return os.environ.get(var_name, "")
 
         result = value
-        for _ in range(10):
+        max_passes = 10 if "${${" in value else 1
+        for _ in range(max_passes):
             # Expand $ENV{VAR} first
-            expanded = re.sub(r"\$ENV\{(\w+)\}", replace_env, result)
+            expanded = re.sub(r"(?<!\\)\$ENV\{(\w+)\}", replace_env, result)
             # Then ${VAR}; match innermost braces first to support nested names like
             # ${CPM_PACKAGE_${PACKAGE}_SOURCE_DIR}.
-            expanded = re.sub(r"\$\{([^{}]+)\}", replace_normal, expanded)
+            expanded = re.sub(r"(?<!\\)\$\{([^{}]+)\}", replace_normal, expanded)
             if expanded == result:
                 break
             result = expanded
+        result = result.replace(escaped_env_marker, "$ENV{")
+        result = result.replace(escaped_var_marker, "${")
         return result
 
 

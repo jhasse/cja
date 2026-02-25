@@ -107,6 +107,10 @@ def tokenize(content: str) -> list[tuple[str, int]]:
                         val += "\t"
                     elif raw_val[j + 1] == "r":
                         val += "\r"
+                    elif raw_val[j + 1] == "$":
+                        # Preserve escaped variable markers (\${...}) so they
+                        # can remain literal during variable expansion.
+                        val += "\\$"
                     elif raw_val[j + 1] == "\n":
                         pass  # Line continuation
                     else:
