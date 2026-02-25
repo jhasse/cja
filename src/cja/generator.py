@@ -4062,6 +4062,7 @@ def configure(
     ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(ctx.current_list_file)
     ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(ctx.current_list_file.parent)
     ctx.variables["CMAKE_MODULE_PATH"] = ""
+    ctx.variables.setdefault("CMAKE_BUILD_TYPE", "Debug")
     ctx.variables["CMAKE_FIND_PACKAGE_REDIRECTS_DIR"] = str(
         ctx.build_dir / "CMakeFiles" / "pkgRedirects"
     )

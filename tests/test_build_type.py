@@ -100,10 +100,11 @@ def test_build_type_default_debug(tmp_path: Path) -> None:
     source_dir = tmp_path / "hello"
     copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
 
-    configure(source_dir, "build")
+    ctx = configure(source_dir, "build")
 
     build_ninja = source_dir / "build.ninja"
     content = build_ninja.read_text()
     # Default should be Debug
     assert "-g" in content
     assert "-O0" in content
+    assert ctx.variables["CMAKE_BUILD_TYPE"] == "Debug"
