@@ -40,3 +40,20 @@ def test_undefined_variable_strict_mode(capsys) -> None:
     assert "CMakeLists.txt:1:" in captured.err
     assert "error:" in captured.err
     assert "undefined variable referenced: UNDEFINED_VAR" in captured.err
+
+
+def test_nested_undefined_variable_warns_in_strict_mode(capsys) -> None:
+    """${${VAR}} should warn (not error) in strict mode when unresolved."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="set", args=["VAR", "UNDEFINED_VAR"], line=1),
+        Command(name="set", args=["RESULT", "${${VAR}}"], line=2),
+    ]
+    process_commands(commands, ctx, strict=True)
+
+    captured = capsys.readouterr()
+    assert "CMakeLists.txt:2:" in captured.err
+    assert "warning:" in captured.err
+    assert "undefined variable referenced: UNDEFINED_VAR" in captured.err
+    assert "error:" not in captured.err
+    assert ctx.variables["RESULT"] == ""

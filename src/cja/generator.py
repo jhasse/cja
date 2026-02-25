@@ -481,7 +481,15 @@ def select_if_block(
             and _is_empty_string_token(cmd.args[i + 2])
             and _is_exact_var_token(arg)
         )
-        if_args.append(ctx.expand_variables(arg, strict, cmd.line, allow_undefined))
+        if_args.append(
+            ctx.expand_variables(
+                arg,
+                strict,
+                cmd.line,
+                allow_undefined_empty=allow_undefined,
+                allow_undefined_warning="${${" in arg,
+            )
+        )
     if evaluate_condition(if_args, ctx.variables):
         # Execute commands from if to first elseif/else or endif
         block_end = blocks[0][1] if blocks else endif_idx
@@ -500,7 +508,11 @@ def select_if_block(
                 )
                 elseif_args.append(
                     ctx.expand_variables(
-                        arg, strict, commands[block_idx].line, allow_undefined
+                        arg,
+                        strict,
+                        commands[block_idx].line,
+                        allow_undefined_empty=allow_undefined,
+                        allow_undefined_warning="${${" in arg,
                     )
                 )
             if evaluate_condition(elseif_args, ctx.variables):
@@ -824,6 +836,7 @@ def process_commands(
         expanded_args: list[str] = []
         for idx, arg in enumerate(cmd.args):
             allow_undefined = False
+            allow_undefined_warning = "${${" in arg
             if cmd.name in ("if", "elseif"):
                 allow_undefined = (
                     idx + 2 < len(cmd.args)
@@ -835,7 +848,13 @@ def process_commands(
                         or (arg.startswith("'${") and arg.endswith("}'"))
                     )
                 )
-            expanded = ctx.expand_variables(arg, strict, cmd.line, allow_undefined)
+            expanded = ctx.expand_variables(
+                arg,
+                strict,
+                cmd.line,
+                allow_undefined_empty=allow_undefined,
+                allow_undefined_warning=allow_undefined_warning,
+            )
             quoted = cmd.is_quoted[idx] if idx < len(cmd.is_quoted) else False
             if ";" in expanded and not quoted:
                 expanded_args.extend(expanded.split(";"))
