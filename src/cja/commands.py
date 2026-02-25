@@ -27,9 +27,7 @@ from .utils import (
 
 def _is_supported_include_dir_genex(value: str) -> bool:
     """Return True for include-dir generator expressions we intentionally support."""
-    return bool(
-        re.fullmatch(r"\$<(BUILD_INTERFACE|INSTALL_INTERFACE):[^>]*>", value)
-    )
+    return bool(re.fullmatch(r"\$<(BUILD_INTERFACE|INSTALL_INTERFACE):[^>]*>", value))
 
 
 def handle_cmake_policy(
@@ -1591,7 +1589,8 @@ def handle_math(
         def normalize_literals(match: re.Match) -> str:
             lit = match.group(0)
             if lit.startswith("0") and len(lit) > 1:
-                return lit.lstrip("0")
+                stripped = lit.lstrip("0")
+                return stripped if stripped else "0"
             return lit
 
         expr = re.sub(r"\b0\d+\b", normalize_literals, expr)
@@ -2008,7 +2007,9 @@ def handle_configure_file(
                 return f"{indent}#define {var_name}{suffix}{newline}"
             return f"{indent}/* #undef {var_name} */{newline}"
 
-        content = "".join(replace_cmakedefine_line(line) for line in content.splitlines(keepends=True))
+        content = "".join(
+            replace_cmakedefine_line(line) for line in content.splitlines(keepends=True)
+        )
 
         # @VAR@ replacement
         def replace_at_var(match: re.Match[str]) -> str:
@@ -2017,7 +2018,9 @@ def handle_configure_file(
             if value == "" and var_name not in ctx.variables:
                 # In config templates, undefined vars are replaced with empty strings,
                 # even in strict mode; emit a warning for visibility.
-                ctx.print_warning(f"undefined variable referenced: {var_name}", cmd.line)
+                ctx.print_warning(
+                    f"undefined variable referenced: {var_name}", cmd.line
+                )
             return value
 
         content = re.sub(r"@([A-Za-z_][A-Za-z0-9_]*)@", replace_at_var, content)

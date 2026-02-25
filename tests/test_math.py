@@ -77,6 +77,16 @@ def test_math_expr_leading_zeros() -> None:
     assert ctx.variables["RESULT"] == "8"
 
 
+def test_math_expr_all_zero_literal() -> None:
+    """Test math(EXPR) with all-zero literal does not become empty."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="math", args=["EXPR", "RESULT", "00"], line=1),
+    ]
+    process_commands(commands, ctx)
+    assert ctx.variables["RESULT"] == "0"
+
+
 def test_math_expr_leading_whitespace() -> None:
     """Test math(EXPR) with leading whitespace and newlines in expression."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
