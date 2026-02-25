@@ -48,3 +48,37 @@ def test_include_current_list_file(tmp_path: Path) -> None:
     ctx = configure(source_dir, "build")
 
     assert ctx.variables["INC_FILE"] == str(inc_file.resolve())
+
+
+def test_include_module_from_cmake_module_path(tmp_path: Path) -> None:
+    """Test include(<module>) lookup via CMAKE_MODULE_PATH."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    (source_dir / "cmake").mkdir()
+
+    (source_dir / "CMakeLists.txt").write_text(
+        "set(CMAKE_MODULE_PATH cmake)\n"
+        "include(JoinPaths)\n"
+    )
+    (source_dir / "cmake/JoinPaths.cmake").write_text("set(JOIN_PATHS_LOADED YES)")
+
+    ctx = configure(source_dir, "build")
+
+    assert ctx.variables["JOIN_PATHS_LOADED"] == "YES"
+
+
+def test_include_module_from_cmake_module_path_strict(tmp_path: Path) -> None:
+    """Strict mode should also resolve include(<module>) via CMAKE_MODULE_PATH."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    (source_dir / "cmake").mkdir()
+
+    (source_dir / "CMakeLists.txt").write_text(
+        "set(CMAKE_MODULE_PATH cmake)\n"
+        "include(JoinPaths)\n"
+    )
+    (source_dir / "cmake/JoinPaths.cmake").write_text("set(JOIN_PATHS_LOADED YES)")
+
+    ctx = configure(source_dir, "build", strict=True)
+
+    assert ctx.variables["JOIN_PATHS_LOADED"] == "YES"

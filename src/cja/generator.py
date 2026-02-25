@@ -1253,7 +1253,54 @@ def process_commands(
                             )
                             sys.exit(1)
                     elif module_name not in known_modules:
-                        if strict and not optional_include:
+                        # Resolve bare module names from CMAKE_MODULE_PATH.
+                        module_path = ctx.variables.get("CMAKE_MODULE_PATH", "")
+                        search_dirs = module_path.split(";") if module_path else []
+                        found_file: Path | None = None
+                        for d in search_dirs:
+                            if not d:
+                                continue
+                            path = Path(d)
+                            if not path.is_absolute():
+                                path = ctx.current_source_dir / path
+                            candidate = path / f"{module_name}.cmake"
+                            if candidate.exists():
+                                found_file = candidate
+                                break
+
+                        if found_file:
+                            from .parser import parse_file
+
+                            ctx.record_cmake_file(found_file)
+                            inc_commands = parse_file(found_file)
+                            saved_list_file = ctx.current_list_file
+                            ctx.current_list_file = found_file
+                            ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(found_file)
+                            ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
+                                found_file.parent
+                            )
+
+                            def on_exit_include(
+                                saved_list_file: Path = saved_list_file,
+                            ) -> None:
+                                ctx.current_list_file = saved_list_file
+                                ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(
+                                    saved_list_file
+                                )
+                                ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
+                                    saved_list_file.parent
+                                )
+
+                            stack.append(
+                                Frame(
+                                    commands=inc_commands,
+                                    on_exit=on_exit_include,
+                                    kind="include",
+                                )
+                            )
+                            frame.pc += 1
+                            continue
+                        elif strict and not optional_include:
                             ctx.print_error(f"unknown module: {module_name}", cmd.line)
                             sys.exit(1)
 
