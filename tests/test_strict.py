@@ -107,3 +107,22 @@ def test_unsupported_command_non_strict() -> None:
     ]
     # Should not raise
     process_commands(commands, ctx, strict=False)
+
+
+def test_export_targets_file_strict(tmp_path: Path) -> None:
+    """Test export(TARGETS ... FILE ...) is accepted in strict mode."""
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(tmp_path / "build")
+    commands = [
+        Command(name="add_library", args=["mylib", "lib.cpp"], line=1),
+        Command(
+            name="export",
+            args=["TARGETS", "mylib", "FILE", "mylib-targets.cmake"],
+            line=2,
+        ),
+    ]
+    (tmp_path / "lib.cpp").touch()
+
+    process_commands(commands, ctx, strict=True)
+
+    assert (tmp_path / "build" / "mylib-targets.cmake").exists()
