@@ -89,6 +89,28 @@ def test_multiple_files_and_semicolons(tmp_path: Path) -> None:
         assert "DEF2" in props.compile_definitions
 
 
+def test_source_file_compile_definition_escapes_quotes(tmp_path: Path) -> None:
+    """Quoted values in COMPILE_DEFINITIONS should keep quotes in compiler args."""
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+
+    (tmp_path / "foo.cpp").touch()
+    commands = [
+        Command(name="add_executable", args=["myapp", "foo.cpp"], line=1),
+        Command(
+            name="set_source_files_properties",
+            args=["foo.cpp", "PROPERTIES", "COMPILE_DEFINITIONS", 'FOO="BAR"'],
+            line=2,
+        ),
+    ]
+    process_commands(commands, ctx)
+
+    ninja_path = tmp_path / "build.ninja"
+    generate_ninja(ctx, ninja_path, "build")
+
+    ninja_content = ninja_path.read_text()
+    assert '-DFOO=\\"BAR\\"' in ninja_content
+
+
 def test_object_depends_absolute_path(tmp_path: Path) -> None:
     """Test that absolute paths in OBJECT_DEPENDS are handled correctly."""
     source_root = tmp_path.absolute()

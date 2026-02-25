@@ -219,6 +219,13 @@ def _normalize_windows_clang_cxx_std(flag: str, enabled: bool) -> str:
     return re.sub(r"(?<!\S)-std=c\+\+11(?=\s|$)", "-std=c++14", flag)
 
 
+def _format_compile_definition_flag(definition: str) -> str:
+    """Format a compile definition as a compiler -D flag."""
+    normalized = strip_generator_expressions(definition)
+    escaped = re.sub(r'(?<!\\)"', r'\\"', normalized)
+    return f"-D{escaped}"
+
+
 def framework_link_flags(lib_path: str) -> list[str] | None:
     """Return macOS framework link flags if lib_path refers to a framework."""
     if platform.system() != "Darwin":
@@ -3339,9 +3346,9 @@ def generate_ninja(
             # Collect compile flags from global options, compile definitions, compile features, include dirs, and linked libraries
             lib_compile_flags: list[str] = list(ctx.compile_options)
             for definition in ctx.compile_definitions:
-                lib_compile_flags.append(f"-D{strip_generator_expressions(definition)}")
+                lib_compile_flags.append(_format_compile_definition_flag(definition))
             for definition in lib.compile_definitions:
-                lib_compile_flags.append(f"-D{strip_generator_expressions(definition)}")
+                lib_compile_flags.append(_format_compile_definition_flag(definition))
             for option in lib.compile_options:
                 opt = strip_generator_expressions(option)
                 if opt:
@@ -3372,7 +3379,7 @@ def generate_ninja(
                         if inc_flag not in lib_compile_flags:
                             lib_compile_flags.append(inc_flag)
                     for definition in dep_lib.public_compile_definitions:
-                        def_flag = f"-D{strip_generator_expressions(definition)}"
+                        def_flag = _format_compile_definition_flag(definition)
                         if def_flag not in lib_compile_flags:
                             lib_compile_flags.append(def_flag)
                     for option in dep_lib.public_compile_options:
@@ -3421,7 +3428,9 @@ def generate_ninja(
 
                 if file_props:
                     for definition in file_props.compile_definitions:
-                        source_compile_flags.append(f"-D{definition}")
+                        source_compile_flags.append(
+                            _format_compile_definition_flag(definition)
+                        )
                     for inc_dir in file_props.include_directories:
                         source_compile_flags.append(f"-I{_ninja_flag_path(inc_dir)}")
                     for d in file_props.object_depends:
@@ -3500,9 +3509,9 @@ def generate_ninja(
             # Collect cflags from global options, compile definitions, compile features, include dirs, linked libraries, and imported targets
             compile_flags: list[str] = list(ctx.compile_options)
             for definition in ctx.compile_definitions:
-                compile_flags.append(f"-D{strip_generator_expressions(definition)}")
+                compile_flags.append(_format_compile_definition_flag(definition))
             for definition in exe.compile_definitions:
-                compile_flags.append(f"-D{strip_generator_expressions(definition)}")
+                compile_flags.append(_format_compile_definition_flag(definition))
             for option in exe.compile_options:
                 opt = strip_generator_expressions(option)
                 if opt:
@@ -3532,7 +3541,7 @@ def generate_ninja(
                             compile_flags.append(inc_flag)
                     # Check for public compile definitions from linked libraries
                     for definition in linked_lib.public_compile_definitions:
-                        def_flag = f"-D{strip_generator_expressions(definition)}"
+                        def_flag = _format_compile_definition_flag(definition)
                         if def_flag not in compile_flags:
                             compile_flags.append(def_flag)
                     for option in linked_lib.public_compile_options:
@@ -3585,7 +3594,9 @@ def generate_ninja(
 
                 if file_props:
                     for definition in file_props.compile_definitions:
-                        source_compile_flags.append(f"-D{definition}")
+                        source_compile_flags.append(
+                            _format_compile_definition_flag(definition)
+                        )
                     for inc_dir in file_props.include_directories:
                         source_compile_flags.append(f"-I{_ninja_flag_path(inc_dir)}")
                     for d in file_props.object_depends:
@@ -3950,9 +3961,7 @@ def configure(
             f"{build_dir}.ninja",
         ]
         try:
-            subprocess.check_output(
-                restat_cmd, stderr=subprocess.STDOUT
-            )
+            subprocess.check_output(restat_cmd, stderr=subprocess.STDOUT)
         except subprocess.CalledProcessError as e:
             print(
                 f"{colored('warning:', 'magenta', attrs=['bold'])} `{' '.join(restat_cmd)}` failed with exit code {e.returncode}:\n{e.output.decode().rstrip()}"
