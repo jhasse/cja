@@ -155,6 +155,7 @@ class BuildContext:
         allow_undefined_warning: bool = False,
     ) -> str:
         """Expand ${VAR} and $ENV{VAR} references in a string."""
+        original_value = value
         escaped_var_marker = "__CJA_ESC_VAR_OPEN__"
         escaped_env_marker = "__CJA_ESC_ENV_OPEN__"
         value = value.replace("\\$ENV{", escaped_env_marker)
@@ -188,7 +189,10 @@ class BuildContext:
             return os.environ.get(var_name, "")
 
         result = value
-        max_passes = 10 if "${${" in value else 1
+        nested_var_ref = bool(
+            re.search(r"\$\{[^{}]*\$\{[^{}]+\}[^{}]*\}", original_value)
+        )
+        max_passes = 10 if nested_var_ref else 1
         for _ in range(max_passes):
             # Expand $ENV{VAR} first
             expanded = re.sub(r"(?<!\\)\$ENV\{(\w+)\}", replace_env, result)
