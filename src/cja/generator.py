@@ -3390,14 +3390,14 @@ def generate_ninja(
         # Link rules
         n.rule(
             "link",
-            command="$cc $in -o $out $ldflags $libs",
+            command="$cc -fdiagnostics-color $in -o $out $ldflags $libs",
             description="\x1b[32;1mLinking C executable $out\x1b[0m",
         )
         n.newline()
 
         n.rule(
             "link_cxx",
-            command="$cxx $in -o $out $ldflags $libs",
+            command="$cxx -fdiagnostics-color $in -o $out $ldflags $libs",
             description="\x1b[32;1mLinking C++ executable $out\x1b[0m",
         )
         n.newline()
