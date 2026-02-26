@@ -127,6 +127,56 @@ def test_execute_process_error_variable() -> None:
     assert ctx.variables["ERR"] == "error"
 
 
+def test_execute_process_output_quiet(capsys: pytest.CaptureFixture[str]) -> None:
+    """Test execute_process with OUTPUT_QUIET."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(
+            name="execute_process",
+            args=[
+                "COMMAND",
+                sys.executable,
+                "-c",
+                "print('quiet-stdout')",
+                "OUTPUT_QUIET",
+                "OUTPUT_VARIABLE",
+                "OUT",
+            ],
+            line=1,
+        )
+    ]
+    process_commands(commands, ctx)
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert ctx.variables["OUT"] == ""
+
+
+def test_execute_process_error_quiet(capsys: pytest.CaptureFixture[str]) -> None:
+    """Test execute_process with ERROR_QUIET."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(
+            name="execute_process",
+            args=[
+                "COMMAND",
+                sys.executable,
+                "-c",
+                "import sys\nprint('quiet-stderr', file=sys.stderr)",
+                "ERROR_QUIET",
+                "ERROR_VARIABLE",
+                "ERR",
+            ],
+            line=1,
+        )
+    ]
+    process_commands(commands, ctx)
+
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert ctx.variables["ERR"] == ""
+
+
 def test_execute_process_command_not_found() -> None:
     """Test execute_process with non-existent command."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))

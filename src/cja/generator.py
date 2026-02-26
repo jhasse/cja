@@ -2899,6 +2899,8 @@ int main() {{
                 result_variable: str | None = None
                 output_variable: str | None = None
                 error_variable: str | None = None
+                output_quiet = False
+                error_quiet = False
                 output_strip = False
                 error_strip = False
                 command_error_is_fatal: str | None = None
@@ -2928,6 +2930,10 @@ int main() {{
                         arg_idx += 1
                         if arg_idx < len(args):
                             error_variable = args[arg_idx]
+                    elif arg == "OUTPUT_QUIET":
+                        output_quiet = True
+                    elif arg == "ERROR_QUIET":
+                        error_quiet = True
                     elif arg == "OUTPUT_STRIP_TRAILING_WHITESPACE":
                         output_strip = True
                     elif arg == "ERROR_STRIP_TRAILING_WHITESPACE":
@@ -2938,13 +2944,10 @@ int main() {{
                         "ERROR_FILE",
                         "TIMEOUT",
                         "COMMAND_ECHO",
-                        "OUTPUT_QUIET",
-                        "ERROR_QUIET",
                         "ENCODING",
                     ):
                         # Skip unsupported options and their values
-                        if arg not in ("OUTPUT_QUIET", "ERROR_QUIET"):
-                            arg_idx += 1
+                        arg_idx += 1
                     elif arg == "COMMAND_ERROR_IS_FATAL":
                         arg_idx += 1
                         if arg_idx < len(args):
@@ -2966,9 +2969,13 @@ int main() {{
                         for idx, exec_cmd in enumerate(commands_list):
                             stdout_setting = None
                             stderr_setting = None
-                            if output_variable:
+                            if output_quiet:
+                                stdout_setting = subprocess.DEVNULL
+                            elif output_variable:
                                 stdout_setting = subprocess.PIPE
-                            if error_variable:
+                            if error_quiet:
+                                stderr_setting = subprocess.DEVNULL
+                            elif error_variable:
                                 stderr_setting = subprocess.PIPE
 
                             result = subprocess.run(
@@ -3006,13 +3013,17 @@ int main() {{
                                 )
 
                             if output_variable:
-                                output = last_result.stdout
+                                output = (
+                                    "" if output_quiet else (last_result.stdout or "")
+                                )
                                 if output_strip:
                                     output = output.rstrip()
                                 ctx.variables[output_variable] = output
 
                             if error_variable:
-                                error = last_result.stderr
+                                error = (
+                                    "" if error_quiet else (last_result.stderr or "")
+                                )
                                 if error_strip:
                                     error = error.rstrip()
                                 ctx.variables[error_variable] = error
@@ -3066,10 +3077,14 @@ int main() {{
                         saved_current_source_dir: Path = saved_current_source_dir,
                         saved_current_list_file: Path = saved_current_list_file,
                         saved_parent_directory: str = saved_parent_directory,
-                        saved_parent_scope_vars: dict[str, str | None] = saved_parent_scope_vars,
+                        saved_parent_scope_vars: dict[
+                            str, str | None
+                        ] = saved_parent_scope_vars,
                     ) -> None:
                         cache_updates = {
-                            k: v for k, v in ctx.variables.items() if k in ctx.cache_variables
+                            k: v
+                            for k, v in ctx.variables.items()
+                            if k in ctx.cache_variables
                         }
                         for var_name, var_value in ctx.parent_scope_vars.items():
                             if var_value is None:
