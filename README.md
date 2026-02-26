@@ -40,7 +40,9 @@ pipx install cja
   build graph, so tests can start as soon as the first test binary is ready.
 * Colors for compiler diagnostics are enabled by default.
 * `_builddir_/compile_commands.json` is always generated.
-* More colorful, simplified output.
+* More colorful, simplified output. For example, when downloading dependencies, cja shows progress bars using
+  [Rich](https://github.com/Textualize/rich), while CMake shows no output (or simple multi-line output when
+  `-DFETCHCONTENT_QUIET=0` is specified).
 
 Limitations to keep cja simple:
 
