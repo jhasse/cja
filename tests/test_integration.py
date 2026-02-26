@@ -2,7 +2,9 @@
 
 import subprocess
 import platform
+import os
 from pathlib import Path
+import pytest
 
 from cja import configure
 from tests.helpers import copy_unignored_tree
@@ -11,6 +13,22 @@ from tests.helpers import copy_unignored_tree
 EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
 EXE_EXT = ".exe" if platform.system() == "Windows" else ""
 LIB_EXT = ".lib" if platform.system() == "Windows" else ".a"
+
+
+def _is_gnu_cxx() -> bool:
+    try:
+        result = subprocess.run(
+            ["c++", "--version"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        return False
+    if result.returncode != 0:
+        return False
+    version_output = f"{result.stdout}\n{result.stderr}".lower()
+    return "g++" in version_output or "gcc" in version_output
 
 
 def test_hello_example(tmp_path: Path) -> None:
@@ -171,9 +189,38 @@ def test_manifest_example_ninja_content(tmp_path: Path) -> None:
 
     content = (source_dir / "build.ninja").read_text()
     if platform.system() == "Windows":
-        assert 'rule rc' in content
+        assert "rule rc" in content
         assert "app_app.res" in content
         # Auto-generated .rc references manifest
         generated_rc = source_dir / "build" / "app_app.rc"
         assert generated_rc.exists()
         assert "RT_MANIFEST" in generated_rc.read_text()
+
+
+@pytest.mark.skipif(
+    not _is_gnu_cxx(),
+    reason="requires GNU g++ as c++",
+)
+def test_linker_unknown_argument_captured_output_gxx_only(tmp_path: Path) -> None:
+    """Unknown linker arg should fail and include compiler diagnostic output."""
+    source_dir = tmp_path / "libmath"
+    copy_unignored_tree(EXAMPLES_DIR / "libmath", source_dir)
+
+    cmake_file = source_dir / "CMakeLists.txt"
+    cmake_file.write_text(
+        cmake_file.read_text() + '\nset(CMAKE_LINKER_FLAGS "--asdf")\n',
+    )
+
+    configure(source_dir, "build")
+
+    result = subprocess.run(
+        ["ninja"],
+        cwd=source_dir,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "CLICOLOR_FORCE": "1"},
+    )
+    assert result.returncode != 0
+    output_lower = f"{result.stdout}\n{result.stderr}".lower()
+    assert "unrecognized command-line option" in output_lower
+    assert "\x1b[01m\x1b[k--asdf\x1b[m\x1b[k" in output_lower
