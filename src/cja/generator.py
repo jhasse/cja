@@ -14,7 +14,7 @@ import zipfile
 from pathlib import Path
 from typing import Callable, cast
 
-from .utils import make_relative, strip_generator_expressions
+from .utils import is_truthy, make_relative, strip_generator_expressions
 from .syntax import (
     FetchContentInfo,
     SourceFileProperties,
@@ -3249,6 +3249,23 @@ def generate_ninja(
     elif build_type == "MINSIZEREL":
         build_type_flags = "-Os -DNDEBUG"
 
+    # Interprocedural optimization flags (LTO), including config-specific override.
+    ipo_enabled = False
+    ipo_config_var = f"CMAKE_INTERPROCEDURAL_OPTIMIZATION_{build_type}"
+    if ipo_config_var in ctx.variables:
+        ipo_enabled = is_truthy(ctx.variables[ipo_config_var])
+    elif "CMAKE_INTERPROCEDURAL_OPTIMIZATION" in ctx.variables:
+        ipo_enabled = is_truthy(ctx.variables["CMAKE_INTERPROCEDURAL_OPTIMIZATION"])
+    ipo_flags = ""
+    if ipo_enabled:
+        c_id = ctx.variables.get("CMAKE_C_COMPILER_ID", "")
+        cxx_id = ctx.variables.get("CMAKE_CXX_COMPILER_ID", "")
+        # GCC supports parallel LTO partitioning with -flto=auto.
+        if c_id == "GNU" or cxx_id == "GNU":
+            ipo_flags = "-flto=auto"
+        else:
+            ipo_flags = "-flto"
+
     with open(output_path, "w") as f:
         n = Writer(f)
 
@@ -3333,11 +3350,11 @@ def generate_ninja(
             n.newline()
 
         # Compile rules - include build type flags
-        base_cflags = f"-fdiagnostics-color {build_type_flags}".strip()
+        base_cflags = f"-fdiagnostics-color {build_type_flags} {ipo_flags}".strip()
         c_flags = ctx.variables.get("CMAKE_C_FLAGS", "")
         cxx_flags = ctx.variables.get("CMAKE_CXX_FLAGS", "")
         cxx_flags = _normalize_windows_clang_cxx_std(cxx_flags, windows_clangxx)
-        linker_flags = ctx.variables.get("CMAKE_LINKER_FLAGS", "")
+        linker_flags = f"{ctx.variables.get('CMAKE_LINKER_FLAGS', '')} {ipo_flags}".strip()
         n.variable("ldflags", linker_flags)
 
         n.rule(

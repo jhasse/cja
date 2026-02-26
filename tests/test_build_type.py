@@ -108,3 +108,47 @@ def test_build_type_default_debug(tmp_path: Path) -> None:
     assert "-g" in content
     assert "-O0" in content
     assert ctx.variables["CMAKE_BUILD_TYPE"] == "Debug"
+
+
+def test_ipo_release_variable_enabled_for_release(tmp_path: Path) -> None:
+    """Test CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE enables -flto in Release."""
+    source_dir = tmp_path / "hello"
+    copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
+
+    cmake_file = source_dir / "CMakeLists.txt"
+    content = cmake_file.read_text()
+    content = content.replace(
+        "project(hello)",
+        "project(hello)\n"
+        "set(CMAKE_BUILD_TYPE Release)\n"
+        "set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)",
+    )
+    cmake_file.write_text(content)
+
+    configure(source_dir, "build")
+
+    build_ninja = source_dir / "build.ninja"
+    content = build_ninja.read_text()
+    assert "-flto" in content
+
+
+def test_ipo_release_variable_not_applied_to_debug(tmp_path: Path) -> None:
+    """Test CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE does not affect Debug."""
+    source_dir = tmp_path / "hello"
+    copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
+
+    cmake_file = source_dir / "CMakeLists.txt"
+    content = cmake_file.read_text()
+    content = content.replace(
+        "project(hello)",
+        "project(hello)\n"
+        "set(CMAKE_BUILD_TYPE Debug)\n"
+        "set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)",
+    )
+    cmake_file.write_text(content)
+
+    configure(source_dir, "build")
+
+    build_ninja = source_dir / "build.ninja"
+    content = build_ninja.read_text()
+    assert "-flto" not in content
