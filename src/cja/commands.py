@@ -263,15 +263,26 @@ def handle_target_sources(
         sources = args[1:]
         # Skip visibility keywords
         sources = [s for s in sources if s not in ("PUBLIC", "PRIVATE", "INTERFACE")]
-        sources = [ctx.resolve_path(s) for s in sources]
+        resolved_sources: list[str] = []
+        for source in sources:
+            normalized = strip_generator_expressions(source)
+            if not normalized:
+                continue
+            resolved_sources.extend(
+                [
+                    ctx.resolve_path(item)
+                    for item in normalized.split(";")
+                    if item and item.strip()
+                ]
+            )
         # Add sources to library or executable
         lib = ctx.get_library(target_name)
         if lib:
-            lib.sources.extend(sources)
+            lib.sources.extend(resolved_sources)
         else:
             exe = ctx.get_executable(target_name)
             if exe:
-                exe.sources.extend(sources)
+                exe.sources.extend(resolved_sources)
 
 
 def handle_target_compile_features(
@@ -963,12 +974,23 @@ def handle_add_library(
             sources = sources[1:]
         if lib_type == "INTERFACE":
             sources = []
-        sources = [ctx.resolve_path(s) for s in sources]
+        resolved_sources: list[str] = []
+        for source in sources:
+            normalized = strip_generator_expressions(source)
+            if not normalized:
+                continue
+            resolved_sources.extend(
+                [
+                    ctx.resolve_path(item)
+                    for item in normalized.split(";")
+                    if item and item.strip()
+                ]
+            )
         include_directories = _collect_directory_include_dirs(ctx)
         ctx.libraries.append(
             Library(
                 name=name,
-                sources=sources,
+                sources=resolved_sources,
                 lib_type=lib_type,
                 include_directories=include_directories,
                 defined_file=ctx.current_list_file,
@@ -984,7 +1006,14 @@ def handle_add_executable(
 ) -> None:
     """Handle add_executable() command."""
     if len(args) >= 2:
-        sources = [ctx.resolve_path(s) for s in args[1:]]
+        sources: list[str] = []
+        for source in args[1:]:
+            normalized = strip_generator_expressions(source)
+            if not normalized:
+                continue
+            sources.extend(
+                [ctx.resolve_path(item) for item in normalized.split(";") if item]
+            )
         include_directories = _collect_directory_include_dirs(ctx)
         ctx.executables.append(
             Executable(

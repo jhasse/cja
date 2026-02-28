@@ -86,23 +86,117 @@ def is_constant_truthy(value: str) -> bool:
 
 
 def strip_generator_expressions(value: str) -> str:
-    """Strip or evaluate simple CMake generator expressions."""
-    # Handle $<BUILD_INTERFACE:xxx>
-    value = re.sub(r"\$<BUILD_INTERFACE:([^>]+)>", r"\1", value)
-    # Handle $<INSTALL_INTERFACE:xxx> -> empty
-    value = re.sub(r"\$<INSTALL_INTERFACE:[^>]*>", "", value)
-    # Handle $<BOOL:x> -> 1/0 (used by projects like nlohmann_json).
-    value = re.sub(
-        r"\$<BOOL:([^>]+)>",
-        lambda m: "1" if is_truthy(m.group(1)) else "0",
-        value,
-    )
-    # Handle $<TARGET_FILE:target> -> target (we'll fix this later if needed)
+    """Strip or evaluate common CMake generator expressions."""
 
-    # Handle nested expressions by repeatedly stripping the innermost ones
-    while "$<" in value:
-        new_value = re.sub(r"\$<[^<>]+>", "", value)
-        if new_value == value:
-            break
-        value = new_value
-    return value
+    def split_top_level(text: str, sep: str, maxsplit: int = -1) -> list[str]:
+        parts: list[str] = []
+        depth = 0
+        i = 0
+        start = 0
+        splits = 0
+        while i < len(text):
+            if text.startswith("$<", i):
+                depth += 1
+                i += 2
+                continue
+            if text[i] == ">" and depth > 0:
+                depth -= 1
+                i += 1
+                continue
+            if text[i] == sep and depth == 0 and (maxsplit < 0 or splits < maxsplit):
+                parts.append(text[start:i])
+                start = i + 1
+                splits += 1
+            i += 1
+        parts.append(text[start:])
+        return parts
+
+    def version_tuple(v: str) -> tuple[int, ...]:
+        try:
+            return tuple(int(x) for x in re.split(r"[^0-9]", v) if x)
+        except ValueError:
+            return (0,)
+
+    def find_genex_end(text: str, start: int) -> int:
+        depth = 1
+        i = start + 2
+        while i < len(text):
+            if text.startswith("$<", i):
+                depth += 1
+                i += 2
+                continue
+            if text[i] == ">":
+                depth -= 1
+                if depth == 0:
+                    return i
+            i += 1
+        return -1
+
+    def eval_genex_content(content: str) -> str:
+        if content.startswith("BUILD_INTERFACE:"):
+            return expand_text(content[len("BUILD_INTERFACE:") :])
+        if content.startswith("INSTALL_INTERFACE:"):
+            return ""
+        if content.startswith("BOOL:"):
+            arg = expand_text(content[len("BOOL:") :])
+            return "1" if is_truthy(arg) else "0"
+        if content.startswith("NOT:"):
+            arg = expand_text(content[len("NOT:") :])
+            return "0" if is_truthy(arg) else "1"
+        if content.startswith("AND:"):
+            args = split_top_level(content[len("AND:") :], ",")
+            return "1" if all(is_truthy(expand_text(a)) for a in args) else "0"
+        if content.startswith("OR:"):
+            args = split_top_level(content[len("OR:") :], ",")
+            return "1" if any(is_truthy(expand_text(a)) for a in args) else "0"
+        if content.startswith("STREQUAL:"):
+            args = split_top_level(content[len("STREQUAL:") :], ",", maxsplit=1)
+            if len(args) == 2:
+                return "1" if expand_text(args[0]) == expand_text(args[1]) else "0"
+            return "0"
+        if content.startswith("VERSION_LESS:"):
+            args = split_top_level(content[len("VERSION_LESS:") :], ",", maxsplit=1)
+            if len(args) == 2:
+                return (
+                    "1"
+                    if version_tuple(expand_text(args[0]))
+                    < version_tuple(expand_text(args[1]))
+                    else "0"
+                )
+            return "0"
+        if content.startswith("CXX_COMPILER_ID:") or content.startswith(
+            "C_COMPILER_ID:"
+        ):
+            # No full compiler-id genex support yet.
+            return "0"
+        if content.startswith("TARGET_PROPERTY:"):
+            # No property lookup support in generator expressions yet.
+            return ""
+
+        # Generic conditional form: $<condition:string>
+        cond_parts = split_top_level(content, ":", maxsplit=1)
+        if len(cond_parts) == 2:
+            condition = expand_text(cond_parts[0])
+            if is_truthy(condition):
+                return expand_text(cond_parts[1])
+            return ""
+        return ""
+
+    def expand_text(text: str) -> str:
+        out: list[str] = []
+        i = 0
+        while i < len(text):
+            start = text.find("$<", i)
+            if start == -1:
+                out.append(text[i:])
+                break
+            out.append(text[i:start])
+            end = find_genex_end(text, start)
+            if end == -1:
+                out.append(text[start:])
+                break
+            out.append(eval_genex_content(text[start + 2 : end]))
+            i = end + 1
+        return "".join(out)
+
+    return expand_text(value)

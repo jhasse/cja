@@ -159,3 +159,21 @@ def test_non_source_entries_not_compiled(tmp_path: Path) -> None:
     ninja = (source_dir / "build.ninja").read_text()
     assert "README.rst" not in ninja
     assert "docs" not in ninja
+
+
+def test_add_library_source_genex_list_from_variable() -> None:
+    """Source-list genex should evaluate, then split into concrete sources."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="set", args=["EXTRA_SRCS", "$<$<BOOL:ON>:a.cpp;b.cpp>"], line=1),
+        Command(
+            name="add_library",
+            args=["mylib", "STATIC", "base.cpp", "${EXTRA_SRCS}"],
+            line=2,
+        ),
+    ]
+    process_commands(commands, ctx)
+
+    lib = ctx.get_library("mylib")
+    assert lib is not None
+    assert lib.sources == ["base.cpp", "a.cpp", "b.cpp"]

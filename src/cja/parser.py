@@ -124,7 +124,18 @@ def tokenize(content: str) -> list[tuple[str, int]]:
 
         # Unquoted token (identifier or value)
         start = i
-        while i < len(content) and content[i] not in " \t\n()#":
+        genex_depth = 0
+        while i < len(content):
+            if content.startswith("$<", i):
+                genex_depth += 1
+                i += 2
+                continue
+            if content[i] == ">" and genex_depth > 0:
+                genex_depth -= 1
+                i += 1
+                continue
+            if genex_depth == 0 and content[i] in " \t\n()#":
+                break
             if content[i] == "\\" and i + 1 < len(content) and content[i + 1] == "\n":
                 i += 2
                 line += 1

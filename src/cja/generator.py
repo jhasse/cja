@@ -694,6 +694,36 @@ def process_commands(
     ctx.variables["CMAKE_COMMAND"] = "cja"
     ctx.variables["CMAKE_VERSION"] = "3.28.0"
     stack: list[Frame] = [Frame(commands=commands, pc=0, kind="commands")]
+    def split_unquoted_list_args(value: str) -> list[str]:
+        """Split list arguments on semicolons outside generator expressions."""
+        if ";" not in value:
+            return [value]
+        result: list[str] = []
+        current: list[str] = []
+        genex_depth = 0
+        i = 0
+        while i < len(value):
+            if value.startswith("$<", i):
+                genex_depth += 1
+                current.append("$<")
+                i += 2
+                continue
+            ch = value[i]
+            if ch == ">" and genex_depth > 0:
+                genex_depth -= 1
+                current.append(ch)
+                i += 1
+                continue
+            if ch == ";" and genex_depth == 0:
+                result.append("".join(current))
+                current = []
+                i += 1
+                continue
+            current.append(ch)
+            i += 1
+        result.append("".join(current))
+        return result
+
     while stack:
         frame = stack[-1]
         if frame.kind == "foreach":
@@ -972,7 +1002,7 @@ def process_commands(
             )
             quoted = cmd.is_quoted[idx] if idx < len(cmd.is_quoted) else False
             if ";" in expanded and not quoted:
-                expanded_args.extend(expanded.split(";"))
+                expanded_args.extend(split_unquoted_list_args(expanded))
             else:
                 expanded_args.append(expanded)
         args = expanded_args
