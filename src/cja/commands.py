@@ -163,7 +163,7 @@ def handle_target_link_libraries(
         visibility = "PUBLIC"  # Default visibility
         for arg in args[1:]:
             if len(arg) == 0:
-                continue # Argument might be an empty variable, skip
+                continue  # Argument might be an empty variable, skip
             if arg == "PUBLIC":
                 visibility = "PUBLIC"
             elif arg == "INTERFACE":
@@ -1909,7 +1909,33 @@ def handle_file(
     elif subcommand == "GLOB":
         if len(args) >= 3:
             var_name = args[1]
-            patterns = args[2:]
+            patterns: list[str] = []
+            relative_base: Path | None = None
+            list_directories: bool | None = None
+
+            i = 2
+            while i < len(args):
+                token = args[i]
+                token_upper = token.upper()
+                if token_upper == "RELATIVE" and i + 1 < len(args):
+                    rel_value = ctx.expand_variables(args[i + 1], strict, cmd.line)
+                    relative_base = Path(rel_value)
+                    if not relative_base.is_absolute():
+                        relative_base = ctx.current_source_dir / relative_base
+                    i += 2
+                    continue
+                if token_upper == "CONFIGURE_DEPENDS":
+                    i += 1
+                    continue
+                if token_upper == "LIST_DIRECTORIES" and i + 1 < len(args):
+                    list_directories = is_truthy(
+                        ctx.expand_variables(args[i + 1], strict, cmd.line)
+                    )
+                    i += 2
+                    continue
+                patterns.append(token)
+                i += 1
+
             matched_files: list[str] = []
             for pattern in patterns:
                 expanded_pattern = ctx.expand_variables(pattern, strict, cmd.line)
@@ -1919,8 +1945,27 @@ def handle_file(
                     matched = py_glob.glob(
                         str(ctx.current_source_dir / expanded_pattern)
                     )
+                if list_directories is False:
+                    matched = [m for m in matched if not Path(m).is_dir()]
                 matched.sort()
-                matched_files.extend(to_posix_path(m) for m in matched)
+                if relative_base is not None:
+                    try:
+                        base_resolved = relative_base.resolve()
+                    except OSError:
+                        base_resolved = relative_base
+                    for m in matched:
+                        m_path = Path(m)
+                        try:
+                            m_resolved = m_path.resolve()
+                        except OSError:
+                            m_resolved = m_path
+                        try:
+                            rel = m_resolved.relative_to(base_resolved)
+                            matched_files.append(to_posix_path(rel))
+                        except ValueError:
+                            matched_files.append(to_posix_path(m))
+                else:
+                    matched_files.extend(to_posix_path(m) for m in matched)
             ctx.variables[var_name] = ";".join(matched_files)
 
     elif subcommand == "REMOVE_RECURSE":

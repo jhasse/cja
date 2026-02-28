@@ -46,6 +46,35 @@ def test_file_glob_with_target(tmp_path: Path) -> None:
     assert any(s.endswith("util.cpp") for s in exe.sources)
 
 
+def test_file_glob_relative(tmp_path: Path) -> None:
+    """Test file(GLOB ... RELATIVE <path> ...)."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "a.webp").touch()
+    (data_dir / "b.webp").touch()
+    (data_dir / "readme.txt").touch()
+
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    ctx.variables["CMAKE_SOURCE_DIR"] = str(tmp_path)
+    commands = [
+        Command(
+            name="file",
+            args=[
+                "GLOB",
+                "GFX_FILES",
+                "RELATIVE",
+                "${CMAKE_SOURCE_DIR}/data",
+                "data/*.webp",
+            ],
+            line=1,
+        ),
+    ]
+    process_commands(commands, ctx)
+
+    assert "GFX_FILES" in ctx.variables
+    assert ctx.variables["GFX_FILES"] == "a.webp;b.webp"
+
+
 def test_file_write_creates_parent_dir(tmp_path: Path) -> None:
     """file(WRITE ...) should create parent directories."""
     source_dir = Path.cwd() / f"tmp_file_write_{tmp_path.name}"
