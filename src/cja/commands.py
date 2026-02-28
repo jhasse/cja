@@ -944,12 +944,20 @@ def handle_add_library(
                 )
             return
 
-        # Check for STATIC/SHARED/OBJECT/MODULE keyword
+        # Check for STATIC/SHARED/OBJECT/MODULE/INTERFACE keyword
         sources = args[1:]
         lib_type = "STATIC"
-        if sources and sources[0] in ("STATIC", "SHARED", "OBJECT", "MODULE"):
+        if sources and sources[0] in (
+            "STATIC",
+            "SHARED",
+            "OBJECT",
+            "MODULE",
+            "INTERFACE",
+        ):
             lib_type = sources[0]
             sources = sources[1:]
+        if lib_type == "INTERFACE":
+            sources = []
         sources = [ctx.resolve_path(s) for s in sources]
         include_directories = _collect_directory_include_dirs(ctx)
         ctx.libraries.append(

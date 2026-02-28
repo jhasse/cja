@@ -8,7 +8,7 @@ class Library:
 
     name: str
     sources: list[str]
-    lib_type: str = "STATIC"  # STATIC, SHARED, or OBJECT
+    lib_type: str = "STATIC"  # STATIC, SHARED, OBJECT, MODULE, or INTERFACE
     defined_file: Path | None = None
     defined_line: int = 0
     compile_features: list[str] = field(default_factory=list)  # PRIVATE features

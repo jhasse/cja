@@ -56,3 +56,17 @@ def test_option_with_if() -> None:
     process_commands(commands, ctx)
 
     assert ctx.variables["RESULT"] == "enabled"
+
+
+def test_option_undefined_default_var_strict() -> None:
+    """Undefined default variable in option() should not fail in strict mode."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(
+            name="option",
+            args=["CEREAL_INSTALL", "Generate install target", "${CEREAL_MASTER_PROJECT}"],
+            line=1,
+        ),
+    ]
+    process_commands(commands, ctx, strict=True)
+    assert ctx.variables["CEREAL_INSTALL"] == ""

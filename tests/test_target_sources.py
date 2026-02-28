@@ -55,6 +55,26 @@ def test_target_sources_library_created_without_initial_sources() -> None:
     assert "lib.c" in lib.sources
 
 
+def test_target_sources_interface_library() -> None:
+    """add_library(<name> INTERFACE) should create an interface target."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="add_library", args=["mylib", "INTERFACE"], line=1),
+        Command(
+            name="target_include_directories",
+            args=["mylib", "INTERFACE", "include"],
+            line=2,
+        ),
+    ]
+    process_commands(commands, ctx, strict=True)
+
+    lib = ctx.get_library("mylib")
+    assert lib is not None
+    assert lib.lib_type == "INTERFACE"
+    assert lib.sources == []
+    assert lib.public_include_directories
+
+
 def test_target_sources_multiple_visibility() -> None:
     """Test target_sources with multiple visibility keywords."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))

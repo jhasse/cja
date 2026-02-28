@@ -857,6 +857,18 @@ def process_commands(
                         or (arg.startswith("'${") and arg.endswith("}'"))
                     )
                 )
+            elif cmd.name == "option":
+                # Common CMake pattern:
+                #   option(FOO "help" ${SOME_DEFAULT})
+                # where SOME_DEFAULT can be undefined and should evaluate empty.
+                allow_undefined = (
+                    idx == 2
+                    and (
+                        (arg.startswith("${") and arg.endswith("}"))
+                        or (arg.startswith('"${') and arg.endswith('}"'))
+                        or (arg.startswith("'${") and arg.endswith("}'"))
+                    )
+                )
             expanded = ctx.expand_variables(
                 arg,
                 strict,
@@ -3739,6 +3751,9 @@ def generate_ninja(
         for lib in ctx.libraries:
             if lib.is_alias:
                 continue
+            if lib.lib_type == "INTERFACE":
+                # Interface libraries are usage requirements only.
+                continue
             objects: list[str] = []
 
             # Collect compile flags from global options, compile definitions, compile features, include dirs, and linked libraries
@@ -4053,6 +4068,10 @@ def generate_ninja(
             for link_dir in exe.link_directories:
                 link_flags.append(f"-L{_ninja_flag_path(link_dir)}")
             for lib_name in expanded_link_libraries:
+                linked_lib = ctx.get_library(lib_name)
+                if linked_lib and linked_lib.lib_type == "INTERFACE":
+                    # Interface libraries contribute usage requirements only.
+                    continue
                 if lib_name in object_lib_objects:
                     # Object library: add object files directly
                     link_inputs.extend(object_lib_objects[lib_name])
