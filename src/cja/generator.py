@@ -3064,6 +3064,84 @@ int main() {{
                                 print(f"{colored('✓', 'green')} {package_name}")
                             else:
                                 print(f"{colored('✗', 'red')} {package_name}")
+                    elif package_name == "PNG":
+                        found = False
+                        pkg_name = None
+                        png_cflags = ""
+                        png_libs = ""
+                        png_version = ""
+                        include_dirs: list[str] = []
+
+                        try:
+                            for candidate in ("libpng", "png"):
+                                result = subprocess.run(
+                                    ["pkg-config", "--exists", candidate],
+                                    capture_output=True,
+                                )
+                                if result.returncode == 0:
+                                    pkg_name = candidate
+                                    found = True
+                                    break
+                        except FileNotFoundError:
+                            found = False
+
+                        if found and pkg_name:
+                            cflags_result = subprocess.run(
+                                ["pkg-config", "--cflags", pkg_name],
+                                capture_output=True,
+                                text=True,
+                            )
+                            libs_result = subprocess.run(
+                                ["pkg-config", "--libs", pkg_name],
+                                capture_output=True,
+                                text=True,
+                            )
+                            version_result = subprocess.run(
+                                ["pkg-config", "--modversion", pkg_name],
+                                capture_output=True,
+                                text=True,
+                            )
+
+                            png_cflags = cflags_result.stdout.strip()
+                            png_libs = libs_result.stdout.strip()
+                            png_version = version_result.stdout.strip()
+
+                            for entry in shlex.split(png_cflags):
+                                if entry.startswith("-I"):
+                                    include_dirs.append(entry[2:])
+
+                            unique_include_dirs = list(dict.fromkeys(include_dirs))
+
+                            ctx.variables["PNG_FOUND"] = "TRUE"
+                            ctx.variables["PNG_LIBRARIES"] = png_libs
+                            ctx.variables["PNG_LIBRARY"] = png_libs
+                            ctx.variables["PNG_INCLUDE_DIRS"] = ";".join(
+                                unique_include_dirs
+                            )
+                            if unique_include_dirs:
+                                ctx.variables["PNG_INCLUDE_DIR"] = unique_include_dirs[
+                                    0
+                                ]
+                                ctx.variables["PNG_PNG_INCLUDE_DIR"] = (
+                                    unique_include_dirs[0]
+                                )
+                            if png_version:
+                                ctx.variables["PNG_VERSION"] = png_version
+                                ctx.variables["PNG_VERSION_STRING"] = png_version
+
+                            ctx.imported_targets["PNG::PNG"] = ImportedTarget(
+                                cflags=png_cflags,
+                                libs=png_libs,
+                            )
+                            if not quiet:
+                                print(f"{colored('✓', 'green')} {package_name}")
+                        else:
+                            ctx.variables["PNG_FOUND"] = "FALSE"
+                            if required:
+                                ctx.print_error("could not find package: PNG", cmd.line)
+                                raise SystemExit(1)
+                            if not quiet:
+                                print(f"{colored('✗', 'red')} {package_name}")
                     else:
                         # Search for Find<PackageName>.cmake in CMAKE_MODULE_PATH
                         module_path = ctx.variables.get("CMAKE_MODULE_PATH", "")

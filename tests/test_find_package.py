@@ -242,3 +242,57 @@ def test_find_package_boost_required_component_missing(
     with pytest.raises(SystemExit) as exc_info:
         process_commands(commands, ctx)
     assert exc_info.value.code == 1
+
+
+def test_find_package_png_found_via_pkg_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test find_package(PNG) when png is available via pkg-config."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+
+    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        if cmd == ["pkg-config", "--exists", "libpng"]:
+            return subprocess.CompletedProcess(cmd, 0)
+        if cmd == ["pkg-config", "--cflags", "libpng"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="-I/usr/include/libpng16")
+        if cmd == ["pkg-config", "--libs", "libpng"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="-lpng16")
+        if cmd == ["pkg-config", "--modversion", "libpng"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="1.6.43")
+        return subprocess.CompletedProcess(cmd, 1)
+
+    monkeypatch.setattr("cja.generator.subprocess.run", fake_run)
+
+    commands = [Command(name="find_package", args=["PNG"], line=1)]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["PNG_FOUND"] == "TRUE"
+    assert ctx.variables["PNG_LIBRARIES"] == "-lpng16"
+    assert ctx.variables["PNG_LIBRARY"] == "-lpng16"
+    assert ctx.variables["PNG_INCLUDE_DIRS"] == "/usr/include/libpng16"
+    assert ctx.variables["PNG_INCLUDE_DIR"] == "/usr/include/libpng16"
+    assert ctx.variables["PNG_PNG_INCLUDE_DIR"] == "/usr/include/libpng16"
+    assert ctx.variables["PNG_VERSION"] == "1.6.43"
+    assert ctx.variables["PNG_VERSION_STRING"] == "1.6.43"
+    assert "PNG::PNG" in ctx.imported_targets
+
+
+def test_find_package_png_required_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test find_package(PNG REQUIRED) failure when pkg-config can't find png."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+
+    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        if cmd == ["pkg-config", "--exists", "libpng"]:
+            return subprocess.CompletedProcess(cmd, 1)
+        if cmd == ["pkg-config", "--exists", "png"]:
+            return subprocess.CompletedProcess(cmd, 1)
+        return subprocess.CompletedProcess(cmd, 1)
+
+    monkeypatch.setattr("cja.generator.subprocess.run", fake_run)
+
+    commands = [Command(name="find_package", args=["PNG", "REQUIRED"], line=1)]
+    with pytest.raises(SystemExit) as exc_info:
+        process_commands(commands, ctx)
+    assert exc_info.value.code == 1
