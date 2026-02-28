@@ -134,3 +134,28 @@ def test_absolute_paths_handling() -> None:
     assert "src/util.c" in exe.sources
     # Path outside source_dir should remain absolute
     assert "/other/path/external.c" in exe.sources
+
+
+def test_non_source_entries_not_compiled(tmp_path: Path) -> None:
+    """Non-source files in target sources should not generate compile rules."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    (source_dir / "lib.cpp").write_text("int f() { return 1; }\n")
+    (source_dir / "README.rst").write_text("doc\n")
+    (source_dir / "CMakeLists.txt").write_text(
+        "\n".join(
+            [
+                "cmake_minimum_required(VERSION 3.15)",
+                "project(non_source LANGUAGES CXX)",
+                "add_library(mylib STATIC lib.cpp README.rst docs)",
+            ]
+        )
+        + "\n"
+    )
+
+    from cja.generator import configure
+
+    configure(source_dir, "build")
+    ninja = (source_dir / "build.ninja").read_text()
+    assert "README.rst" not in ninja
+    assert "docs" not in ninja

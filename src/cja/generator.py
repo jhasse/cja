@@ -168,6 +168,24 @@ def is_manifest(filename: str) -> bool:
     return filename.lower().endswith(".manifest")
 
 
+def is_compilable_source(filename: str) -> bool:
+    """Check if a filename looks like a compilable C/C++ source file."""
+    source_extensions = (
+        ".c",
+        ".cc",
+        ".cpp",
+        ".cxx",
+        ".c++",
+        ".C",
+        ".m",
+        ".mm",
+        ".M",
+        ".s",
+        ".S",
+    )
+    return filename.endswith(source_extensions)
+
+
 def _rc_manifest_deps(ctx: BuildContext, rc_path: str) -> list[str]:
     """Extract manifest file paths referenced by RT_MANIFEST in .rc file."""
     deps: list[str] = []
@@ -3877,7 +3895,10 @@ def generate_ninja(
             compileable_sources: list[str] = [
                 s
                 for s in lib.sources
-                if not is_header(s) and not is_rc(s) and not is_manifest(s)
+                if is_compilable_source(s)
+                and not is_header(s)
+                and not is_rc(s)
+                and not is_manifest(s)
             ]
 
             for source in compileable_sources:
@@ -4049,7 +4070,10 @@ def generate_ninja(
             compileable_sources: list[str] = [
                 s
                 for s in exe.sources
-                if not is_header(s) and not is_rc(s) and not is_manifest(s)
+                if is_compilable_source(s)
+                and not is_header(s)
+                and not is_rc(s)
+                and not is_manifest(s)
             ]
             rc_sources: list[str] = [s for s in exe.sources if is_rc(s)]
             manifest_sources: list[str] = [s for s in exe.sources if is_manifest(s)]
