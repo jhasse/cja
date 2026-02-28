@@ -908,7 +908,7 @@ def handle_add_library(
     args: list[str],
 ) -> None:
     """Handle add_library() command."""
-    if len(args) >= 2:
+    if len(args) >= 1:
         name = args[0]
         # Check for ALIAS
         if len(args) >= 3 and args[1] == "ALIAS":
@@ -944,10 +944,10 @@ def handle_add_library(
                 )
             return
 
-        # Check for STATIC/SHARED/OBJECT keyword
+        # Check for STATIC/SHARED/OBJECT/MODULE keyword
         sources = args[1:]
         lib_type = "STATIC"
-        if sources and sources[0] in ("STATIC", "SHARED", "OBJECT"):
+        if sources and sources[0] in ("STATIC", "SHARED", "OBJECT", "MODULE"):
             lib_type = sources[0]
             sources = sources[1:]
         sources = [ctx.resolve_path(s) for s in sources]
@@ -1686,6 +1686,15 @@ def handle_string(
 
     subcommand = args[0].upper()
 
+    def reset_cmake_match_vars() -> None:
+        keys = [
+            key
+            for key in ctx.variables
+            if key == "CMAKE_MATCH_COUNT" or re.fullmatch(r"CMAKE_MATCH_\d+", key)
+        ]
+        for key in keys:
+            ctx.variables.pop(key, None)
+
     if subcommand == "REPLACE":
         # string(REPLACE <match_string> <replace_string> <out_var> <input> [<input>...])
         if len(args) >= 5:
@@ -1707,13 +1716,20 @@ def handle_string(
                     inputs = args[4:]
                     full_input = "".join(inputs)
                     match = re.search(pattern, full_input)
+                    reset_cmake_match_vars()
                     if match:
                         ctx.variables[out_var] = match.group(0)
-                        # Set CMAKE_MATCH_n variables
+                        ctx.variables["CMAKE_MATCH_COUNT"] = str(len(match.groups()))
+                        # Set CMAKE_MATCH_n variables for the current match only.
                         for j in range(len(match.groups()) + 1):
-                            ctx.variables[f"CMAKE_MATCH_{j}"] = match.group(j)
+                            value = match.group(j)
+                            ctx.variables[f"CMAKE_MATCH_{j}"] = (
+                                value if value is not None else ""
+                            )
                     else:
                         ctx.variables[out_var] = ""
+                        ctx.variables["CMAKE_MATCH_COUNT"] = "0"
+                        ctx.variables["CMAKE_MATCH_0"] = ""
             elif regex_sub == "MATCHALL":
                 # string(REGEX MATCHALL <regex> <out_var> <input> [<input>...])
                 if len(args) >= 5:

@@ -25,6 +25,22 @@ class TestEvaluateCondition:
         variables: dict[str, str] = {}
         assert evaluate_condition(["NOT", "DEFINED", "MY_VAR"], variables) is True
 
+    def test_target_operator_true(self) -> None:
+        variables: dict[str, str] = {}
+        assert (
+            evaluate_condition(
+                ["TARGET", "fmt::fmt"], variables, target_exists=lambda n: n == "fmt::fmt"
+            )
+            is True
+        )
+
+    def test_target_operator_false(self) -> None:
+        variables: dict[str, str] = {}
+        assert (
+            evaluate_condition(["TARGET", "fmt::fmt"], variables, target_exists=lambda _: False)
+            is False
+        )
+
     def test_truthy_variable(self) -> None:
         variables = {"MY_VAR": "yes"}
         assert evaluate_condition(["MY_VAR"], variables) is True
@@ -203,3 +219,14 @@ class TestIfCommand:
         ]
         process_commands(commands, ctx)
         assert ctx.variables["RESULT"] == "from_if"
+
+    def test_if_target_operator_with_imported_target(self) -> None:
+        ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+        commands = [
+            Command(name="find_package", args=["Threads"], line=1),
+            Command(name="if", args=["NOT", "TARGET", "Threads::Threads"], line=2),
+            Command(name="set", args=["BAD", "1"], line=3),
+            Command(name="endif", args=[], line=4),
+        ]
+        process_commands(commands, ctx, strict=True)
+        assert "BAD" not in ctx.variables

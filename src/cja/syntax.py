@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 import re
+from typing import Callable
 
 from .parser import Command
 from .utils import UNDEFINED_VAR_SENTINEL, is_constant_truthy, is_truthy
@@ -50,7 +51,11 @@ class Test:
     command: list[str]
 
 
-def evaluate_condition(args: list[str], variables: dict[str, str]) -> bool:
+def evaluate_condition(
+    args: list[str],
+    variables: dict[str, str],
+    target_exists: Callable[[str], bool] | None = None,
+) -> bool:
     """Evaluate a CMake if() condition."""
     if not args:
         return False
@@ -106,7 +111,7 @@ def evaluate_condition(args: list[str], variables: dict[str, str]) -> bool:
             return res
 
         # Handle other unary operators
-        if args[i] in ("DEFINED", "EXISTS", "COMMAND"):
+        if args[i] in ("DEFINED", "EXISTS", "COMMAND", "TARGET"):
             op = args[i]
             i += 1
             if i < len(args):
@@ -119,6 +124,8 @@ def evaluate_condition(args: list[str], variables: dict[str, str]) -> bool:
                 if op == "COMMAND":
                     # For now, just return False as we don't track all commands yet
                     return False
+                if op == "TARGET":
+                    return target_exists(val) if target_exists else False
             return False
 
         # Handle binary operators/comparisons

@@ -462,6 +462,13 @@ def select_if_block(
 
     block_start = pc + 1
 
+    def target_exists(name: str) -> bool:
+        return (
+            ctx.get_library(name) is not None
+            or ctx.get_executable(name) is not None
+            or name in ctx.imported_targets
+        )
+
     def _is_empty_string_token(token: str) -> bool:
         return token == "" or token in ('""', "''")
 
@@ -490,7 +497,7 @@ def select_if_block(
                 allow_undefined_warning="${${" in arg,
             )
         )
-    if evaluate_condition(if_args, ctx.variables):
+    if evaluate_condition(if_args, ctx.variables, target_exists=target_exists):
         # Execute commands from if to first elseif/else or endif
         block_end = blocks[0][1] if blocks else endif_idx
         return endif_idx, (block_start, block_end)
@@ -515,7 +522,9 @@ def select_if_block(
                         allow_undefined_warning="${${" in arg,
                     )
                 )
-            if evaluate_condition(elseif_args, ctx.variables):
+            if evaluate_condition(
+                elseif_args, ctx.variables, target_exists=target_exists
+            ):
                 block_start = block_idx + 1
                 block_end = blocks[j + 1][1] if j + 1 < len(blocks) else endif_idx
                 return endif_idx, (block_start, block_end)

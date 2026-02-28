@@ -41,6 +41,20 @@ def test_target_sources_library() -> None:
     assert "extra.c" in lib.sources
 
 
+def test_target_sources_library_created_without_initial_sources() -> None:
+    """target_sources should work after add_library(<name>) with no source list."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="add_library", args=["mylib"], line=1),
+        Command(name="target_sources", args=["mylib", "PRIVATE", "lib.c"], line=2),
+    ]
+    process_commands(commands, ctx)
+
+    lib = ctx.get_library("mylib")
+    assert lib is not None
+    assert "lib.c" in lib.sources
+
+
 def test_target_sources_multiple_visibility() -> None:
     """Test target_sources with multiple visibility keywords."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
