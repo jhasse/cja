@@ -1290,7 +1290,7 @@ def handle_list(
 
     elif subcommand == "TRANSFORM":
         # list(TRANSFORM <list> <ACTION> [<SELECTOR>] [OUTPUT_VARIABLE <output variable>])
-        # Simplified implementation - just handle basic TOUPPER/TOLOWER/STRIP
+        # Simplified implementation - handle common actions used by projects.
         if len(args) < 3:
             if strict:
                 ctx.print_error("list(TRANSFORM) requires list and action", cmd.line)
@@ -1305,6 +1305,13 @@ def handle_list(
                 if idx + 1 < len(args):
                     out_var = args[idx + 1]
 
+            transform_args_end = (
+                args.index("OUTPUT_VARIABLE")
+                if "OUTPUT_VARIABLE" in args
+                else len(args)
+            )
+            transform_args = args[3:transform_args_end]
+
             list_val = ctx.variables.get(list_name, "")
             if list_val:
                 items = list_val.split(";")
@@ -1314,6 +1321,17 @@ def handle_list(
                     items = [item.lower() for item in items]
                 elif action == "STRIP":
                     items = [item.strip() for item in items]
+                elif action == "PREPEND":
+                    if not transform_args:
+                        if strict:
+                            ctx.print_error(
+                                "list(TRANSFORM ... PREPEND) requires a value",
+                                cmd.line,
+                            )
+                            sys.exit(1)
+                    else:
+                        prefix = transform_args[0]
+                        items = [f"{prefix}{item}" for item in items]
                 ctx.variables[out_var] = ";".join(items)
 
     elif subcommand == "FILTER":

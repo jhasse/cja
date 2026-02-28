@@ -232,6 +232,44 @@ def test_list_transform_output_variable() -> None:
     assert ctx.variables["MY_LIST"] == "hello;world"  # Original unchanged
 
 
+def test_list_transform_prepend() -> None:
+    """Test list(TRANSFORM PREPEND) command."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    ctx.variables["MY_LIST"] = "lapi.c;lauxlib.c"
+    commands = [
+        Command(
+            name="list",
+            args=["TRANSFORM", "MY_LIST", "PREPEND", "upstream/"],
+            line=1,
+        )
+    ]
+    process_commands(commands, ctx)
+    assert ctx.variables["MY_LIST"] == "upstream/lapi.c;upstream/lauxlib.c"
+
+
+def test_list_transform_prepend_output_variable() -> None:
+    """PREPEND with OUTPUT_VARIABLE should not modify original list."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    ctx.variables["MY_LIST"] = "a.c;b.c"
+    commands = [
+        Command(
+            name="list",
+            args=[
+                "TRANSFORM",
+                "MY_LIST",
+                "PREPEND",
+                "src/",
+                "OUTPUT_VARIABLE",
+                "RESULT",
+            ],
+            line=1,
+        )
+    ]
+    process_commands(commands, ctx)
+    assert ctx.variables["RESULT"] == "src/a.c;src/b.c"
+    assert ctx.variables["MY_LIST"] == "a.c;b.c"
+
+
 def test_list_filter_include() -> None:
     """Test list(FILTER INCLUDE) command."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
