@@ -3262,12 +3262,15 @@ int main() {{
                     saved_parent_scope_vars = ctx.parent_scope_vars
                     ctx.parent_scope_vars = {}
 
+                    # In CMake, CMAKE_CURRENT_LIST_* inside a function reflects
+                    # the caller's currently processed list file, not the file
+                    # where the function was originally defined.
                     ctx.current_list_file = func_def.defining_file
                     ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(
-                        func_def.defining_file
+                        saved_current_list_file
                     )
                     ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
-                        func_def.defining_file.parent
+                        saved_current_list_file.parent
                     )
 
                     def on_exit_function(

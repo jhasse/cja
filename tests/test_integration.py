@@ -197,6 +197,17 @@ def test_manifest_example_ninja_content(tmp_path: Path) -> None:
         assert "RT_MANIFEST" in generated_rc.read_text()
 
 
+def test_subdirectory_example(tmp_path: Path) -> None:
+    """Test subdirectory example list-dir behavior matches CMake."""
+    source_dir = tmp_path / "subdirectory"
+    copy_unignored_tree(EXAMPLES_DIR / "subdirectory", source_dir)
+
+    configure(source_dir, "build")
+
+    build_ninja = source_dir / "build.ninja"
+    assert build_ninja.exists()
+
+
 @pytest.mark.skipif(
     not _is_gnu_cxx(),
     reason="requires GNU g++ as c++",

@@ -1,0 +1,13 @@
+message(STATUS "subdirectory_example_SOURCE_DIR: ${subdirectory_example_SOURCE_DIR}")
+message(STATUS "CMAKE_CURRENT_LIST_DIR: ${CMAKE_CURRENT_LIST_DIR}")
+if(CMAKE_CURRENT_LIST_DIR STREQUAL ${subdirectory_example_SOURCE_DIR})
+    message(FATAL_ERROR "CMAKE_CURRENT_LIST_DIR should NOT be the same as subdirectory_example_SOURCE_DIR")
+endif()
+
+function(foo)
+    message(STATUS "subdirectory_example_SOURCE_DIR: ${subdirectory_example_SOURCE_DIR}")
+    message(STATUS "CMAKE_CURRENT_LIST_DIR: ${CMAKE_CURRENT_LIST_DIR}")
+    if(NOT CMAKE_CURRENT_LIST_DIR STREQUAL ${subdirectory_example_SOURCE_DIR})
+        message(FATAL_ERROR "CMAKE_CURRENT_LIST_DIR should be the same as subdirectory_example_SOURCE_DIR")
+    endif()
+endfunction()
