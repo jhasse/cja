@@ -162,6 +162,8 @@ def handle_target_link_libraries(
         # CMake supports: target_link_libraries(<target> <PRIVATE|PUBLIC|INTERFACE> <item>...)
         visibility = "PUBLIC"  # Default visibility
         for arg in args[1:]:
+            if len(arg) == 0:
+                continue # Argument might be an empty variable, skip
             if arg == "PUBLIC":
                 visibility = "PUBLIC"
             elif arg == "INTERFACE":
@@ -910,6 +912,9 @@ def handle_add_library(
     """Handle add_library() command."""
     if len(args) >= 1:
         name = args[0]
+        if len(name) == 0:
+            ctx.print_error("add_library() requires a non-empty target name", cmd.line)
+            sys.exit(1)
         # Check for ALIAS
         if len(args) >= 3 and args[1] == "ALIAS":
             target_name = args[2]
