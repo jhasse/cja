@@ -3593,11 +3593,6 @@ def generate_ninja(
             reconfigure_cmd_parts = ["cja", "--regenerate-during-build"]
             if builddir != "build":
                 reconfigure_cmd_parts += ["-B", "$builddir"]
-            for var_name in sorted(ctx.cache_variables):
-                if var_name in ctx.variables:
-                    reconfigure_cmd_parts.append(
-                        format_define(var_name, ctx.variables[var_name])
-                    )
 
             def quote_part(part: str) -> str:
                 if part == "$builddir":

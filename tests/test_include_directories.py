@@ -92,6 +92,7 @@ def test_target_include_directories_in_ninja(tmp_path: Path) -> None:
     build_ninja = source_dir / "build.ninja"
     ninja_content = build_ninja.read_text()
     assert "-Iinclude" in ninja_content
+    assert f"{source_dir}" not in ninja_content
 
 
 def test_target_include_directories_public_propagates(tmp_path: Path) -> None:
