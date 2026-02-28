@@ -139,9 +139,11 @@ def test_static_private_link_only_propagation(tmp_path):
     assert found_app_link, "Could not find build statement for app"
 
 
-def test_generator_expression_stripping(tmp_path, capsys):
-    """Test that complex generator expressions in target_link_libraries are stripped."""
+def test_target_link_libraries_compiler_version_genex(tmp_path):
+    """Compiler-id/version genex in target_link_libraries should evaluate."""
     ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    ctx.variables["CMAKE_CXX_COMPILER_ID"] = "GNU"
+    ctx.variables["CMAKE_CXX_COMPILER_VERSION"] = "8.4.0"
 
     genex = "$<$<AND:$<CXX_COMPILER_ID:GNU>,$<VERSION_LESS:$<CXX_COMPILER_VERSION>,9.0>>:stdc++fs>"
     commands = [
@@ -156,13 +158,6 @@ def test_generator_expression_stripping(tmp_path, capsys):
     generate_ninja(ctx, ninja_file, "build")
 
     content = ninja_file.read_text()
-    # Check that genex is NOT in the ninja file
-    assert "stdc++fs" not in content
+    # Genex should resolve and produce stdc++fs for GNU < 9.0.
+    assert "stdc++fs" in content
     assert "$<" not in content
-
-    # Check for warning
-    captured = capsys.readouterr()
-    assert (
-        "generator expressions in target_link_libraries are not yet supported"
-        in captured.err
-    )

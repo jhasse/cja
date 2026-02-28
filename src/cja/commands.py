@@ -173,13 +173,7 @@ def handle_target_link_libraries(
             else:
                 # It's a library name
                 if "$<" in arg:
-                    from .utils import strip_generator_expressions
-
-                    ctx.print_warning(
-                        "generator expressions in target_link_libraries are not yet supported",
-                        cmd.line,
-                    )
-                    arg = strip_generator_expressions(arg)
+                    arg = strip_generator_expressions(arg, ctx.variables)
                     if not arg:
                         continue
 

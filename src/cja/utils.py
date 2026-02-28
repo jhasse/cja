@@ -85,8 +85,11 @@ def is_constant_truthy(value: str) -> bool:
     return False
 
 
-def strip_generator_expressions(value: str) -> str:
+def strip_generator_expressions(
+    value: str, variables: dict[str, str] | None = None
+) -> str:
     """Strip or evaluate common CMake generator expressions."""
+    variables = variables or {}
 
     def split_top_level(text: str, sep: str, maxsplit: int = -1) -> list[str]:
         parts: list[str] = []
@@ -164,11 +167,22 @@ def strip_generator_expressions(value: str) -> str:
                     else "0"
                 )
             return "0"
-        if content.startswith("CXX_COMPILER_ID:") or content.startswith(
-            "C_COMPILER_ID:"
-        ):
-            # No full compiler-id genex support yet.
-            return "0"
+        if content == "CXX_COMPILER_ID":
+            return variables.get("CMAKE_CXX_COMPILER_ID", "")
+        if content == "C_COMPILER_ID":
+            return variables.get("CMAKE_C_COMPILER_ID", "")
+        if content == "CXX_COMPILER_VERSION":
+            return variables.get("CMAKE_CXX_COMPILER_VERSION", "")
+        if content == "C_COMPILER_VERSION":
+            return variables.get("CMAKE_C_COMPILER_VERSION", "")
+        if content.startswith("CXX_COMPILER_ID:"):
+            args = [a for a in split_top_level(content[len("CXX_COMPILER_ID:") :], ",") if a]
+            current = variables.get("CMAKE_CXX_COMPILER_ID", "")
+            return "1" if current and current in args else "0"
+        if content.startswith("C_COMPILER_ID:"):
+            args = [a for a in split_top_level(content[len("C_COMPILER_ID:") :], ",") if a]
+            current = variables.get("CMAKE_C_COMPILER_ID", "")
+            return "1" if current and current in args else "0"
         if content.startswith("TARGET_PROPERTY:"):
             # No property lookup support in generator expressions yet.
             return ""

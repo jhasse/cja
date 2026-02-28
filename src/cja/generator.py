@@ -125,6 +125,34 @@ def _infer_compiler_id(compiler: str) -> str:
     return "Unknown"
 
 
+def _infer_compiler_version(compiler: str) -> str:
+    """Infer compiler version (major.minor.patch) from a compiler command."""
+    parts = shlex.split(compiler) if compiler else []
+    if not parts:
+        return ""
+    tool = parts[0]
+    if Path(tool).name.lower() in ("ccache", "sccache") and len(parts) > 1:
+        tool = parts[1]
+    cmd = [tool] + parts[1:] + ["--version"]
+    try:
+        out = subprocess.check_output(
+            cmd,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return ""
+
+    # Extract first semver-like token.
+    match = re.search(r"\b(\d+)\.(\d+)(?:\.(\d+))?\b", out)
+    if not match:
+        return ""
+    major = match.group(1)
+    minor = match.group(2)
+    patch = match.group(3) or "0"
+    return f"{major}.{minor}.{patch}"
+
+
 def _detect_host_system_processor() -> str:
     """Detect host CPU architecture string for CMAKE_HOST_SYSTEM_PROCESSOR."""
     machine = platform.machine().strip()
@@ -4570,6 +4598,10 @@ def configure(
     ctx.variables["CMAKE_CXX_COMPILER"] = ctx.cxx_compiler
     ctx.variables["CMAKE_C_COMPILER_ID"] = _infer_compiler_id(ctx.c_compiler)
     ctx.variables["CMAKE_CXX_COMPILER_ID"] = _infer_compiler_id(ctx.cxx_compiler)
+    ctx.variables["CMAKE_C_COMPILER_VERSION"] = _infer_compiler_version(ctx.c_compiler)
+    ctx.variables["CMAKE_CXX_COMPILER_VERSION"] = _infer_compiler_version(
+        ctx.cxx_compiler
+    )
 
     process_commands(commands, ctx, trace, strict)
 

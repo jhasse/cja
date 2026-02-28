@@ -45,3 +45,13 @@ def test_strip_generator_expressions_strequal_and_bool() -> None:
         strip_generator_expressions(value)
         == "JSON_USE_IMPLICIT_CONVERSIONS=1 JSON_DIAGNOSTICS=0"
     )
+
+
+def test_strip_generator_expressions_compiler_version_condition() -> None:
+    """Compiler-id/version genex should resolve with provided CMake variables."""
+    value = "$<$<AND:$<CXX_COMPILER_ID:GNU>,$<VERSION_LESS:$<CXX_COMPILER_VERSION>,9.0>>:stdc++fs>"
+    variables = {
+        "CMAKE_CXX_COMPILER_ID": "GNU",
+        "CMAKE_CXX_COMPILER_VERSION": "8.4.0",
+    }
+    assert strip_generator_expressions(value, variables) == "stdc++fs"
