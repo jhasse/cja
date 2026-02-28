@@ -210,5 +210,10 @@ def parse(content: str, filename: str = "CMakeLists.txt") -> list[Command]:
 
 def parse_file(path: Path) -> list[Command]:
     """Parse a CMakeLists.txt file."""
-    content = path.read_text()
+    try:
+        content = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        # Some upstream CMake files contain non-UTF8 bytes in comments.
+        # CMake parses them fine, so fall back to a permissive decoding.
+        content = path.read_text(encoding="latin-1")
     return parse(content, filename=str(path))

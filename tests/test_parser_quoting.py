@@ -1,6 +1,9 @@
 """Test CMake-like argument parsing."""
 
+from pathlib import Path
+
 from cja.parser import parse
+from cja.parser import parse_file
 
 
 def test_mixed_quoting() -> None:
@@ -49,3 +52,11 @@ def test_genex_with_spaces_is_single_argument() -> None:
         "PRIVATE",
         "$<$<CXX_COMPILER_ID:MSVC>:/W3 /wd4127 /wd4355>",
     ]
+
+
+def test_parse_file_latin1_fallback(tmp_path: Path) -> None:
+    cmake = tmp_path / "CMakeLists.txt"
+    cmake.write_bytes(b"message(STATUS \"ok\")\n# Python\x92s os.path.join\n")
+    commands = parse_file(cmake)
+    assert len(commands) == 1
+    assert commands[0].name == "message"
