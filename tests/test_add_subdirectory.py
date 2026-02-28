@@ -155,3 +155,33 @@ def test_project_source_dir_is_global_across_subdirectory(tmp_path: Path) -> Non
     process_commands(commands, ctx)
 
     assert ctx.variables["gtest_SOURCE_DIR"] == str(sub_dir.resolve())
+
+
+def test_subdirectory_compile_options_do_not_leak_to_parent(tmp_path: Path) -> None:
+    """add_compile_options in subdirectory should not affect parent targets."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    sub_dir = source_dir / "subdir"
+    sub_dir.mkdir()
+
+    (source_dir / "main.cpp").write_text("int main() { return 0; }\n")
+    (source_dir / "CMakeLists.txt").write_text(
+        "add_subdirectory(subdir)\nadd_executable(app main.cpp)\n"
+    )
+    (sub_dir / "sub.cpp").write_text("int sub() { return 0; }\n")
+    (sub_dir / "CMakeLists.txt").write_text(
+        "add_compile_options(-Werror -Wshadow)\nadd_library(sub STATIC sub.cpp)\n"
+    )
+
+    from cja.generator import configure
+
+    configure(source_dir, "build")
+    ninja = (source_dir / "build.ninja").read_text()
+
+    app_compile_line = next(
+        line
+        for line in ninja.splitlines()
+        if "build $builddir/app_main.o: cxx main.cpp" in line
+    )
+    assert "-Werror" not in app_compile_line
+    assert "-Wshadow" not in app_compile_line

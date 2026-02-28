@@ -27,6 +27,8 @@ int main() {
     {
         cereal::JSONOutputArchive archive(out);
         archive(cereal::make_nvp("player", player));
+        std::string out = "-Werror=shadow should not be inherited from cereal.";
+        std::cout << out << '\n';
     }
 
     std::cout << out.str() << '\n';

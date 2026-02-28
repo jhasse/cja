@@ -1853,16 +1853,46 @@ int main() {{
                         ctx.variables.pop(var_name, None)
 
             case "add_compile_options":
-                # add_compile_options adds flags to all targets
+                # Directory-scoped compile options (inherit to subdirs, not parents).
                 for arg in args:
                     expanded = ctx.expand_variables(arg, strict, cmd.line)
                     ctx.compile_options.append(expanded)
+                    try:
+                        abs_dir = str(ctx.current_source_dir.resolve())
+                    except FileNotFoundError:
+                        abs_dir = str(ctx.current_source_dir.absolute())
+                    if abs_dir not in ctx.directory_properties:
+                        ctx.directory_properties[abs_dir] = {}
+                    existing = ctx.directory_properties[abs_dir].get("COMPILE_OPTIONS")
+                    if existing:
+                        ctx.directory_properties[abs_dir]["COMPILE_OPTIONS"] = (
+                            existing + ";" + expanded
+                        )
+                    else:
+                        ctx.directory_properties[abs_dir]["COMPILE_OPTIONS"] = expanded
 
             case "add_compile_definitions":
-                # add_compile_definitions adds preprocessor definitions to all targets
+                # Directory-scoped compile definitions (inherit to subdirs, not parents).
                 for arg in args:
                     expanded = ctx.expand_variables(arg, strict, cmd.line)
                     ctx.compile_definitions.append(expanded)
+                    try:
+                        abs_dir = str(ctx.current_source_dir.resolve())
+                    except FileNotFoundError:
+                        abs_dir = str(ctx.current_source_dir.absolute())
+                    if abs_dir not in ctx.directory_properties:
+                        ctx.directory_properties[abs_dir] = {}
+                    existing = ctx.directory_properties[abs_dir].get(
+                        "COMPILE_DEFINITIONS"
+                    )
+                    if existing:
+                        ctx.directory_properties[abs_dir]["COMPILE_DEFINITIONS"] = (
+                            existing + ";" + expanded
+                        )
+                    else:
+                        ctx.directory_properties[abs_dir]["COMPILE_DEFINITIONS"] = (
+                            expanded
+                        )
 
             case "add_custom_command":
                 # Minimal support: add_custom_command(OUTPUT ... COMMAND ... DEPENDS ... MAIN_DEPENDENCY ... WORKING_DIRECTORY ... VERBATIM)
@@ -3747,6 +3777,36 @@ def generate_ninja(
                             queue.append(dep)
             return expanded
 
+        def _collect_directory_property_chain(
+            target_dir: Path, prop_name: str
+        ) -> list[str]:
+            try:
+                current = target_dir.resolve()
+            except FileNotFoundError:
+                current = target_dir
+            try:
+                root = ctx.source_dir.resolve()
+            except FileNotFoundError:
+                root = ctx.source_dir
+
+            chain: list[str] = []
+            path = current
+            while True:
+                chain.append(str(path))
+                if path == root or path.parent == path:
+                    break
+                path = path.parent
+
+            values: list[str] = []
+            for d in reversed(chain):
+                props = ctx.directory_properties.get(d)
+                if not props:
+                    continue
+                raw = props.get(prop_name, "")
+                if raw:
+                    values.extend([p for p in raw.split(";") if p])
+            return values
+
         # Generate build statements for libraries
         for lib in ctx.libraries:
             if lib.is_alias:
@@ -3757,8 +3817,17 @@ def generate_ninja(
             objects: list[str] = []
 
             # Collect compile flags from global options, compile definitions, compile features, include dirs, and linked libraries
-            lib_compile_flags: list[str] = list(ctx.compile_options)
-            for definition in ctx.compile_definitions:
+            target_dir = (
+                lib.defined_file.parent
+                if lib.defined_file is not None
+                else ctx.source_dir
+            )
+            lib_compile_flags: list[str] = _collect_directory_property_chain(
+                target_dir, "COMPILE_OPTIONS"
+            )
+            for definition in _collect_directory_property_chain(
+                target_dir, "COMPILE_DEFINITIONS"
+            ):
                 lib_compile_flags.append(_format_compile_definition_flag(definition))
             for definition in lib.compile_definitions:
                 lib_compile_flags.append(_format_compile_definition_flag(definition))
@@ -3920,8 +3989,17 @@ def generate_ninja(
             )
 
             # Collect cflags from global options, compile definitions, compile features, include dirs, linked libraries, and imported targets
-            compile_flags: list[str] = list(ctx.compile_options)
-            for definition in ctx.compile_definitions:
+            target_dir = (
+                exe.defined_file.parent
+                if exe.defined_file is not None
+                else ctx.source_dir
+            )
+            compile_flags: list[str] = _collect_directory_property_chain(
+                target_dir, "COMPILE_OPTIONS"
+            )
+            for definition in _collect_directory_property_chain(
+                target_dir, "COMPILE_DEFINITIONS"
+            ):
                 compile_flags.append(_format_compile_definition_flag(definition))
             for definition in exe.compile_definitions:
                 compile_flags.append(_format_compile_definition_flag(definition))
