@@ -129,3 +129,36 @@ def test_cxx_std_not_applied_to_c_sources(tmp_path: Path) -> None:
     cxx_line_idx = next(i for i, line in enumerate(lines) if " main.cpp" in line)
     cxx_line_block = "\n".join(lines[cxx_line_idx : cxx_line_idx + 2])
     assert "-std=c++20" in cxx_line_block
+
+
+def test_highest_inherited_cxx_std_wins(tmp_path: Path) -> None:
+    """If multiple cxx_std flags are present, keep only the highest."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    (source_dir / "main.cpp").write_text(
+        "#include <iostream>\n"
+        'static_assert(__cplusplus >= 202002L, "need c++20");\n'
+        "int main() { std::cout << 1; }\n"
+    )
+    (source_dir / "lib.cpp").write_text("int f() { return 1; }\n")
+    (source_dir / "CMakeLists.txt").write_text(
+        "\n".join(
+            [
+                "cmake_minimum_required(VERSION 3.10)",
+                "project(stdwin LANGUAGES CXX)",
+                "add_library(mylib STATIC lib.cpp)",
+                "target_compile_features(mylib PUBLIC cxx_std_11)",
+                "add_executable(app main.cpp)",
+                "target_compile_features(app PRIVATE cxx_std_20)",
+                "target_link_libraries(app PRIVATE mylib)",
+            ]
+        )
+        + "\n"
+    )
+
+    from cja.generator import configure
+
+    configure(source_dir, "build")
+    content = (source_dir / "build.ninja").read_text()
+    assert "-std=c++20" in content
+    assert "-std=c++20 -std=c++11" not in content
