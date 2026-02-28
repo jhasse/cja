@@ -1310,6 +1310,7 @@ def process_commands(
                         "CMakePackageConfigHelpers",
                         "CMakeParseArguments",
                         "CTest",
+                        "ExternalProject",
                         "CheckIPOSupported",
                         "CheckCXXCompilerFlag",
                         "CheckCCompilerFlag",

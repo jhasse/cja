@@ -68,3 +68,29 @@ def test_target_compile_definitions_visibility(tmp_path: Path) -> None:
 
     # myapp should have PUB_DEF and INT_DEF (from mylib)
     assert "-DINT_DEF" in ninja_content
+
+
+def test_target_compile_definitions_bool_genex(tmp_path: Path) -> None:
+    """$<BOOL:...> generator expressions in definitions should evaluate to 1/0."""
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    commands = [
+        Command(name="add_executable", args=["myapp", "main.cpp"], line=1),
+        Command(
+            name="target_compile_definitions",
+            args=[
+                "myapp",
+                "PRIVATE",
+                "JSON_USE_IMPLICIT_CONVERSIONS=$<BOOL:ON>",
+                "JSON_DIAGNOSTICS=$<BOOL:OFF>",
+            ],
+            line=2,
+        ),
+    ]
+    process_commands(commands, ctx)
+
+    ninja_path = tmp_path / "build.ninja"
+    generate_ninja(ctx, ninja_path, "build")
+    ninja_content = ninja_path.read_text()
+
+    assert "-DJSON_USE_IMPLICIT_CONVERSIONS=1" in ninja_content
+    assert "-DJSON_DIAGNOSTICS=0" in ninja_content

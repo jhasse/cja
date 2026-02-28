@@ -91,6 +91,12 @@ def strip_generator_expressions(value: str) -> str:
     value = re.sub(r"\$<BUILD_INTERFACE:([^>]+)>", r"\1", value)
     # Handle $<INSTALL_INTERFACE:xxx> -> empty
     value = re.sub(r"\$<INSTALL_INTERFACE:[^>]*>", "", value)
+    # Handle $<BOOL:x> -> 1/0 (used by projects like nlohmann_json).
+    value = re.sub(
+        r"\$<BOOL:([^>]+)>",
+        lambda m: "1" if is_truthy(m.group(1)) else "0",
+        value,
+    )
     # Handle $<TARGET_FILE:target> -> target (we'll fix this later if needed)
 
     # Handle nested expressions by repeatedly stripping the innermost ones
