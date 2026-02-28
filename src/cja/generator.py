@@ -2662,6 +2662,204 @@ int main() {{
                                 raise SystemExit(1)
                             if not quiet:
                                 print(f"{colored('✗', 'red')} {package_name}")
+                    elif package_name == "Boost":
+                        keywords = {
+                            "REQUIRED",
+                            "QUIET",
+                            "COMPONENTS",
+                            "OPTIONAL_COMPONENTS",
+                            "EXACT",
+                            "MODULE",
+                            "CONFIG",
+                            "NO_MODULE",
+                        }
+                        required_components: list[str] = []
+                        optional_components: list[str] = []
+                        i = 1
+                        while i < len(args):
+                            token = args[i]
+                            if token == "COMPONENTS":
+                                i += 1
+                                while i < len(args) and args[i] not in keywords:
+                                    required_components.append(args[i])
+                                    i += 1
+                                continue
+                            if token == "OPTIONAL_COMPONENTS":
+                                i += 1
+                                while i < len(args) and args[i] not in keywords:
+                                    optional_components.append(args[i])
+                                    i += 1
+                                continue
+                            i += 1
+
+                        found = False
+                        boost_cflags = ""
+                        boost_libs = ""
+                        boost_version = ""
+                        include_dirs: list[str] = []
+                        missing_required_components: list[str] = []
+
+                        pkg_base = None
+                        try:
+                            for candidate in ("boost", "boost_headers"):
+                                result = subprocess.run(
+                                    ["pkg-config", "--exists", candidate],
+                                    capture_output=True,
+                                )
+                                if result.returncode == 0:
+                                    pkg_base = candidate
+                                    break
+                        except FileNotFoundError:
+                            pkg_base = None
+
+                        if pkg_base:
+                            cflags_result = subprocess.run(
+                                ["pkg-config", "--cflags", pkg_base],
+                                capture_output=True,
+                                text=True,
+                            )
+                            libs_result = subprocess.run(
+                                ["pkg-config", "--libs", pkg_base],
+                                capture_output=True,
+                                text=True,
+                            )
+                            version_result = subprocess.run(
+                                ["pkg-config", "--modversion", pkg_base],
+                                capture_output=True,
+                                text=True,
+                            )
+                            boost_cflags = cflags_result.stdout.strip()
+                            boost_libs = libs_result.stdout.strip()
+                            boost_version = version_result.stdout.strip()
+                            found = True
+
+                        if not found:
+                            for include_root in (
+                                "/usr/include",
+                                "/usr/local/include",
+                                "/opt/homebrew/include",
+                            ):
+                                version_header = (
+                                    Path(include_root) / "boost/version.hpp"
+                                )
+                                if version_header.exists():
+                                    include_dirs = [include_root]
+                                    boost_cflags = f"-I{include_root}"
+                                    found = True
+                                    break
+
+                        if boost_cflags:
+                            for entry in shlex.split(boost_cflags):
+                                if entry.startswith("-I"):
+                                    include_dirs.append(entry[2:])
+
+                        if found and not boost_version and include_dirs:
+                            version_header = Path(include_dirs[0]) / "boost/version.hpp"
+                            if version_header.exists():
+                                try:
+                                    header_text = version_header.read_text(
+                                        encoding="utf-8"
+                                    )
+                                except UnicodeDecodeError:
+                                    header_text = version_header.read_text(
+                                        encoding="latin-1"
+                                    )
+                                version_match = re.search(
+                                    r'#define\s+BOOST_LIB_VERSION\s+"([^"]+)"',
+                                    header_text,
+                                )
+                                if version_match:
+                                    boost_version = version_match.group(1).replace(
+                                        "_", "."
+                                    )
+
+                        component_libs: list[str] = []
+                        for component in required_components + optional_components:
+                            pkg_component = f"boost_{component.lower()}"
+                            component_found = False
+                            component_cflags = ""
+                            component_link_flags = ""
+                            try:
+                                result = subprocess.run(
+                                    ["pkg-config", "--exists", pkg_component],
+                                    capture_output=True,
+                                )
+                                component_found = result.returncode == 0
+                            except FileNotFoundError:
+                                component_found = False
+
+                            var_name = f"Boost_{component}_FOUND"
+                            upper_var_name = f"Boost_{component.upper()}_FOUND"
+                            if component_found:
+                                cflags_result = subprocess.run(
+                                    ["pkg-config", "--cflags", pkg_component],
+                                    capture_output=True,
+                                    text=True,
+                                )
+                                libs_result = subprocess.run(
+                                    ["pkg-config", "--libs", pkg_component],
+                                    capture_output=True,
+                                    text=True,
+                                )
+                                component_cflags = cflags_result.stdout.strip()
+                                component_link_flags = libs_result.stdout.strip()
+                                if component_link_flags:
+                                    component_libs.append(component_link_flags)
+                                ctx.imported_targets[f"Boost::{component}"] = (
+                                    ImportedTarget(
+                                        cflags=component_cflags,
+                                        libs=component_link_flags,
+                                    )
+                                )
+                                ctx.variables[var_name] = "TRUE"
+                                ctx.variables[upper_var_name] = "TRUE"
+                            else:
+                                ctx.variables[var_name] = "FALSE"
+                                ctx.variables[upper_var_name] = "FALSE"
+                                if component in required_components:
+                                    missing_required_components.append(component)
+
+                        found = found and not missing_required_components
+                        ctx.variables["Boost_FOUND"] = "TRUE" if found else "FALSE"
+                        ctx.variables["BOOST_FOUND"] = "TRUE" if found else "FALSE"
+
+                        if include_dirs:
+                            unique_include_dirs = list(dict.fromkeys(include_dirs))
+                            ctx.variables["Boost_INCLUDE_DIRS"] = ";".join(
+                                unique_include_dirs
+                            )
+                            ctx.variables["BOOST_INCLUDE_DIRS"] = ";".join(
+                                unique_include_dirs
+                            )
+                            ctx.variables["Boost_INCLUDE_DIR"] = unique_include_dirs[0]
+                            ctx.variables["BOOST_INCLUDE_DIR"] = unique_include_dirs[0]
+
+                        all_libs = " ".join(
+                            value for value in [boost_libs, *component_libs] if value
+                        )
+                        if all_libs:
+                            ctx.variables["Boost_LIBRARIES"] = all_libs
+                            ctx.variables["BOOST_LIBRARIES"] = all_libs
+                        if boost_version:
+                            ctx.variables["Boost_VERSION"] = boost_version
+                            ctx.variables["BOOST_VERSION"] = boost_version
+
+                        if found:
+                            ctx.imported_targets["Boost::headers"] = ImportedTarget(
+                                cflags=boost_cflags
+                            )
+                            ctx.imported_targets["Boost::boost"] = ImportedTarget(
+                                cflags=boost_cflags
+                            )
+
+                        if required and not found:
+                            ctx.print_error("could not find package: Boost", cmd.line)
+                            raise SystemExit(1)
+                        if not quiet:
+                            if found:
+                                print(f"{colored('✓', 'green')} {package_name}")
+                            else:
+                                print(f"{colored('✗', 'red')} {package_name}")
                     else:
                         # Search for Find<PackageName>.cmake in CMAKE_MODULE_PATH
                         module_path = ctx.variables.get("CMAKE_MODULE_PATH", "")

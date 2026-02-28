@@ -180,3 +180,65 @@ def test_find_package_python3_interpreter() -> None:
     assert ctx.variables["Python3_Interpreter_FOUND"] == "TRUE"
     assert ctx.variables["Python3_EXECUTABLE"] == sys.executable
     assert "Python3::Interpreter" in ctx.imported_targets
+
+
+def test_find_package_boost_found_via_pkg_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test find_package(Boost) when boost is available via pkg-config."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+
+    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        if cmd == ["pkg-config", "--exists", "boost"]:
+            return subprocess.CompletedProcess(cmd, 0)
+        if cmd == ["pkg-config", "--cflags", "boost"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="-I/usr/include/boost")
+        if cmd == ["pkg-config", "--libs", "boost"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="-lboost_headers")
+        if cmd == ["pkg-config", "--modversion", "boost"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="1.84.0")
+        return subprocess.CompletedProcess(cmd, 1)
+
+    monkeypatch.setattr("cja.generator.subprocess.run", fake_run)
+
+    commands = [Command(name="find_package", args=["Boost"], line=1)]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["Boost_FOUND"] == "TRUE"
+    assert ctx.variables["BOOST_FOUND"] == "TRUE"
+    assert ctx.variables["Boost_VERSION"] == "1.84.0"
+    assert "Boost::headers" in ctx.imported_targets
+    assert "Boost::boost" in ctx.imported_targets
+
+
+def test_find_package_boost_required_component_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test find_package(Boost REQUIRED COMPONENTS filesystem) failure."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+
+    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        if cmd == ["pkg-config", "--exists", "boost"]:
+            return subprocess.CompletedProcess(cmd, 0)
+        if cmd == ["pkg-config", "--cflags", "boost"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="-I/usr/include/boost")
+        if cmd == ["pkg-config", "--libs", "boost"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="")
+        if cmd == ["pkg-config", "--modversion", "boost"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="1.84.0")
+        if cmd == ["pkg-config", "--exists", "boost_filesystem"]:
+            return subprocess.CompletedProcess(cmd, 1)
+        return subprocess.CompletedProcess(cmd, 1)
+
+    monkeypatch.setattr("cja.generator.subprocess.run", fake_run)
+
+    commands = [
+        Command(
+            name="find_package",
+            args=["Boost", "REQUIRED", "COMPONENTS", "filesystem"],
+            line=1,
+        )
+    ]
+    with pytest.raises(SystemExit) as exc_info:
+        process_commands(commands, ctx)
+    assert exc_info.value.code == 1
