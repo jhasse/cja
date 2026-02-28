@@ -35,4 +35,4 @@ def test_set_target_properties_interface_include_directories(tmp_path: Path) -> 
     # Let's verify build.ninja content
     ninja_file = source_dir / "build.ninja"
     content = ninja_file.read_text()
-    assert f"-I{source_dir}/include" in content
+    assert "-Iinclude" in content

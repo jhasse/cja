@@ -91,7 +91,7 @@ def test_target_include_directories_in_ninja(tmp_path: Path) -> None:
 
     build_ninja = source_dir / "build.ninja"
     ninja_content = build_ninja.read_text()
-    assert f"-I{source_dir}/include" in ninja_content
+    assert "-Iinclude" in ninja_content
 
 
 def test_target_include_directories_public_propagates(tmp_path: Path) -> None:
@@ -117,7 +117,30 @@ def test_target_include_directories_public_propagates(tmp_path: Path) -> None:
     build_ninja = source_dir / "build.ninja"
     ninja_content = build_ninja.read_text()
     # The -Imyinclude should appear for the calculator executable too
-    assert f"-I{source_dir}/myinclude" in ninja_content
+    assert "-Imyinclude" in ninja_content
+
+
+def test_target_include_directories_absolute_external_kept_in_ninja(
+    tmp_path: Path,
+) -> None:
+    """Absolute include paths outside the project root should stay absolute."""
+    source_dir = tmp_path / "hello"
+    copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
+
+    cmake_file = source_dir / "CMakeLists.txt"
+    content = cmake_file.read_text()
+    content = content.replace(
+        "add_executable(hello main.c subfolder/main.c)",
+        "add_executable(hello main.c subfolder/main.c)\n"
+        "target_include_directories(hello PRIVATE /usr/include/foo)",
+    )
+    cmake_file.write_text(content)
+
+    configure(source_dir, "build")
+
+    build_ninja = source_dir / "build.ninja"
+    ninja_content = build_ninja.read_text()
+    assert "-I/usr/include/foo" in ninja_content
 
 
 def test_target_include_directories_build_install_interface(capsys) -> None:

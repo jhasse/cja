@@ -38,9 +38,13 @@ def make_relative(path_str: str, root: Path) -> str:
     """Convert an absolute path to a relative path if it's under the root directory."""
     try:
         path = Path(path_str)
-        if path.is_absolute() and path.is_relative_to(root):
-            return to_posix_path(path.relative_to(root))
+        path_abs = path.resolve() if path.is_absolute() else path
+        root_abs = root.resolve() if root.is_absolute() else root.resolve()
+        if path_abs.is_absolute() and path_abs.is_relative_to(root_abs):
+            return to_posix_path(path_abs.relative_to(root_abs))
     except ValueError:
+        pass
+    except OSError:
         pass
     if not Path(path_str).is_absolute():
         return to_posix_path(path_str)
