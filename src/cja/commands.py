@@ -407,20 +407,31 @@ def handle_target_compile_definitions(
                 expanded = ctx.expand_variables(arg, strict, cmd.line)
                 if "$<" in expanded:
                     ctx.print_warning(
-                        f"generator expressions in target_include_directories are not yet supported: {arg}",
+                        f"generator expressions in target_compile_definitions are not yet supported: {arg}",
                         cmd.line,
                     )
                 expanded = strip_generator_expressions(expanded)
 
                 if not expanded:
                     continue
+                # CMake treats compile definitions as a list. After genex stripping,
+                # definitions may arrive as semicolon-separated or space-separated
+                # values (e.g. "$<...:A B>"), so split into individual definitions.
+                definitions = [
+                    d
+                    for part in expanded.split(";")
+                    for d in part.split()
+                    if d
+                ]
+                if not definitions:
+                    continue
                 if visibility == "PUBLIC":
-                    public_defs.append(expanded)
-                    target_defs.append(expanded)
+                    public_defs.extend(definitions)
+                    target_defs.extend(definitions)
                 elif visibility == "INTERFACE":
-                    public_defs.append(expanded)
+                    public_defs.extend(definitions)
                 else:
-                    target_defs.append(expanded)
+                    target_defs.extend(definitions)
         # Add definitions to library or executable
         lib = ctx.get_library(target_name)
         if lib:

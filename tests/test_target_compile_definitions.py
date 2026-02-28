@@ -94,3 +94,28 @@ def test_target_compile_definitions_bool_genex(tmp_path: Path) -> None:
 
     assert "-DJSON_USE_IMPLICIT_CONVERSIONS=1" in ninja_content
     assert "-DJSON_DIAGNOSTICS=0" in ninja_content
+
+
+def test_target_compile_definitions_genex_space_separated_values(tmp_path: Path) -> None:
+    """Space-separated genex values should emit separate -D flags."""
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    commands = [
+        Command(name="add_library", args=["mylib", "lib.c"], line=1),
+        Command(
+            name="target_compile_definitions",
+            args=[
+                "mylib",
+                "PRIVATE",
+                "$<$<BOOL:ON>:LUA_USE_LINUX LUA_COMPAT_5_2>",
+            ],
+            line=2,
+        ),
+    ]
+    process_commands(commands, ctx)
+
+    ninja_path = tmp_path / "build.ninja"
+    generate_ninja(ctx, ninja_path, "build")
+    ninja_content = ninja_path.read_text()
+
+    assert "-DLUA_USE_LINUX" in ninja_content
+    assert "-DLUA_COMPAT_5_2" in ninja_content
