@@ -18,6 +18,7 @@ from .syntax import (
 from .parser import Command
 from .targets import Executable, Library
 from .utils import (
+    UNDEFINED_VAR_SENTINEL,
     is_truthy,
     resolve_cmake_path,
     strip_generator_expressions,
@@ -1516,7 +1517,7 @@ def handle_cmake_parse_arguments(
     for opt in options:
         ctx.variables[f"{prefix}_{opt}"] = "FALSE"
     for key in one_value + multi_value:
-        ctx.variables[f"{prefix}_{key}"] = ""
+        ctx.variables[f"{prefix}_{key}"] = UNDEFINED_VAR_SENTINEL
     ctx.variables[f"{prefix}_UNPARSED_ARGUMENTS"] = ""
     ctx.variables[f"{prefix}_KEYWORDS_MISSING_VALUES"] = ""
 

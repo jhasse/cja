@@ -3,7 +3,7 @@ from pathlib import Path
 import re
 
 from .parser import Command
-from .utils import is_constant_truthy, is_truthy
+from .utils import UNDEFINED_VAR_SENTINEL, is_constant_truthy, is_truthy
 
 
 @dataclass
@@ -57,6 +57,17 @@ def evaluate_condition(args: list[str], variables: dict[str, str]) -> bool:
 
     i = 0
 
+    def is_defined(name: str) -> bool:
+        return name in variables and variables.get(name) != UNDEFINED_VAR_SENTINEL
+
+    def resolve(name: str) -> str:
+        if name in variables:
+            val = variables[name]
+            if val == UNDEFINED_VAR_SENTINEL:
+                return ""
+            return val
+        return name
+
     def parse_or() -> bool:
         nonlocal i
         left = parse_and()
@@ -102,7 +113,7 @@ def evaluate_condition(args: list[str], variables: dict[str, str]) -> bool:
                 val = args[i]
                 i += 1
                 if op == "DEFINED":
-                    return val in variables
+                    return is_defined(val)
                 if op == "EXISTS":
                     return Path(val).exists()
                 if op == "COMMAND":
@@ -131,8 +142,8 @@ def evaluate_condition(args: list[str], variables: dict[str, str]) -> bool:
                 right = args[i]
                 i += 1
 
-                left_val = variables.get(left, left)
-                right_val = variables.get(right, right)
+                left_val = resolve(left)
+                right_val = resolve(right)
 
                 if op == "STREQUAL":
                     return left_val == right_val
@@ -180,7 +191,7 @@ def evaluate_condition(args: list[str], variables: dict[str, str]) -> bool:
 
         # Single value
         if left in variables:
-            return is_truthy(variables[left])
+            return is_truthy(resolve(left))
         return is_constant_truthy(left)  # noqa: F821
 
     return parse_or()

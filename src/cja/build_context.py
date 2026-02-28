@@ -9,7 +9,7 @@ from termcolor import colored
 
 from .parser import Command
 from .syntax import FetchContentInfo, FunctionDef, MacroDef, SourceFileProperties, Test
-from .utils import make_relative, resolve_cmake_path
+from .utils import UNDEFINED_VAR_SENTINEL, make_relative, resolve_cmake_path
 from .targets import Executable, ImportedTarget, InstallTarget, Library
 
 
@@ -182,7 +182,10 @@ class BuildContext:
                 if strict:
                     sys.exit(1)
                 return ""
-            return self.variables.get(var_name, "")
+            value = self.variables.get(var_name, "")
+            if value == UNDEFINED_VAR_SENTINEL:
+                return ""
+            return value
 
         def replace_env(match: re.Match[str]) -> str:
             var_name = match.group(1)

@@ -245,6 +245,39 @@ def test_cmake_parse_arguments_missing_options_list() -> None:
     process_commands(commands, ctx)
     assert ctx.variables["CPM_ARGS_NAME"] == "libogg"
     assert ctx.variables["CPM_ARGS_URL"] == "http://example.com/libogg.tar.gz"
+    commands_defined = [
+        Command(name="if", args=["DEFINED", "CPM_ARGS_VERSION"], line=2),
+        Command(name="set", args=["HAS_VERSION", "yes"], line=3),
+        Command(name="endif", args=[], line=4),
+    ]
+    process_commands(commands_defined, ctx)
+    assert "HAS_VERSION" not in ctx.variables
+
+
+def test_cmake_parse_arguments_optional_value_expands_empty_in_strict() -> None:
+    """Missing cmake_parse_arguments values should expand empty in strict mode."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(
+            name="cmake_parse_arguments",
+            args=[
+                "CPM_ARGS",
+                "",
+                "NAME;VERSION",
+                "PATCHES",
+                "NAME",
+                "spdlog",
+            ],
+            line=1,
+        ),
+        Command(name="set", args=["PATCHES_EXPANDED", "${CPM_ARGS_PATCHES}"], line=2),
+        Command(name="if", args=["DEFINED", "CPM_ARGS_PATCHES"], line=3),
+        Command(name="set", args=["HAS_PATCHES", "yes"], line=4),
+        Command(name="endif", args=[], line=5),
+    ]
+    process_commands(commands, ctx, strict=True)
+    assert ctx.variables["PATCHES_EXPANDED"] == ""
+    assert "HAS_PATCHES" not in ctx.variables
 
 
 def test_unset_parent_scope() -> None:
@@ -299,7 +332,9 @@ def test_source_group_noop() -> None:
     process_commands(commands, ctx)
 
 
-def test_undefined_variable_in_if_strequale_empty(capsys: pytest.CaptureFixture[str]) -> None:
+def test_undefined_variable_in_if_strequale_empty(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     """Undefined variable in if ("${VAR}" STREQUAL "") should not warn."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
     commands = [

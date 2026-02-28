@@ -4,6 +4,7 @@ import re
 
 _DRIVE_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
 _UNC_PATH_RE = re.compile(r"^[\\/]{2}[^\\/]+[\\/][^\\/]+")
+UNDEFINED_VAR_SENTINEL = "__CJA_UNDEFINED_VAR__"
 
 
 def to_posix_path(path: str | Path) -> str:
