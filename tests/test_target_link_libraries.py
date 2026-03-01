@@ -36,6 +36,29 @@ def test_add_library_empty_target_name_fails() -> None:
     assert exc_info.value.code == 1
 
 
+def test_target_link_libraries_versioned_names_get_dash_l(tmp_path: Path) -> None:
+    """Library names with version-style dots (e.g. from pkg-config) should get -l prefix."""
+    src = tmp_path / "main.c"
+    src.write_text("int main() { return 0; }\n")
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    commands = [
+        Command(name="add_executable", args=["app", "main.c"], line=1),
+        Command(
+            name="target_link_libraries",
+            args=["app", "PRIVATE", "webkit2gtk-4.1", "glib-2.0", "pangocairo-1.0"],
+            line=2,
+        ),
+    ]
+    process_commands(commands, ctx)
+
+    ninja_file = tmp_path / "build.ninja"
+    generate_ninja(ctx, ninja_file, "build")
+    content = ninja_file.read_text()
+    assert "-lwebkit2gtk-4.1" in content
+    assert "-lglib-2.0" in content
+    assert "-lpangocairo-1.0" in content
+
+
 def test_target_link_libraries_genex_false_branch_omitted(tmp_path: Path) -> None:
     """False compiler/version genex branch should not add link libraries."""
     ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")

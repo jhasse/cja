@@ -3861,9 +3861,12 @@ def generate_ninja(
                     # Generic library name or path
                     if (
                         lib_name.startswith("-")
-                        or lib_name.startswith("/")
                         or lib_name.startswith("$")
-                        or "." in lib_name
+                        or "/" in lib_name
+                        or lib_name.endswith(
+                            (".a", ".so", ".dylib", ".lib", ".dll", ".o", ".obj")
+                        )
+                        or ".so." in lib_name
                     ):
                         framework_flags = framework_link_flags(lib_name)
                         if framework_flags:
