@@ -208,6 +208,38 @@ def test_subdirectory_example(tmp_path: Path) -> None:
     assert build_ninja.exists()
 
 
+def test_regenerate_preserves_defines(tmp_path: Path) -> None:
+    """Test that -DFOO=bar is preserved in the reconfigure rule after regeneration."""
+    source_dir = tmp_path / "hello"
+    copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
+
+    configure(source_dir, "build", variables={"FOO": "bar"})
+
+    build_ninja = source_dir / "build.ninja"
+    assert build_ninja.exists()
+    content = build_ninja.read_text()
+    assert "-DFOO=bar" in content
+
+    # Touch CMakeLists.txt and rebuild — ninja should regenerate build.ninja
+    cmake_file = source_dir / "CMakeLists.txt"
+    import time
+
+    time.sleep(0.05)
+    cmake_file.write_text(cmake_file.read_text())
+
+    result = subprocess.run(
+        ["ninja"],
+        cwd=source_dir,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, f"ninja failed: {result.stderr}"
+
+    # After regeneration, -DFOO=bar should still be in the reconfigure command
+    content = build_ninja.read_text()
+    assert "-DFOO=bar" in content
+
+
 @pytest.mark.skipif(
     not _is_gnu_cxx(),
     reason="requires GNU g++ as c++",

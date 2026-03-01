@@ -3253,6 +3253,10 @@ def generate_ninja(
             reconfigure_cmd_parts = ["cja", "--regenerate-during-build"]
             if builddir != "build":
                 reconfigure_cmd_parts += ["-B", "$builddir"]
+            for var_name in sorted(ctx.cli_variables):
+                reconfigure_cmd_parts.append(
+                    format_define(var_name, ctx.cli_variables[var_name])
+                )
 
             def quote_part(part: str) -> str:
                 if part == "$builddir":
@@ -4091,6 +4095,7 @@ def configure(
     if variables:
         ctx.variables.update(variables)
         ctx.cache_variables.update(variables.keys())
+        ctx.cli_variables = dict(variables)
 
     # Set up standard CMake variables
     ctx.variables["CMAKE_SOURCE_DIR"] = str(ctx.source_dir)

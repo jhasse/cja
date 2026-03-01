@@ -58,6 +58,7 @@ class BuildContext:
     project_name: str = ""
     variables: dict[str, str] = field(default_factory=dict)
     cache_variables: set[str] = field(default_factory=set)  # Variables from -D flags
+    cli_variables: dict[str, str] = field(default_factory=dict)  # Original -D flag values
     libraries: list[Library] = field(default_factory=list)
     executables: list[Executable] = field(default_factory=list)
     imported_targets: dict[str, ImportedTarget] = field(default_factory=dict)
