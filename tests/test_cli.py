@@ -233,6 +233,39 @@ def test_cli_make_directory(tmp_path: Path) -> None:
     assert dir_path.is_dir()
 
 
+def test_quiet_flag_suppresses_output(tmp_path: Path) -> None:
+    """Test that --quiet suppresses warnings and status output."""
+    source_dir = tmp_path / "hello"
+    copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
+
+    result = subprocess.run(
+        ["uv", "run", "cja", "--quiet"],
+        capture_output=True,
+        text=True,
+        cwd=source_dir,
+    )
+    assert result.returncode == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
+
+
+def test_quiet_flag_via_api(tmp_path: Path) -> None:
+    """Test that quiet=True suppresses output via the Python API."""
+    source_dir = tmp_path / "hello"
+    copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
+
+    import io
+    from contextlib import redirect_stdout, redirect_stderr
+
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    with redirect_stdout(stdout), redirect_stderr(stderr):
+        configure(source_dir, "build", quiet=True)
+
+    assert stdout.getvalue() == ""
+    assert stderr.getvalue() == ""
+
+
 def test_run_subcommand(tmp_path: Path) -> None:
     """Test cja run subcommand."""
     source_dir = tmp_path

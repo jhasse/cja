@@ -39,6 +39,7 @@ def cmd_configure(args: argparse.Namespace) -> int:
             trace=args.trace,
             strict=args.strict,
             regenerate_during_build=args.regenerate_during_build,
+            quiet=args.quiet or args.regenerate_during_build,
         )
         return 0
     except FileNotFoundError as e:
@@ -183,6 +184,12 @@ def main() -> int:
         "--strict",
         action="store_true",
         help="Error on unsupported commands instead of ignoring them",
+    )
+
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Suppress warnings and status output",
     )
 
     parser.add_argument(

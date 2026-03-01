@@ -2579,7 +2579,7 @@ int main() {{
                 if args:
                     package_name = args[0]
                     required = "REQUIRED" in args
-                    quiet = "QUIET" in args
+                    quiet = "QUIET" in args or ctx.quiet
                     ctx.variables[f"{package_name}_FIND_REQUIRED"] = (
                         "TRUE" if required else "FALSE"
                     )
@@ -2648,7 +2648,7 @@ int main() {{
                     pkg_args = args[1:]
 
                     is_required = "REQUIRED" in pkg_args
-                    is_quiet = "QUIET" in pkg_args
+                    is_quiet = "QUIET" in pkg_args or ctx.quiet
                     is_imported_target = "IMPORTED_TARGET" in pkg_args
 
                     modules = [
@@ -4061,6 +4061,7 @@ def configure(
     trace: bool = False,
     strict: bool = False,
     regenerate_during_build: bool = False,
+    quiet: bool = False,
 ) -> BuildContext:
     """Configure a CMake project and generate build.ninja.
 
@@ -4071,6 +4072,7 @@ def configure(
         trace: If True, print each command as it's processed
         strict: If True, error on unsupported commands instead of ignoring them
         regenerate_during_build: If True, we were triggered during build
+        quiet: If True, suppress warnings and status output
     """
     source_dir = source_dir.resolve()
     cmake_file = source_dir / "CMakeLists.txt"
@@ -4083,6 +4085,7 @@ def configure(
         source_dir=source_dir,
         build_dir=source_dir / build_dir,
     )
+    ctx.quiet = quiet
     ctx.record_cmake_file(cmake_file)
 
     commands = parse_file(cmake_file)
@@ -4168,9 +4171,11 @@ def configure(
         try:
             subprocess.check_output(restat_cmd, stderr=subprocess.STDOUT)
         except subprocess.CalledProcessError as e:
-            print(
-                f"{colored('warning:', 'magenta', attrs=['bold'])} `{' '.join(restat_cmd)}` failed with exit code {e.returncode}:\n{e.output.decode().rstrip()}"
-            )
+            if not quiet:
+                print(
+                    f"{colored('warning:', 'magenta', attrs=['bold'])} `{' '.join(restat_cmd)}` failed with exit code {e.returncode}:\n{e.output.decode().rstrip()}"
+                )
 
-    print(f"{colored('Configured', 'green', attrs=['bold'])} {build_dir}.ninja")
+    if not quiet:
+        print(f"{colored('Configured', 'green', attrs=['bold'])} {build_dir}.ninja")
     return ctx

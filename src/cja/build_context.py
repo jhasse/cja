@@ -98,6 +98,7 @@ class BuildContext:
     cmake_files: set[Path] = field(default_factory=set)
     c_compiler: str = field(default_factory=_default_c_compiler)
     cxx_compiler: str = field(default_factory=_default_cxx_compiler)
+    quiet: bool = False
 
     def __post_init__(self) -> None:
         self.current_source_dir = self.source_dir
@@ -131,6 +132,8 @@ class BuildContext:
 
     def print_warning(self, message: str, line: int = 0) -> None:
         """Print a warning message."""
+        if self.quiet:
+            return
         warning_label = colored("warning:", "magenta", attrs=["bold"])
         rel_file = make_relative(str(self.current_list_file), self.source_dir)
         location = f"{rel_file}:{line}: " if line > 0 else ""
