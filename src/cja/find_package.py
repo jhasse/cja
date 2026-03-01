@@ -3,6 +3,7 @@
 import os
 from pathlib import Path
 import re
+import shutil
 import shlex
 import subprocess
 import sys
@@ -252,10 +253,27 @@ def handle_builtin_find_package(
         return True
 
     if package_name == "PkgConfig":
-        ctx.variables["PkgConfig_FOUND"] = "TRUE"
-        ctx.variables["PKG_CONFIG_EXECUTABLE"] = "pkg-config"
+        pkg_config_executable = shutil.which("pkg-config")
+        if pkg_config_executable is None:
+            pkg_config_executable = shutil.which("pkgconf")
+
+        if pkg_config_executable is not None:
+            found = True
+            ctx.variables["PkgConfig_FOUND"] = "TRUE"
+            ctx.variables["PKG_CONFIG_EXECUTABLE"] = pkg_config_executable
+        else:
+            found = False
+            ctx.variables["PkgConfig_FOUND"] = "FALSE"
+
+        if required and not found:
+            ctx.print_error("could not find package: PkgConfig", cmd.line)
+            raise SystemExit(1)
+
         if not quiet:
-            print(f"{colored('✓', 'green')} {package_name}")
+            if found:
+                print(f"{colored('✓', 'green')} {package_name}")
+            else:
+                print(f"{colored('✗', 'red')} {package_name}")
         return True
 
     if package_name == "Fontconfig":

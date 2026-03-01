@@ -1,6 +1,7 @@
 """Tests for PkgConfig support."""
 
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import pytest
@@ -16,8 +17,11 @@ def test_find_package_pkgconfig() -> None:
         Command(name="find_package", args=["PkgConfig"], line=1),
     ]
     process_commands(commands, ctx)
-    assert ctx.variables["PkgConfig_FOUND"] == "TRUE"
-    assert "PKG_CONFIG_EXECUTABLE" in ctx.variables
+    if shutil.which("pkg-config") is not None:
+        assert ctx.variables["PkgConfig_FOUND"] == "TRUE"
+        assert "PKG_CONFIG_EXECUTABLE" in ctx.variables
+    else:
+        assert ctx.variables["PkgConfig_FOUND"] == "FALSE"
 
 
 def test_pkg_check_modules_zlib() -> None:
