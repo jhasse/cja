@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, field
 import hashlib
+import json
 import platform
 import re
 import shlex
@@ -4025,18 +4026,10 @@ def generate_ninja(
             n.build("install", "phony", install_files)
             n.newline()
 
-        # Generate run runner
+        # Write cja.json with run executable info
         if ctx.executables:
-            n.rule(
-                "run_exe",
-                command="$in",
-                description="RUN $in",
-                pool="console",
-            )
-            n.newline()
             run_target = ctx.executables[0].name
 
-            # Check for VS_STARTUP_PROJECT property on the root directory
             root_dir = str(ctx.source_dir)
             if root_dir in ctx.directory_properties:
                 startup_proj = ctx.directory_properties[root_dir].get(
@@ -4046,8 +4039,13 @@ def generate_ninja(
                     run_target = startup_proj
 
             if run_target in exe_outputs:
-                n.build("run", "run_exe", exe_outputs[run_target])
-                n.newline()
+                exe_path = exe_outputs[run_target].replace(
+                    "$builddir", builddir
+                )
+                cja_json = {"run_executable": exe_path}
+                ctx.build_dir.mkdir(parents=True, exist_ok=True)
+                cja_json_path = ctx.build_dir / "cja.json"
+                cja_json_path.write_text(json.dumps(cja_json) + "\n")
 
         # Default target
         if default_targets:

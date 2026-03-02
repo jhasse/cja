@@ -1,6 +1,7 @@
 """Command-line interface for cja."""
 
 import argparse
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -79,8 +80,55 @@ def cmd_test(args: argparse.Namespace) -> int:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    """Run the run target in Ninja."""
-    return _run_ninja(args, target="run")
+    """Build and run the first executable."""
+    source_dir = Path(".")
+
+    if args.release:
+        build_dir = "build-release"
+        variables: dict[str, str] = {"CMAKE_BUILD_TYPE": "Release"}
+    else:
+        build_dir = "build"
+        variables = {}
+
+    ninja_file = Path(f"{build_dir}.ninja")
+
+    cja_json_path = Path(build_dir) / "cja.json"
+
+    if not ninja_file.exists() or not cja_json_path.exists():
+        try:
+            configure(source_dir, build_dir, variables=variables if variables else None)
+        except FileNotFoundError as e:
+            error_label = colored("error:", "red", attrs=["bold"])
+            print(f"{error_label} {e}", file=sys.stderr)
+            return 1
+        except SyntaxError as e:
+            if e.filename and e.lineno:
+                rel_file = e.filename
+                try:
+                    p = Path(e.filename)
+                    if p.is_absolute():
+                        rel_file = str(p.relative_to(Path(".").resolve()))
+                except ValueError:
+                    pass
+                error_label = colored("error:", "red", attrs=["bold"])
+                print(f"{rel_file}:{e.lineno}: {error_label} {e.msg}", file=sys.stderr)
+            else:
+                error_label = colored("error:", "red", attrs=["bold"])
+                print(f"{error_label} Parse error: {e}", file=sys.stderr)
+            return 1
+
+    cja_config = json.loads(cja_json_path.read_text())
+    exe_path = cja_config["run_executable"]
+
+    # Build just the executable
+    ninja_cmd = ["ninja", "-f", str(ninja_file), exe_path]
+    result = subprocess.run(ninja_cmd)
+    if result.returncode != 0:
+        return result.returncode
+
+    # Run the executable directly
+    result = subprocess.run([str(Path(exe_path))])
+    return result.returncode
 
 
 def cmd_command_mode(args: list[str]) -> int:

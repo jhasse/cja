@@ -284,7 +284,4 @@ add_executable(myexe main.c)
         text=True,
         cwd=source_dir,
     )
-    # The return code should be 42 because it runs the executable
     assert result.returncode == 42
-    assert "RUN" in result.stdout
-    assert f"build/myexe{EXE_EXT}" in result.stdout

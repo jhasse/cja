@@ -1,3 +1,5 @@
+import json
+
 from cja.generator import BuildContext, process_commands, generate_ninja
 from cja.parser import Command
 
@@ -21,9 +23,10 @@ def test_vs_startup_project_directory(tmp_path):
     generate_ninja(ctx, ninja_file, "build")
 
     content = ninja_file.read_text()
-    # Check that 'run' depends on exe2, not exe1
-    assert "build run: run_exe $builddir/exe2" in content
-    assert "build run: run_exe $builddir/exe1" not in content
+    assert "run_exe" not in content
+
+    cja_json = json.loads((tmp_path / "build" / "cja.json").read_text())
+    assert cja_json["run_executable"] == "build/exe2"
 
 
 def test_vs_startup_project_first_by_default(tmp_path):
@@ -40,5 +43,7 @@ def test_vs_startup_project_first_by_default(tmp_path):
     generate_ninja(ctx, ninja_file, "build")
 
     content = ninja_file.read_text()
-    # Check that 'run' depends on exe1 (the first one)
-    assert "build run: run_exe $builddir/exe1" in content
+    assert "run_exe" not in content
+
+    cja_json = json.loads((tmp_path / "build" / "cja.json").read_text())
+    assert cja_json["run_executable"] == "build/exe1"
