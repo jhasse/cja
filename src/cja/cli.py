@@ -126,8 +126,11 @@ def cmd_run(args: argparse.Namespace) -> int:
     if result.returncode != 0:
         return result.returncode
 
-    # Run the executable directly
-    result = subprocess.run([str(Path(exe_path))])
+    # Run the executable directly, passing through any extra arguments
+    exe_cmd = [str(Path(exe_path))]
+    if hasattr(args, "ninja_args"):
+        exe_cmd.extend(args.ninja_args)
+    result = subprocess.run(exe_cmd)
     return result.returncode
 
 
