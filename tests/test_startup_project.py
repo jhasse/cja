@@ -1,7 +1,10 @@
 import json
+import platform
 
 from cja.generator import BuildContext, process_commands, generate_ninja
 from cja.parser import Command
+
+EXE_EXT = ".exe" if platform.system() == "Windows" else ""
 
 
 def test_vs_startup_project_directory(tmp_path):
@@ -26,7 +29,7 @@ def test_vs_startup_project_directory(tmp_path):
     assert "run_exe" not in content
 
     cja_json = json.loads((tmp_path / "build" / "cja.json").read_text())
-    assert cja_json["run_executable"] == "build/exe2"
+    assert cja_json["run_executable"] == f"build/exe2{EXE_EXT}"
 
 
 def test_vs_startup_project_first_by_default(tmp_path):
@@ -46,4 +49,4 @@ def test_vs_startup_project_first_by_default(tmp_path):
     assert "run_exe" not in content
 
     cja_json = json.loads((tmp_path / "build" / "cja.json").read_text())
-    assert cja_json["run_executable"] == "build/exe1"
+    assert cja_json["run_executable"] == f"build/exe1{EXE_EXT}"
