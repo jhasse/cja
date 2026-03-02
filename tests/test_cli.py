@@ -214,7 +214,7 @@ add_test(NAME mytest COMMAND echo "Hello from test")
         cwd=source_dir,
     )
     assert result.returncode == 0
-    assert "TEST mytest" in result.stdout
+    assert "Running mytest" in result.stdout
     assert "Hello from test" in result.stdout
 
 

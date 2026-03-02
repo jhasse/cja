@@ -3273,6 +3273,7 @@ def generate_ninja(
                 command=reconfigure_cmd,
                 generator=True,
                 pool="console",
+                description="\x1b[35mRe-running cja\x1b[0m",
             )
             n.newline()
 
@@ -3354,7 +3355,6 @@ def generate_ninja(
         n.rule(
             "custom_command",
             command="$cmd",
-            description="CUSTOM $out",
         )
         n.newline()
 
@@ -3947,7 +3947,7 @@ def generate_ninja(
             n.rule(
                 "test_run",
                 command="cd $builddir && $cmd",
-                description="TEST $name",
+                description="\x1b[1;34mRunning $name\x1b[0m",
                 pool="console",
             )
             n.newline()
@@ -3987,7 +3987,7 @@ def generate_ninja(
             n.rule(
                 "install_file",
                 command="mkdir -p $out_dir && cp $in $out",
-                description="INSTALL $out",
+                description="Installing $out",
             )
             n.newline()
 
