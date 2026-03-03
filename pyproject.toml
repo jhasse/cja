@@ -9,7 +9,7 @@ authors = [
 ]
 requires-python = ">=3.10"
 dependencies = [
-    "rich>=14.3.1",
+    "rich>=14.3.3",
     "termcolor>=3.3.0",
 ]
 
