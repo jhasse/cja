@@ -213,4 +213,7 @@ def strip_generator_expressions(
             i = end + 1
         return "".join(out)
 
-    return expand_text(value)
+    result = expand_text(value)
+    if "\n" in result:
+        result = " ".join(result.split())
+    return result
