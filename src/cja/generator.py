@@ -1190,6 +1190,8 @@ def process_commands(
                     ctx.variables["CMAKE_CXX_FLAGS"] = (
                         ""  # TODO: Only set when CXX is enabled
                     )
+                    ctx.variables["CMAKE_EXE_LINKER_FLAGS"] = ""
+                    ctx.variables["CMAKE_LINKER_FLAGS"] = ""
                     ctx.variables["PROJECT_SOURCE_DIR"] = str(ctx.current_source_dir)
                     ctx.variables["PROJECT_BINARY_DIR"] = str(ctx.build_dir)
                     source_var = f"{project_name}_SOURCE_DIR"
@@ -3286,7 +3288,12 @@ def generate_ninja(
         c_flags = ctx.variables.get("CMAKE_C_FLAGS", "")
         cxx_flags = ctx.variables.get("CMAKE_CXX_FLAGS", "")
         cxx_flags = _normalize_windows_clang_cxx_std(cxx_flags, windows_clangxx)
-        linker_flags = f"{ctx.variables.get('CMAKE_LINKER_FLAGS', '')} {ipo_flags}".strip()
+        linker_flags_parts = [
+            ctx.variables.get("CMAKE_EXE_LINKER_FLAGS", ""),
+            ctx.variables.get("CMAKE_LINKER_FLAGS", ""),
+            ipo_flags,
+        ]
+        linker_flags = " ".join(p for p in linker_flags_parts if p).strip()
         n.variable("ldflags", linker_flags)
 
         n.rule(

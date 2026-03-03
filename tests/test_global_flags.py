@@ -61,3 +61,41 @@ def test_cmake_linker_flags(tmp_path: Path) -> None:
     content = ninja_file.read_text()
 
     assert "-Wl,--as-needed" in content
+
+
+def test_cmake_exe_linker_flags(tmp_path: Path) -> None:
+    """Test that CMAKE_EXE_LINKER_FLAGS are included in the ninja file."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    (source_dir / "CMakeLists.txt").write_text(
+        "project(test_exe_linker_flags)\n"
+        'set(CMAKE_EXE_LINKER_FLAGS "-fuse-ld=lld")\n'
+        "add_executable(main main.c)"
+    )
+    (source_dir / "main.c").write_text("int main() { return 0; }")
+
+    configure(source_dir, "build")
+
+    ninja_file = source_dir / "build.ninja"
+    content = ninja_file.read_text()
+
+    assert "-fuse-ld=lld" in content
+
+
+def test_cmake_linker_flags_append(tmp_path: Path) -> None:
+    """Test that appending to CMAKE_LINKER_FLAGS works without warnings."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    (source_dir / "CMakeLists.txt").write_text(
+        "project(test_append)\n"
+        'set(CMAKE_LINKER_FLAGS "${CMAKE_LINKER_FLAGS} -fsanitize=address")\n'
+        "add_executable(main main.c)"
+    )
+    (source_dir / "main.c").write_text("int main() { return 0; }")
+
+    configure(source_dir, "build")
+
+    ninja_file = source_dir / "build.ninja"
+    content = ninja_file.read_text()
+
+    assert "-fsanitize=address" in content
