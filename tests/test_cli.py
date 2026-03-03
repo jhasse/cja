@@ -227,6 +227,7 @@ def test_cli_make_directory(tmp_path: Path) -> None:
         ["uv", "run", "cja", "-E", "make_directory", str(dir_path)],
         capture_output=True,
         text=True,
+        cwd=tmp_path,
     )
     assert result.returncode == 0
     assert dir_path.exists()
