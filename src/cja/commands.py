@@ -121,12 +121,12 @@ def handle_include_directories(
         if arg in ("BEFORE", "AFTER", "SYSTEM"):
             continue
         expanded = ctx.expand_variables(arg, strict, cmd.line)
+        expanded = strip_generator_expressions(expanded, ctx.variables)
         if "$<" in expanded:
             ctx.print_warning(
                 f"generator expressions in include_directories are not yet supported: {arg}",
                 cmd.line,
             )
-        expanded = strip_generator_expressions(expanded)
         if not expanded:
             continue
         dirs.append(resolve_cmake_path(expanded, ctx.current_source_dir))
@@ -217,12 +217,12 @@ def handle_target_link_directories(
             else:
                 # Expand variables and resolve relative paths
                 expanded = ctx.expand_variables(arg, strict, cmd.line)
+                expanded = strip_generator_expressions(expanded, ctx.variables)
                 if "$<" in expanded:
                     ctx.print_warning(
-                        f"generator expressions in target_compile_definitions are not yet supported: {arg}",
+                        f"generator expressions in target_link_directories are not yet supported: {arg}",
                         cmd.line,
                     )
-                expanded = strip_generator_expressions(expanded)
 
                 if not expanded:
                     continue
@@ -344,13 +344,13 @@ def handle_target_include_directories(
             else:
                 # Expand variables and resolve relative paths
                 expanded = ctx.expand_variables(arg, strict, cmd.line)
+                expanded = strip_generator_expressions(expanded, ctx.variables)
                 if "$<" in expanded:
                     if not _is_supported_include_dir_genex(expanded):
                         ctx.print_warning(
                             f"generator expressions in target_include_directories are not yet supported: {arg}",
                             cmd.line,
                         )
-                expanded = strip_generator_expressions(expanded)
                 if not expanded:
                     continue
                 expanded = resolve_cmake_path(expanded, ctx.current_source_dir)
@@ -399,12 +399,12 @@ def handle_target_compile_definitions(
             else:
                 # Expand variables and resolve relative paths
                 expanded = ctx.expand_variables(arg, strict, cmd.line)
+                expanded = strip_generator_expressions(expanded, ctx.variables)
                 if "$<" in expanded:
                     ctx.print_warning(
                         f"generator expressions in target_compile_definitions are not yet supported: {arg}",
                         cmd.line,
                     )
-                expanded = strip_generator_expressions(expanded)
 
                 if not expanded:
                     continue
@@ -463,12 +463,12 @@ def handle_target_compile_options(
                 pass
             else:
                 expanded = ctx.expand_variables(arg, strict, cmd.line)
+                expanded = strip_generator_expressions(expanded, ctx.variables)
                 if "$<" in expanded:
                     ctx.print_warning(
                         f"generator expressions in target_compile_options are not yet supported: {arg}",
                         cmd.line,
                     )
-                expanded = strip_generator_expressions(expanded)
                 if not expanded:
                     continue
                 if visibility == "PUBLIC":
