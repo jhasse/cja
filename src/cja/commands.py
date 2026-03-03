@@ -1089,7 +1089,7 @@ def handle_list(
                     idx = int(idx_str)
                     if -len(items) <= idx < len(items):
                         result.append(items[idx])
-                except ValueError, IndexError:
+                except (ValueError, IndexError):
                     pass
             ctx.variables[out_var] = ";".join(result)
 

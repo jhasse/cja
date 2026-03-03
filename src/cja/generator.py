@@ -233,7 +233,7 @@ def _rc_manifest_deps(ctx: BuildContext, rc_path: str) -> list[str]:
             else:
                 manifest_path = manifest_ref
             deps.append(manifest_path)
-    except OSError, UnicodeDecodeError:
+    except (OSError, UnicodeDecodeError):
         pass
     return deps
 
@@ -896,7 +896,7 @@ def process_commands(
                         subprocess.run(
                             ["git", "-C", str(src_dir), "checkout", git_tag], check=True
                         )
-                    except FileNotFoundError, subprocess.CalledProcessError:
+                    except (FileNotFoundError, subprocess.CalledProcessError):
                         if strict:
                             ctx.print_error(
                                 f"git checkout failed for {git_repo} ({git_tag})",
@@ -3999,7 +3999,7 @@ def generate_ninja(
                     destination_path = Path(destination).resolve()
                     if destination_path.is_relative_to(source_dir):
                         destination = str(destination_path.relative_to(source_dir))
-                except OSError, RuntimeError, ValueError:
+                except (OSError, RuntimeError, ValueError):
                     pass
 
                 for target in install.targets:
@@ -4153,7 +4153,7 @@ def configure(
             text=True,
         )
         (ctx.build_dir / "compile_commands.json").write_text(compdb)
-    except subprocess.CalledProcessError, FileNotFoundError:
+    except (subprocess.CalledProcessError, FileNotFoundError):
         # Ignore errors if ninja is not found or fails
         pass
 

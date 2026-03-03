@@ -34,5 +34,5 @@ def copy_unignored_tree(src: Path, dst: Path) -> None:
                 dst_path.symlink_to(target)
             else:
                 shutil.copy2(src_path, dst_path)
-    except FileNotFoundError, subprocess.CalledProcessError:
+    except (FileNotFoundError, subprocess.CalledProcessError):
         shutil.copytree(src, dst, dirs_exist_ok=True)
