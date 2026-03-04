@@ -1,0 +1,2 @@
+Checks: 'performance-avoid-endl,modernize-use-nullptr'
+WarningsAsErrors: 'modernize-use-nullptr'

@@ -1,10 +1,19 @@
 """Tests for CXX_CLANG_TIDY support via validation nodes."""
 
+import shutil
+import subprocess
 from pathlib import Path
 
+import pytest
+
 from cja.build_context import BuildContext
+from cja.generator import configure, process_commands, generate_ninja
 from cja.parser import Command
-from cja.generator import process_commands, generate_ninja
+from tests.helpers import copy_unignored_tree
+
+EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
+
+has_clang_tidy = shutil.which("clang-tidy") is not None
 
 
 def test_cxx_clang_tidy_generates_validation_node(tmp_path: Path) -> None:
@@ -112,3 +121,28 @@ def test_clang_tidy_includes_compile_flags(tmp_path: Path) -> None:
             if line and not line.startswith(" "):
                 break
     assert tidy_has_define
+
+
+@pytest.mark.skipif(not has_clang_tidy, reason="clang-tidy not installed")
+def test_clang_tidy_example(tmp_path: Path) -> None:
+    """Build the clang-tidy example and verify that clang-tidy errors fail the build."""
+    source_dir = tmp_path / "clang-tidy"
+    copy_unignored_tree(EXAMPLES_DIR / "clang-tidy", source_dir)
+
+    configure(source_dir, "build")
+
+    build_ninja = source_dir / "build.ninja"
+    assert build_ninja.exists()
+
+    content = build_ninja.read_text()
+    assert "rule clang_tidy" in content
+    assert "|@" in content
+
+    result = subprocess.run(
+        ["ninja"],
+        cwd=source_dir,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0, "Build should fail due to clang-tidy error"
+    assert "modernize-use-nullptr" in result.stdout

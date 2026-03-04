@@ -3358,9 +3358,10 @@ def generate_ninja(
             for t in (*ctx.libraries, *ctx.executables)
         )
         if has_clang_tidy:
+            src_prefix = str(ctx.source_dir.resolve()) + "/"
             n.rule(
                 "clang_tidy",
-                command="$clang_tidy_cmd $in -- $cflags 2>/dev/null && touch $out",
+                command=f"$clang_tidy_cmd $in -- $cflags 2>/dev/null >$out.log; rv=$$?; sed 's|{src_prefix}||g' $out.log; rm -f $out.log; [ $$rv -eq 0 ] && touch $out || exit $$rv",
                 description="\x1b[35mAnalyzing $in\x1b[0m",
             )
             n.newline()
