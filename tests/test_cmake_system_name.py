@@ -34,3 +34,17 @@ def test_cmake_host_system_processor(tmp_path: Path) -> None:
         platform.machine().strip() or platform.processor().strip() or "unknown"
     )
     assert ctx.variables["CMAKE_HOST_SYSTEM_PROCESSOR"] == expected_processor
+
+
+def test_cmake_host_win32(tmp_path: Path) -> None:
+    """Test that CMAKE_HOST_WIN32 is always set with host-appropriate value."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    (source_dir / "CMakeLists.txt").write_text("project(test_host_win32)")
+
+    ctx = configure(source_dir, "build")
+
+    if platform.system() == "Windows":
+        assert ctx.variables["CMAKE_HOST_WIN32"] == "TRUE"
+    else:
+        assert ctx.variables["CMAKE_HOST_WIN32"] == "FALSE"

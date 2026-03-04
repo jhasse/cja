@@ -4187,12 +4187,14 @@ def configure(
     )
     ctx.variables.setdefault("CMAKE_INSTALL_PREFIX", str(ctx.build_dir / "install"))
     ctx.variables["CMAKE_HOST_SYSTEM_PROCESSOR"] = _detect_host_system_processor()
+    host_system = platform.system()
+    ctx.variables["CMAKE_HOST_WIN32"] = "TRUE" if host_system == "Windows" else "FALSE"
 
-    if platform.system() == "Darwin":
+    if host_system == "Darwin":
         ctx.variables["CMAKE_SYSTEM_NAME"] = "Darwin"
         ctx.variables["UNIX"] = "TRUE"
         ctx.variables["APPLE"] = "TRUE"
-    elif platform.system() == "Windows":
+    elif host_system == "Windows":
         ctx.variables["CMAKE_SYSTEM_NAME"] = "Windows"
         ctx.variables["WIN32"] = "TRUE"
     else:
