@@ -3582,6 +3582,8 @@ def generate_ninja(
                 and not is_rc(s)
                 and not is_manifest(s)
             ]
+            # CMake tolerates duplicate source entries on a target. Keep first occurrence.
+            compileable_sources = list(dict.fromkeys(compileable_sources))
 
             cxx_clang_tidy = lib.properties.get("CXX_CLANG_TIDY")
             c_clang_tidy = lib.properties.get("C_CLANG_TIDY")
@@ -3790,6 +3792,8 @@ def generate_ninja(
                 and not is_rc(s)
                 and not is_manifest(s)
             ]
+            # CMake tolerates duplicate source entries on a target. Keep first occurrence.
+            compileable_sources = list(dict.fromkeys(compileable_sources))
             rc_sources: list[str] = [s for s in exe.sources if is_rc(s)]
             manifest_sources: list[str] = [s for s in exe.sources if is_manifest(s)]
 

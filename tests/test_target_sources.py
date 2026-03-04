@@ -177,3 +177,27 @@ def test_add_library_source_genex_list_from_variable() -> None:
     lib = ctx.get_library("mylib")
     assert lib is not None
     assert lib.sources == ["base.cpp", "a.cpp", "b.cpp"]
+
+
+def test_duplicate_target_source_generates_single_object_rule(tmp_path: Path) -> None:
+    """Duplicate target source entries should not create duplicate Ninja rules."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    (source_dir / "main.cpp").write_text("int x() { return 0; }\n")
+    (source_dir / "CMakeLists.txt").write_text(
+        "\n".join(
+            [
+                "cmake_minimum_required(VERSION 3.15)",
+                "project(dup_source LANGUAGES CXX)",
+                "add_library(mylib STATIC main.cpp)",
+                "target_sources(mylib PRIVATE main.cpp)",
+            ]
+        )
+        + "\n"
+    )
+
+    from cja.generator import configure
+
+    configure(source_dir, "build", strict=True)
+    ninja = (source_dir / "build.ninja").read_text()
+    assert ninja.count("mylib_main.o: cxx") == 1
