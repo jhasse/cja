@@ -106,6 +106,7 @@ class Writer(object):
         implicit_outputs: Optional[Union[str, List[str]]] = None,
         pool: Optional[str] = None,
         dyndep: Optional[str] = None,
+        validation: Optional[Union[str, List[str]]] = None,
     ) -> List[str]:
         outputs = as_list(outputs)
         out_outputs = [escape_path(x) for x in outputs]
@@ -119,6 +120,10 @@ class Writer(object):
             order_only = [escape_path(x) for x in as_list(order_only)]
             all_inputs.append('||')
             all_inputs.extend(order_only)
+        if validation:
+            validation = [escape_path(x) for x in as_list(validation)]
+            all_inputs.append('|@')
+            all_inputs.extend(validation)
         if implicit_outputs:
             implicit_outputs = [escape_path(x)
                                 for x in as_list(implicit_outputs)]

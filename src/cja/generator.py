@@ -3352,6 +3352,19 @@ def generate_ninja(
             )
             n.newline()
 
+        # Emit clang-tidy rule if any target uses CXX_CLANG_TIDY or C_CLANG_TIDY
+        has_clang_tidy = any(
+            "CXX_CLANG_TIDY" in t.properties or "C_CLANG_TIDY" in t.properties
+            for t in (*ctx.libraries, *ctx.executables)
+        )
+        if has_clang_tidy:
+            n.rule(
+                "clang_tidy",
+                command="$clang_tidy_cmd $in -- $cflags 2>/dev/null && touch $out",
+                description="\x1b[35mAnalyzing $in\x1b[0m",
+            )
+            n.newline()
+
         # Track library and executable outputs for linking and testing
         lib_outputs: dict[str, str] = {}
         exe_outputs: dict[str, str] = {}
@@ -3569,6 +3582,9 @@ def generate_ninja(
                 and not is_manifest(s)
             ]
 
+            cxx_clang_tidy = lib.properties.get("CXX_CLANG_TIDY")
+            c_clang_tidy = lib.properties.get("C_CLANG_TIDY")
+
             for source in compileable_sources:
                 actual_source = source
                 if source in custom_command_outputs:
@@ -3585,7 +3601,8 @@ def generate_ninja(
                 objects.append(obj_name)
 
                 # Determine if C or C++
-                if source.endswith((".cpp", ".cxx", ".cc", ".C", ".mm", ".MM")):
+                is_cxx = source.endswith((".cpp", ".cxx", ".cc", ".C", ".mm", ".MM"))
+                if is_cxx:
                     rule = "cxx"
                 else:
                     rule = "cc"
@@ -3645,12 +3662,33 @@ def generate_ninja(
                         {"cflags": " ".join(source_compile_flags)},
                     )
 
+                # Generate clang-tidy validation node if applicable
+                tidy_cmd = cxx_clang_tidy if is_cxx else c_clang_tidy
+                tidy_stamp: str | None = None
+                if tidy_cmd:
+                    tidy_args = tidy_cmd.replace(";", " ")
+                    tidy_stamp = f"{obj_name}.tidy"
+                    tidy_vars: dict[str, str | list[str] | None] = {
+                        "clang_tidy_cmd": tidy_args,
+                    }
+                    if source_compile_flags:
+                        tidy_vars["cflags"] = " ".join(source_compile_flags)
+                    n.build(
+                        tidy_stamp,
+                        "clang_tidy",
+                        actual_source,
+                        variables=cast(
+                            dict[str, str | list[str] | None], tidy_vars
+                        ),
+                    )
+
                 n.build(
                     obj_name,
                     rule,
                     actual_source,
                     implicit=source_depends,
                     variables=source_vars,
+                    validation=tidy_stamp,
                 )
 
             if lib.lib_type == "OBJECT":
@@ -3754,6 +3792,9 @@ def generate_ninja(
             rc_sources: list[str] = [s for s in exe.sources if is_rc(s)]
             manifest_sources: list[str] = [s for s in exe.sources if is_manifest(s)]
 
+            cxx_clang_tidy = exe.properties.get("CXX_CLANG_TIDY")
+            c_clang_tidy = exe.properties.get("C_CLANG_TIDY")
+
             for source in compileable_sources:
                 actual_source = source
                 if source in custom_command_outputs:
@@ -3770,7 +3811,8 @@ def generate_ninja(
                 objects.append(obj_name)
 
                 # Determine if C or C++
-                if source.endswith((".cpp", ".cxx", ".cc", ".C", ".mm", ".MM")):
+                is_cxx = source.endswith((".cpp", ".cxx", ".cc", ".C", ".mm", ".MM"))
+                if is_cxx:
                     rule = "cxx"
                     uses_cxx = True
                 else:
@@ -3831,12 +3873,33 @@ def generate_ninja(
                         {"cflags": " ".join(source_compile_flags)},
                     )
 
+                # Generate clang-tidy validation node if applicable
+                tidy_cmd = cxx_clang_tidy if is_cxx else c_clang_tidy
+                tidy_stamp: str | None = None
+                if tidy_cmd:
+                    tidy_args = tidy_cmd.replace(";", " ")
+                    tidy_stamp = f"{obj_name}.tidy"
+                    tidy_vars: dict[str, str | list[str] | None] = {
+                        "clang_tidy_cmd": tidy_args,
+                    }
+                    if source_compile_flags:
+                        tidy_vars["cflags"] = " ".join(source_compile_flags)
+                    n.build(
+                        tidy_stamp,
+                        "clang_tidy",
+                        actual_source,
+                        variables=cast(
+                            dict[str, str | list[str] | None], tidy_vars
+                        ),
+                    )
+
                 n.build(
                     obj_name,
                     rule,
                     actual_source,
                     implicit=source_depends,
                     variables=source_vars,
+                    validation=tidy_stamp,
                 )
 
             # Add linked libraries to inputs
