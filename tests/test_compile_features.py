@@ -162,3 +162,21 @@ def test_highest_inherited_cxx_std_wins(tmp_path: Path) -> None:
     content = (source_dir / "build.ninja").read_text()
     assert "-std=c++20" in content
     assert "-std=c++20 -std=c++11" not in content
+
+
+def test_cmake_cxx_standard_applies_to_new_targets(tmp_path: Path) -> None:
+    """CMAKE_CXX_STANDARD should set the default C++ standard for new targets."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="set", args=["CMAKE_CXX_STANDARD", "17"], line=1),
+        Command(name="add_executable", args=["myapp", "main.cpp"], line=2),
+    ]
+    process_commands(commands, ctx)
+
+    ninja_path = tmp_path / "build.ninja"
+    generate_ninja(ctx, ninja_path, "build")
+    lines = ninja_path.read_text().splitlines()
+
+    cxx_line_idx = next(i for i, line in enumerate(lines) if " main.cpp" in line)
+    cxx_line_block = "\n".join(lines[cxx_line_idx : cxx_line_idx + 2])
+    assert "-std=c++17" in cxx_line_block

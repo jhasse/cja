@@ -106,6 +106,18 @@ def _collect_directory_include_dirs(ctx: BuildContext) -> list[str]:
     return include_dirs
 
 
+def _default_std_features(ctx: BuildContext) -> list[str]:
+    """Return default language standard features from CMAKE_*_STANDARD vars."""
+    features: list[str] = []
+    c_std = ctx.variables.get("CMAKE_C_STANDARD", "").strip()
+    if c_std.isdigit():
+        features.append(f"c_std_{c_std}")
+    cxx_std = ctx.variables.get("CMAKE_CXX_STANDARD", "").strip()
+    if cxx_std.isdigit():
+        features.append(f"cxx_std_{cxx_std}")
+    return features
+
+
 def handle_include_directories(
     ctx: BuildContext,
     cmd: Command,
@@ -992,12 +1004,14 @@ def handle_add_library(
                 ]
             )
         include_directories = _collect_directory_include_dirs(ctx)
+        default_features = _default_std_features(ctx)
         ctx.libraries.append(
             Library(
                 name=name,
                 sources=resolved_sources,
                 lib_type=lib_type,
                 include_directories=include_directories,
+                compile_features=default_features,
                 defined_file=ctx.current_list_file,
                 defined_line=cmd.line,
             )
@@ -1020,11 +1034,13 @@ def handle_add_executable(
                 [ctx.resolve_path(item) for item in normalized.split(";") if item]
             )
         include_directories = _collect_directory_include_dirs(ctx)
+        default_features = _default_std_features(ctx)
         ctx.executables.append(
             Executable(
                 name=args[0],
                 sources=sources,
                 include_directories=include_directories,
+                compile_features=default_features,
                 defined_file=ctx.current_list_file,
                 defined_line=cmd.line,
             )
