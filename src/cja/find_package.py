@@ -1,5 +1,6 @@
 """Built-in find_package() handlers."""
 
+import os
 from pathlib import Path
 import re
 import shlex
@@ -11,6 +12,92 @@ from termcolor import colored
 from .build_context import BuildContext
 from .parser import Command
 from .targets import ImportedTarget
+
+
+def _unique_existing_dirs(candidates: list[Path]) -> list[Path]:
+    """Return candidate directories that exist, preserving order."""
+    result: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        normalized = str(candidate)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        if candidate.exists() and candidate.is_dir():
+            result.append(candidate)
+    return result
+
+
+def _find_first_library(lib_dirs: list[Path], names: list[str]) -> str:
+    """Find the first library file matching any provided name."""
+    for lib_dir in lib_dirs:
+        for name in names:
+            candidate = lib_dir / name
+            if candidate.exists() and candidate.is_file():
+                return str(candidate)
+    return ""
+
+
+def _find_gtest_via_filesystem(gtest_root_hint: str) -> tuple[bool, str, str, str]:
+    """Find GTest via filesystem probing when pkg-config is unavailable."""
+    root_hints: list[Path] = []
+    if gtest_root_hint:
+        root_hints.append(Path(gtest_root_hint))
+    env_root = os.environ.get("GTEST_ROOT", "")
+    if env_root:
+        root_hints.append(Path(env_root))
+
+    include_dir_candidates = [
+        *(root / "include" for root in root_hints),
+        Path("/usr/include"),
+        Path("/usr/local/include"),
+        Path("/opt/homebrew/include"),
+        Path("/opt/local/include"),
+    ]
+
+    lib_dir_candidates = [
+        *(root / "lib" for root in root_hints),
+        *(root / "lib64" for root in root_hints),
+        Path("/usr/lib"),
+        Path("/usr/lib64"),
+        Path("/usr/local/lib"),
+        Path("/usr/local/lib64"),
+        Path("/lib"),
+        Path("/lib64"),
+        Path("/opt/homebrew/lib"),
+        Path("/opt/local/lib"),
+    ]
+
+    for base in (Path("/usr/lib"), Path("/lib")):
+        if base.exists() and base.is_dir():
+            lib_dir_candidates.extend(path for path in base.iterdir() if path.is_dir())
+
+    include_dirs = _unique_existing_dirs(include_dir_candidates)
+    lib_dirs = _unique_existing_dirs(lib_dir_candidates)
+
+    include_dir = ""
+    for candidate in include_dirs:
+        if (candidate / "gtest/gtest.h").exists():
+            include_dir = str(candidate)
+            break
+
+    gtest_lib = _find_first_library(
+        lib_dirs,
+        ["libgtest.so", "libgtest.a", "libgtest.dylib", "gtest.lib"],
+    )
+    gtest_main_lib = _find_first_library(
+        lib_dirs,
+        [
+            "libgtest_main.so",
+            "libgtest_main.a",
+            "libgtest_main.dylib",
+            "gtest_main.lib",
+        ],
+    )
+
+    found = bool(include_dir and gtest_lib)
+    cflags = f"-I{include_dir}" if include_dir else ""
+    return found, cflags, gtest_lib, gtest_main_lib
 
 
 def handle_builtin_find_package(
@@ -28,6 +115,9 @@ def handle_builtin_find_package(
     """
     if package_name == "GTest":
         found = False
+        gtest_cflags = ""
+        gtest_libs = ""
+        gtest_main_libs = ""
         try:
             result = subprocess.run(
                 ["pkg-config", "--exists", "gtest"],
@@ -47,13 +137,6 @@ def handle_builtin_find_package(
                 )
                 gtest_cflags = cflags_result.stdout.strip()
                 gtest_libs = libs_result.stdout.strip()
-                ctx.variables["GTEST_INCLUDE_DIRS"] = gtest_cflags
-                ctx.variables["GTEST_LIBRARIES"] = gtest_libs
-                ctx.imported_targets["GTest::gtest"] = ImportedTarget(
-                    cflags=gtest_cflags,
-                    libs=gtest_libs,
-                )
-
                 main_result = subprocess.run(
                     ["pkg-config", "--libs", "gtest_main"],
                     capture_output=True,
@@ -61,16 +144,38 @@ def handle_builtin_find_package(
                 )
                 if main_result.returncode == 0:
                     gtest_main_libs = main_result.stdout.strip()
-                    ctx.variables["GTEST_MAIN_LIBRARIES"] = gtest_main_libs
-                    ctx.variables["GTEST_BOTH_LIBRARIES"] = (
-                        gtest_libs + " " + gtest_main_libs
-                    )
-                    ctx.imported_targets["GTest::gtest_main"] = ImportedTarget(
-                        cflags=gtest_cflags,
-                        libs=gtest_main_libs,
-                    )
         except FileNotFoundError:
             pass
+
+        if not found:
+            found, gtest_cflags, gtest_libs, gtest_main_libs = _find_gtest_via_filesystem(
+                ctx.variables.get("GTEST_ROOT", "")
+            )
+
+        if found:
+            ctx.variables["GTEST_INCLUDE_DIRS"] = gtest_cflags
+            ctx.variables["GTEST_LIBRARIES"] = gtest_libs
+            if gtest_cflags.startswith("-I"):
+                ctx.variables["GTEST_INCLUDE_DIR"] = gtest_cflags[2:]
+
+            gtest_target = ImportedTarget(
+                cflags=gtest_cflags,
+                libs=gtest_libs,
+            )
+            ctx.imported_targets["GTest::gtest"] = gtest_target
+            ctx.imported_targets["GTest::GTest"] = gtest_target
+
+            if gtest_main_libs:
+                ctx.variables["GTEST_MAIN_LIBRARIES"] = gtest_main_libs
+                ctx.variables["GTEST_BOTH_LIBRARIES"] = (
+                    gtest_libs + " " + gtest_main_libs
+                )
+                gtest_main_target = ImportedTarget(
+                    cflags=gtest_cflags,
+                    libs=gtest_main_libs,
+                )
+                ctx.imported_targets["GTest::gtest_main"] = gtest_main_target
+                ctx.imported_targets["GTest::Main"] = gtest_main_target
 
         if found:
             ctx.variables["GTest_FOUND"] = "TRUE"

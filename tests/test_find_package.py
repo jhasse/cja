@@ -90,6 +90,97 @@ def test_find_package_gtest_with_if() -> None:
         assert ctx.variables["RESULT"] == "not_found"
 
 
+def test_find_package_gtest_alias_imported_targets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test find_package(GTest) creates modern and legacy imported target names."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+
+    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        if cmd == ["pkg-config", "--exists", "gtest"]:
+            return subprocess.CompletedProcess(cmd, 0)
+        if cmd == ["pkg-config", "--cflags", "gtest"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="-I/usr/include")
+        if cmd == ["pkg-config", "--libs", "gtest"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="-lgtest")
+        if cmd == ["pkg-config", "--libs", "gtest_main"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="-lgtest_main")
+        return subprocess.CompletedProcess(cmd, 1)
+
+    monkeypatch.setattr("cja.generator.subprocess.run", fake_run)
+
+    commands = [Command(name="find_package", args=["GTest"], line=1)]
+    process_commands(commands, ctx)
+
+    assert "GTest::gtest" in ctx.imported_targets
+    assert "GTest::GTest" in ctx.imported_targets
+    assert ctx.imported_targets["GTest::gtest"] == ctx.imported_targets["GTest::GTest"]
+
+    assert "GTest::gtest_main" in ctx.imported_targets
+    assert "GTest::Main" in ctx.imported_targets
+    assert (
+        ctx.imported_targets["GTest::gtest_main"]
+        == ctx.imported_targets["GTest::Main"]
+    )
+
+
+def test_find_package_gtest_fallback_filesystem(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test find_package(GTest) falls back to filesystem probing."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+
+    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        if cmd == ["pkg-config", "--exists", "gtest"]:
+            return subprocess.CompletedProcess(cmd, 1)
+        return subprocess.CompletedProcess(cmd, 1)
+
+    monkeypatch.setattr("cja.generator.subprocess.run", fake_run)
+    monkeypatch.setattr(
+        "cja.find_package._find_gtest_via_filesystem",
+        lambda _hint: (
+            True,
+            "-I/usr/include",
+            "/usr/lib/libgtest.a",
+            "/usr/lib/libgtest_main.a",
+        ),
+    )
+
+    commands = [Command(name="find_package", args=["GTest"], line=1)]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["GTest_FOUND"] == "TRUE"
+    assert ctx.variables["GTEST_FOUND"] == "TRUE"
+    assert ctx.variables["GTEST_INCLUDE_DIR"] == "/usr/include"
+    assert ctx.variables["GTEST_LIBRARIES"] == "/usr/lib/libgtest.a"
+    assert ctx.variables["GTEST_MAIN_LIBRARIES"] == "/usr/lib/libgtest_main.a"
+    assert "GTest::gtest" in ctx.imported_targets
+    assert "GTest::gtest_main" in ctx.imported_targets
+
+
+def test_find_package_gtest_required_failure_when_fallback_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test required GTest still fails when pkg-config and fallback miss."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+
+    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        if cmd == ["pkg-config", "--exists", "gtest"]:
+            return subprocess.CompletedProcess(cmd, 1)
+        return subprocess.CompletedProcess(cmd, 1)
+
+    monkeypatch.setattr("cja.generator.subprocess.run", fake_run)
+    monkeypatch.setattr(
+        "cja.find_package._find_gtest_via_filesystem",
+        lambda _hint: (False, "", "", ""),
+    )
+
+    commands = [Command(name="find_package", args=["GTest", "REQUIRED"], line=1)]
+    with pytest.raises(SystemExit) as exc_info:
+        process_commands(commands, ctx)
+    assert exc_info.value.code == 1
+
+
 def test_find_package_threads() -> None:
     """Test find_package(Threads) sets variables and imported target."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
