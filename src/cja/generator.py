@@ -3221,6 +3221,8 @@ def generate_ninja(
     # Detect extensions
     exe_ext = ".exe" if platform.system() == "Windows" else ""
     lib_ext = ".lib" if platform.system() == "Windows" else ".a"
+    shared_lib_ext = ".dll" if platform.system() == "Windows" else ".dylib" if platform.system() == "Darwin" else ".so"
+    module_lib_ext = ".dll" if platform.system() == "Windows" else ".so"
 
     # Determine build type flags
     build_type = ctx.variables.get("CMAKE_BUILD_TYPE", "Debug").upper()
@@ -3389,6 +3391,21 @@ def generate_ninja(
             "link_cxx",
             command="$cxx -fdiagnostics-color $in -o $out $ldflags $libs",
             description="\x1b[32;1mLinking C++ executable $out\x1b[0m",
+        )
+        n.newline()
+
+        shared_link_flag = "-dynamiclib" if platform.system() == "Darwin" else "-shared"
+        n.rule(
+            "solink",
+            command=f"$cc -fdiagnostics-color {shared_link_flag} $in -o $out $ldflags $libs",
+            description="\x1b[32;1mLinking C shared library $out\x1b[0m",
+        )
+        n.newline()
+
+        n.rule(
+            "solink_cxx",
+            command=f"$cxx -fdiagnostics-color {shared_link_flag} $in -o $out $ldflags $libs",
+            description="\x1b[32;1mLinking C++ shared library $out\x1b[0m",
         )
         n.newline()
 
@@ -3566,6 +3583,7 @@ def generate_ninja(
                 # Interface libraries are usage requirements only.
                 continue
             objects: list[str] = []
+            uses_cxx = False
 
             # Collect compile flags from global options, compile definitions, compile features, include dirs, and linked libraries
             target_dir = (
@@ -3658,6 +3676,7 @@ def generate_ninja(
                 is_cxx = source.endswith((".cpp", ".cxx", ".cc", ".C", ".mm", ".MM"))
                 if is_cxx:
                     rule = "cxx"
+                    uses_cxx = True
                 else:
                     rule = "cc"
 
@@ -3754,6 +3773,18 @@ def generate_ninja(
                 lib_name = f"$builddir/lib{lib.name}{lib_ext}"
                 register_output(lib_name, lib.defined_file, lib.defined_line)
                 n.build(lib_name, "ar", objects)
+                n.newline()
+                lib_outputs[lib.name] = lib_name
+            elif lib.lib_type in ("SHARED", "MODULE"):
+                # Create shared/module library output so aliases can resolve to real artifacts.
+                if lib.lib_type == "SHARED":
+                    lib_name = f"$builddir/lib{lib.name}{shared_lib_ext}"
+                else:
+                    lib_name = f"$builddir/lib{lib.name}{module_lib_ext}"
+
+                register_output(lib_name, lib.defined_file, lib.defined_line)
+                link_rule = "solink_cxx" if uses_cxx else "solink"
+                n.build(lib_name, link_rule, objects)
                 n.newline()
                 lib_outputs[lib.name] = lib_name
 

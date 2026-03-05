@@ -1,6 +1,7 @@
 """Tests for target_link_libraries edge cases."""
 
 from pathlib import Path
+import platform
 
 import pytest
 
@@ -75,3 +76,23 @@ def test_target_link_libraries_genex_false_branch_omitted(tmp_path: Path) -> Non
     generate_ninja(ctx, ninja_file, "build")
     content = ninja_file.read_text()
     assert "stdc++fs" not in content
+
+
+def test_alias_to_shared_library_is_linked_by_output(tmp_path: Path) -> None:
+    """Alias to SHARED library should resolve to the generated library output."""
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    commands = [
+        Command(name="add_library", args=["core", "SHARED", "core.cpp"], line=1),
+        Command(name="add_library", args=["Pkg::core", "ALIAS", "core"], line=2),
+        Command(name="add_executable", args=["app", "main.cpp"], line=3),
+        Command(name="target_link_libraries", args=["app", "PRIVATE", "Pkg::core"], line=4),
+    ]
+    process_commands(commands, ctx)
+
+    ninja_file = tmp_path / "build.ninja"
+    generate_ninja(ctx, ninja_file, "build")
+    content = ninja_file.read_text()
+
+    assert "-lPkg::core" not in content
+    ext = ".dll" if platform.system() == "Windows" else ".dylib" if platform.system() == "Darwin" else ".so"
+    assert f"$builddir/libcore{ext}" in content
