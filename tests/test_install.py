@@ -70,7 +70,10 @@ def test_cmake_install_prefix_default(tmp_path: Path) -> None:
 
     ctx = configure(source_dir, "build")
 
-    assert ctx.variables["CMAKE_INSTALL_PREFIX"] == str(source_dir / "build" / "install")
+    assert (
+        ctx.variables["CMAKE_INSTALL_PREFIX"]
+        == f"{source_dir.as_posix()}/build/install"
+    )
 
 
 def test_cmake_install_prefix_respects_override(tmp_path: Path) -> None:

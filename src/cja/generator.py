@@ -15,7 +15,7 @@ import zipfile
 from pathlib import Path
 from typing import Callable, cast
 
-from .utils import is_truthy, make_relative, strip_generator_expressions
+from .utils import is_truthy, make_relative, strip_generator_expressions, to_posix_path
 from .syntax import (
     FetchContentInfo,
     SourceFileProperties,
@@ -1408,7 +1408,11 @@ def process_commands(
                             f"share/doc/{project_name}"
                         )
 
-                        install_prefix = ctx.variables.get("CMAKE_INSTALL_PREFIX", "")
+                        install_prefix = to_posix_path(
+                            ctx.variables.get("CMAKE_INSTALL_PREFIX", "")
+                        )
+                        if install_prefix:
+                            ctx.variables["CMAKE_INSTALL_PREFIX"] = install_prefix
 
                         include_dir = ctx.variables.get("CMAKE_INSTALL_INCLUDEDIR", "")
                         if include_dir:
@@ -1417,7 +1421,7 @@ def process_commands(
                             else:
                                 full_include_dir = str(Path(install_prefix) / include_dir)
                             ctx.variables["CMAKE_INSTALL_FULL_INCLUDEDIR"] = (
-                                full_include_dir
+                                to_posix_path(full_include_dir)
                             )
 
                         lib_dir = ctx.variables.get("CMAKE_INSTALL_LIBDIR", "")
@@ -1426,7 +1430,9 @@ def process_commands(
                                 full_lib_dir = lib_dir
                             else:
                                 full_lib_dir = str(Path(install_prefix) / lib_dir)
-                            ctx.variables["CMAKE_INSTALL_FULL_LIBDIR"] = full_lib_dir
+                            ctx.variables["CMAKE_INSTALL_FULL_LIBDIR"] = to_posix_path(
+                                full_lib_dir
+                            )
                     elif module_name.endswith(".cmake") or "/" in module_name:
                         inc_file = Path(module_name)
                         if not inc_file.is_absolute():
@@ -4206,7 +4212,9 @@ def configure(
     ctx.variables["CMAKE_FIND_PACKAGE_REDIRECTS_DIR"] = str(
         ctx.build_dir / "CMakeFiles" / "pkgRedirects"
     )
-    ctx.variables.setdefault("CMAKE_INSTALL_PREFIX", str(ctx.build_dir / "install"))
+    ctx.variables.setdefault(
+        "CMAKE_INSTALL_PREFIX", to_posix_path(str(ctx.build_dir / "install"))
+    )
     ctx.variables["CMAKE_HOST_SYSTEM_PROCESSOR"] = _detect_host_system_processor()
     host_system = platform.system()
     ctx.variables["CMAKE_HOST_WIN32"] = "TRUE" if host_system == "Windows" else "FALSE"
