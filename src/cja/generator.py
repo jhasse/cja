@@ -1223,6 +1223,26 @@ def process_commands(
                                 ctx.variables[f"{project_name}_VERSION_{suffix}"] = val
                                 ctx.variables[f"CMAKE_PROJECT_VERSION_{suffix}"] = val
 
+                    # Like CMake, include these files as the final step of project().
+                    project_include = ctx.variables.get("CMAKE_PROJECT_INCLUDE", "")
+                    if project_include:
+                        for include_item in split_unquoted_list_args(project_include):
+                            include_target = include_item.strip()
+                            if not include_target:
+                                continue
+                            process_commands(
+                                [
+                                    Command(
+                                        name="include",
+                                        args=[include_target],
+                                        line=cmd.line,
+                                    )
+                                ],
+                                ctx,
+                                trace=trace,
+                                strict=strict,
+                            )
+
             case "enable_language":
                 # Objective-C++ is always enabled; ignore for now.
                 pass
@@ -1262,10 +1282,14 @@ def process_commands(
                             saved_current_list_file: Path = saved_current_list_file,
                             saved_parent_directory: str = saved_parent_directory,
                             saved_vars: dict[str, str] = saved_vars,
-                            saved_parent_scope_vars: dict[str, str | None] = saved_parent_scope_vars,
+                            saved_parent_scope_vars: dict[
+                                str, str | None
+                            ] = saved_parent_scope_vars,
                         ) -> None:
                             cache_updates = {
-                                k: v for k, v in ctx.variables.items() if k in ctx.cache_variables
+                                k: v
+                                for k, v in ctx.variables.items()
+                                if k in ctx.cache_variables
                             }
                             parent_scope_updates = ctx.parent_scope_vars
                             ctx.parent_scope_vars = saved_parent_scope_vars
