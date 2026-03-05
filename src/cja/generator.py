@@ -1388,24 +1388,45 @@ def process_commands(
                         if "BUILD_TESTING" not in ctx.variables:
                             ctx.variables["BUILD_TESTING"] = "ON"
                     elif module_name == "GNUInstallDirs":
-                        ctx.variables["CMAKE_INSTALL_BINDIR"] = "bin"
-                        ctx.variables["CMAKE_INSTALL_SBINDIR"] = "sbin"
-                        ctx.variables["CMAKE_INSTALL_LIBEXECDIR"] = "libexec"
-                        ctx.variables["CMAKE_INSTALL_SYSCONFDIR"] = "etc"
-                        ctx.variables["CMAKE_INSTALL_SHAREDSTATEDIR"] = "com"
-                        ctx.variables["CMAKE_INSTALL_LOCALSTATEDIR"] = "var"
-                        ctx.variables["CMAKE_INSTALL_LIBDIR"] = "lib"
-                        ctx.variables["CMAKE_INSTALL_INCLUDEDIR"] = "include"
-                        ctx.variables["CMAKE_INSTALL_OLDINCLUDEDIR"] = "/usr/include"
-                        ctx.variables["CMAKE_INSTALL_DATAROOTDIR"] = "share"
-                        ctx.variables["CMAKE_INSTALL_DATADIR"] = "share"
-                        ctx.variables["CMAKE_INSTALL_INFODIR"] = "share/info"
-                        ctx.variables["CMAKE_INSTALL_LOCALEDIR"] = "share/locale"
-                        ctx.variables["CMAKE_INSTALL_MANDIR"] = "share/man"
+                        ctx.variables.setdefault("CMAKE_INSTALL_BINDIR", "bin")
+                        ctx.variables.setdefault("CMAKE_INSTALL_SBINDIR", "sbin")
+                        ctx.variables.setdefault("CMAKE_INSTALL_LIBEXECDIR", "libexec")
+                        ctx.variables.setdefault("CMAKE_INSTALL_SYSCONFDIR", "etc")
+                        ctx.variables.setdefault("CMAKE_INSTALL_SHAREDSTATEDIR", "com")
+                        ctx.variables.setdefault("CMAKE_INSTALL_LOCALSTATEDIR", "var")
+                        ctx.variables.setdefault("CMAKE_INSTALL_LIBDIR", "lib")
+                        ctx.variables.setdefault("CMAKE_INSTALL_INCLUDEDIR", "include")
+                        ctx.variables.setdefault("CMAKE_INSTALL_OLDINCLUDEDIR", "/usr/include")
+                        ctx.variables.setdefault("CMAKE_INSTALL_DATAROOTDIR", "share")
+                        ctx.variables.setdefault("CMAKE_INSTALL_DATADIR", "share")
+                        ctx.variables.setdefault("CMAKE_INSTALL_INFODIR", "share/info")
+                        ctx.variables.setdefault("CMAKE_INSTALL_LOCALEDIR", "share/locale")
+                        ctx.variables.setdefault("CMAKE_INSTALL_MANDIR", "share/man")
                         project_name = ctx.variables.get("PROJECT_NAME", "")
-                        ctx.variables["CMAKE_INSTALL_DOCDIR"] = (
+                        ctx.variables.setdefault(
+                            "CMAKE_INSTALL_DOCDIR",
                             f"share/doc/{project_name}"
                         )
+
+                        install_prefix = ctx.variables.get("CMAKE_INSTALL_PREFIX", "")
+
+                        include_dir = ctx.variables.get("CMAKE_INSTALL_INCLUDEDIR", "")
+                        if include_dir:
+                            if Path(include_dir).is_absolute():
+                                full_include_dir = include_dir
+                            else:
+                                full_include_dir = str(Path(install_prefix) / include_dir)
+                            ctx.variables["CMAKE_INSTALL_FULL_INCLUDEDIR"] = (
+                                full_include_dir
+                            )
+
+                        lib_dir = ctx.variables.get("CMAKE_INSTALL_LIBDIR", "")
+                        if lib_dir:
+                            if Path(lib_dir).is_absolute():
+                                full_lib_dir = lib_dir
+                            else:
+                                full_lib_dir = str(Path(install_prefix) / lib_dir)
+                            ctx.variables["CMAKE_INSTALL_FULL_LIBDIR"] = full_lib_dir
                     elif module_name.endswith(".cmake") or "/" in module_name:
                         inc_file = Path(module_name)
                         if not inc_file.is_absolute():
