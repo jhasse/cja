@@ -96,3 +96,33 @@ def test_file_write_creates_parent_dir(tmp_path: Path) -> None:
         import shutil
 
         shutil.rmtree(source_dir, ignore_errors=True)
+
+
+def test_file_copy_to_current_binary_dir(tmp_path: Path) -> None:
+    """file(COPY ... DESTINATION ...) should copy files into binary dir destination."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    (source_dir / "a.h").write_text("// a\n")
+    (source_dir / "b.h").write_text("// b\n")
+
+    build_dir = tmp_path / "build"
+    ctx = BuildContext(source_dir=source_dir, build_dir=build_dir)
+    ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(build_dir / "sub")
+
+    commands = [
+        Command(
+            name="file",
+            args=[
+                "COPY",
+                "a.h",
+                "b.h",
+                "DESTINATION",
+                "${CMAKE_CURRENT_BINARY_DIR}/include",
+            ],
+            line=1,
+        ),
+    ]
+    process_commands(commands, ctx)
+
+    assert (build_dir / "sub" / "include" / "a.h").read_text() == "// a\n"
+    assert (build_dir / "sub" / "include" / "b.h").read_text() == "// b\n"

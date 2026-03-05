@@ -3,6 +3,7 @@ import hashlib
 import os
 from pathlib import Path
 import re
+import shutil
 import sys
 from .build_context import (
     BuildContext,
@@ -2044,8 +2045,6 @@ def handle_file(
                 filename = str(ctx.current_source_dir / filename)
             p = Path(filename)
             if p.exists():
-                import shutil
-
                 if p.is_dir():
                     shutil.rmtree(p)
                 else:
@@ -2058,6 +2057,50 @@ def handle_file(
             if not Path(dirname).is_absolute():
                 dirname = str(ctx.current_source_dir / dirname)
             Path(dirname).mkdir(parents=True, exist_ok=True)
+
+    elif subcommand == "COPY":
+        # file(COPY <files>... DESTINATION <dir> [options...])
+        if "DESTINATION" not in args:
+            if strict:
+                ctx.print_error("file(COPY) requires DESTINATION", cmd.line)
+                sys.exit(1)
+            return
+
+        dst_idx = args.index("DESTINATION")
+        if dst_idx + 1 >= len(args):
+            if strict:
+                ctx.print_error("file(COPY) requires destination path", cmd.line)
+                sys.exit(1)
+            return
+
+        source_args = args[1:dst_idx]
+        destination = ctx.expand_variables(args[dst_idx + 1], strict, cmd.line)
+        if not Path(destination).is_absolute():
+            current_binary_dir = Path(
+                ctx.variables.get("CMAKE_CURRENT_BINARY_DIR", str(ctx.build_dir))
+            )
+            destination = str(current_binary_dir / destination)
+        destination_path = Path(destination)
+        destination_path.mkdir(parents=True, exist_ok=True)
+
+        for source_arg in source_args:
+            source = ctx.expand_variables(source_arg, strict, cmd.line)
+            if not source:
+                continue
+            source_path = Path(source)
+            if not source_path.is_absolute():
+                source_path = ctx.current_source_dir / source_path
+            if not source_path.exists():
+                if strict:
+                    ctx.print_error(f"file(COPY) source not found: {source}", cmd.line)
+                    sys.exit(1)
+                continue
+
+            target_path = destination_path / source_path.name
+            if source_path.is_dir():
+                shutil.copytree(source_path, target_path, dirs_exist_ok=True)
+            else:
+                shutil.copy2(source_path, target_path)
 
     elif subcommand == "TOUCH":
         # file(TOUCH [<files>...])
