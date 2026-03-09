@@ -7,6 +7,7 @@ from cja.generator import BuildContext, configure, process_commands, generate_ni
 from cja.parser import Command
 
 EXE_EXT = ".exe" if platform.system() == "Windows" else ""
+LIB_EXT = ".lib" if platform.system() == "Windows" else ".a"
 
 
 def test_install_targets(tmp_path: Path) -> None:
@@ -131,5 +132,5 @@ def test_install_targets_ignores_file_set_names(tmp_path: Path) -> None:
     generate_ninja(ctx, ninja_path, "build")
 
     ninja_content = ninja_path.read_text()
-    # Only one install edge should be emitted for libfmt.a.
-    assert ninja_content.count("build include/fmt/libfmt.a: install_file") == 1
+    # Only one install edge should be emitted for libfmt (FILE_SET "fmt" must not be treated as a target).
+    assert ninja_content.count(f"build include/fmt/libfmt{LIB_EXT}: install_file") == 1
