@@ -1,5 +1,6 @@
 """Tests for CLI argument handling."""
 
+import importlib.metadata
 import subprocess
 import platform
 from pathlib import Path
@@ -31,6 +32,19 @@ def test_parse_define_without_value() -> None:
 def test_parse_define_with_equals_in_value() -> None:
     """Test parsing -D with = in the value."""
     assert parse_define("FLAGS=-O2 -DFOO=1") == ("FLAGS", "-O2 -DFOO=1")
+
+
+def test_cli_version_flag() -> None:
+    """Test cja CLI --version flag."""
+    result = subprocess.run(
+        ["uv", "run", "cja", "--version"],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+    assert result.stdout.strip() == f"cja {importlib.metadata.version('cja')}"
 
 
 def test_configure_with_variables(tmp_path: Path) -> None:

@@ -1,6 +1,7 @@
 """Command-line interface for cja."""
 
 import argparse
+import importlib.metadata
 import json
 import subprocess
 import sys
@@ -8,7 +9,16 @@ from pathlib import Path
 
 from termcolor import colored
 
+from . import __version__
 from .generator import configure
+
+
+def _get_version() -> str:
+    """Get cja package version."""
+    try:
+        return importlib.metadata.version("cja")
+    except importlib.metadata.PackageNotFoundError:
+        return __version__
 
 
 def parse_define(value: str) -> tuple[str, str]:
@@ -205,6 +215,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         prog="cja",
         description="A CMake reimplementation in Python with Ninja generator",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {_get_version()}",
     )
 
     subparsers = parser.add_subparsers(dest="command")
