@@ -3827,8 +3827,10 @@ def generate_ninja(
             if lib.is_alias and lib.alias_for in lib_outputs:
                 lib_outputs[lib.name] = lib_outputs[lib.alias_for]
 
+        # Collect default targets (libraries that produce real output files)
+        default_targets: list[str] = list(lib_outputs.values())
+
         # Generate build statements for executables
-        default_targets: list[str] = []
 
         for exe in ctx.executables:
             objects: list[str] = []
@@ -4238,9 +4240,11 @@ def generate_ninja(
                 cja_json_path = ctx.build_dir / "cja.json"
                 cja_json_path.write_text(json.dumps(cja_json) + "\n")
 
-        # Default target
+        # "all" phony target (matches CMake behavior)
         if default_targets:
-            n.default(default_targets)
+            n.build("all", "phony", default_targets)
+            n.newline()
+            n.default(["all"])
 
 
 def configure(
