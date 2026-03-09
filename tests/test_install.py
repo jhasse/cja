@@ -89,3 +89,47 @@ def test_cmake_install_prefix_respects_override(tmp_path: Path) -> None:
     )
 
     assert ctx.variables["CMAKE_INSTALL_PREFIX"] == "/opt/custom-prefix"
+
+
+def test_install_targets_ignores_file_set_names(tmp_path: Path) -> None:
+    """FILE_SET entries in install(TARGETS ...) must not be treated as targets."""
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    commands = [
+        Command(name="add_library", args=["fmt", "STATIC", "fmt.cc"], line=1),
+        Command(name="add_library", args=["fmt-header-only", "INTERFACE"], line=2),
+        Command(
+            name="install",
+            args=[
+                "TARGETS",
+                "fmt",
+                "fmt-header-only",
+                "EXPORT",
+                "fmt-targets",
+                "LIBRARY",
+                "DESTINATION",
+                "lib",
+                "ARCHIVE",
+                "DESTINATION",
+                "lib",
+                "PUBLIC_HEADER",
+                "DESTINATION",
+                "include/fmt",
+                "RUNTIME",
+                "DESTINATION",
+                "bin",
+                "FILE_SET",
+                "fmt",
+                "DESTINATION",
+                "include/fmt",
+            ],
+            line=3,
+        ),
+    ]
+    process_commands(commands, ctx)
+
+    ninja_path = tmp_path / "build.ninja"
+    generate_ninja(ctx, ninja_path, "build")
+
+    ninja_content = ninja_path.read_text()
+    # Only one install edge should be emitted for libfmt.a.
+    assert ninja_content.count("build include/fmt/libfmt.a: install_file") == 1

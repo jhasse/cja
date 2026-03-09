@@ -2592,19 +2592,53 @@ int main() {{
                 if len(args) >= 2 and args[0] == "TARGETS":
                     targets = []
                     destination = str(Path.home() / ".local" / "bin")
+
+                    # install(TARGETS ...) syntax has a target-name list first,
+                    # followed by option groups (LIBRARY/ARCHIVE/RUNTIME/FILE_SET/etc).
+                    # Only names before the first option keyword are real targets.
+                    install_target_keywords = {
+                        "ARCHIVE",
+                        "LIBRARY",
+                        "RUNTIME",
+                        "OBJECTS",
+                        "FRAMEWORK",
+                        "BUNDLE",
+                        "PUBLIC_HEADER",
+                        "PRIVATE_HEADER",
+                        "RESOURCE",
+                        "FILE_SET",
+                        "INCLUDES",
+                        "DESTINATION",
+                        "PERMISSIONS",
+                        "CONFIGURATIONS",
+                        "COMPONENT",
+                        "NAMELINK_COMPONENT",
+                        "OPTIONAL",
+                        "EXCLUDE_FROM_ALL",
+                        "NAMELINK_ONLY",
+                        "NAMELINK_SKIP",
+                        "EXPORT",
+                    }
+
                     i = 1
                     while i < len(args):
-                        if args[i] == "DESTINATION":
-                            if i + 1 < len(args):
-                                destination = ctx.expand_variables(
-                                    args[i + 1], strict, cmd.line
-                                )
-                                i += 2
-                            else:
-                                i += 1
+                        token = args[i]
+                        if token in install_target_keywords:
+                            break
+                        targets.append(token)
+                        i += 1
+
+                    # Keep current simplified behavior: use the last DESTINATION seen.
+                    i = 1
+                    while i < len(args):
+                        if args[i] == "DESTINATION" and i + 1 < len(args):
+                            destination = ctx.expand_variables(
+                                args[i + 1], strict, cmd.line
+                            )
+                            i += 2
                         else:
-                            targets.append(args[i])
                             i += 1
+
                     ctx.install_targets.append(
                         InstallTarget(targets=targets, destination=destination)
                     )
