@@ -2733,6 +2733,13 @@ int main() {{
                         module_path = ctx.variables.get("CMAKE_MODULE_PATH", "")
                         search_dirs = module_path.split(";") if module_path else []
 
+                        # Also search built-in CJA modules (e.g. bundled FindGTest.cmake)
+                        builtin_modules_dir = (
+                            Path(__file__).parent / "cmake" / "Modules"
+                        )
+                        if builtin_modules_dir.exists():
+                            search_dirs.append(str(builtin_modules_dir))
+
                         found_file = None
                         for d in search_dirs:
                             # Resolve relative paths relative to current source dir or root?
