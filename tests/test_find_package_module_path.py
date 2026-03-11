@@ -97,10 +97,10 @@ def test_find_package_module_imported_target_links_as_external(tmp_path: Path) -
             [
                 "add_library(Foo::foo UNKNOWN IMPORTED)",
                 "set_target_properties(Foo::foo PROPERTIES IMPORTED_LOCATION \""
-                + str(imported_lib)
+                + imported_lib.as_posix()
                 + "\")",
                 "set_target_properties(Foo::foo PROPERTIES INTERFACE_INCLUDE_DIRECTORIES \""
-                + str(include_dir)
+                + include_dir.as_posix()
                 + "\")",
                 "set(Foo_FOUND TRUE)",
             ]
@@ -124,4 +124,4 @@ def test_find_package_module_imported_target_links_as_external(tmp_path: Path) -
     generate_ninja(ctx, ninja_file, "build")
     ninja_content = ninja_file.read_text()
     assert "libFoo::foo" not in ninja_content
-    assert str(imported_lib) in ninja_content
+    assert imported_lib.as_posix() in ninja_content

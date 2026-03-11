@@ -179,25 +179,32 @@ def test_find_package_gtest_with_if() -> None:
 
 
 def test_find_package_gtest_alias_imported_targets(
-    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """Test find_package(GTest) creates at least modern imported target names."""
-    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    module_dir = tmp_path / "cmake"
+    module_dir.mkdir(parents=True)
+    find_gtest = module_dir / "FindGTest.cmake"
+    find_gtest.write_text(
+        "\n".join(
+            [
+                "set(GTest_FOUND TRUE)",
+                "set(GTEST_FOUND TRUE)",
+                "add_library(GTest::gtest UNKNOWN IMPORTED)",
+                "add_library(GTest::gtest_main UNKNOWN IMPORTED)",
+                "add_library(GTest::GTest INTERFACE IMPORTED)",
+                "target_link_libraries(GTest::GTest INTERFACE GTest::gtest)",
+                "add_library(GTest::Main INTERFACE IMPORTED)",
+                "target_link_libraries(GTest::Main INTERFACE GTest::gtest_main)",
+            ]
+        )
+    )
 
-    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
-        if cmd == ["pkg-config", "--exists", "gtest"]:
-            return subprocess.CompletedProcess(cmd, 0)
-        if cmd == ["pkg-config", "--cflags", "gtest"]:
-            return subprocess.CompletedProcess(cmd, 0, stdout="-I/usr/include")
-        if cmd == ["pkg-config", "--libs", "gtest"]:
-            return subprocess.CompletedProcess(cmd, 0, stdout="-lgtest")
-        if cmd == ["pkg-config", "--libs", "gtest_main"]:
-            return subprocess.CompletedProcess(cmd, 0, stdout="-lgtest_main")
-        return subprocess.CompletedProcess(cmd, 1)
-
-    monkeypatch.setattr("cja.generator.subprocess.run", fake_run)
-
-    commands = [Command(name="find_package", args=["GTest"], line=1)]
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    commands = [
+        Command(name="set", args=["CMAKE_MODULE_PATH", str(module_dir)], line=1),
+        Command(name="find_package", args=["GTest"], line=2),
+    ]
     process_commands(commands, ctx)
 
     assert "GTest::gtest" in ctx.imported_targets
