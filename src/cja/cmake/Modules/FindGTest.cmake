@@ -259,11 +259,15 @@ function(__gtest_append_debugs _endvar _library)
 endfunction()
 
 function(__gtest_find_library _name)
+    set(_gtest_hints "")
+    if(DEFINED GTEST_ROOT)
+        set(_gtest_hints ${GTEST_ROOT})
+    endif()
     find_library(${_name}
         NAMES ${ARGN}
         HINTS
             ENV GTEST_ROOT
-            ${GTEST_ROOT}
+            ${_gtest_hints}
         PATH_SUFFIXES ${_gtest_libpath_suffixes}
     )
     mark_as_advanced(${_name})
@@ -389,10 +393,16 @@ if(MSVC)
 endif()
 
 
+set(_gtest_hints "")
+if(DEFINED GTEST_ROOT AND NOT GTEST_ROOT STREQUAL "")
+    list(APPEND _gtest_hints "${GTEST_ROOT}/include")
+endif()
+
+if(DEFINED ENV{GTEST_ROOT} AND NOT "$ENV{GTEST_ROOT}" STREQUAL "")
+    list(APPEND _gtest_hints "$ENV{GTEST_ROOT}/include")
+endif()
 find_path(GTEST_INCLUDE_DIR gtest/gtest.h
-    HINTS
-        $ENV{GTEST_ROOT}/include
-        ${GTEST_ROOT}/include
+    HINTS ${_gtest_hints}
 )
 mark_as_advanced(GTEST_INCLUDE_DIR)
 
