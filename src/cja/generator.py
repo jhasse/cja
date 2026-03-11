@@ -2539,54 +2539,90 @@ int main() {{
                             )
 
             case "find_package_handle_standard_args":
-                if args:
-                    package_name = args[0]
-                    required_vars = []
-                    found_var = f"{package_name}_FOUND"
+                # Minimal implementation modeled after CMake's
+                # FindPackageHandleStandardArgs. Supports the signatures used in
+                # our tests and in common Find<Package>.cmake modules.
+                if not args:
+                    frame.pc += 1
+                    continue
 
-                    if "REQUIRED_VARS" in args:
-                        # Extended signature
-                        idx = args.index("REQUIRED_VARS")
-                        for arg in args[idx + 1 :]:
-                            if arg in (
-                                "VERSION_VAR",
-                                "HANDLE_COMPONENTS",
-                                "CONFIG_MODE",
-                                "NAME_MISMATCH",
-                                "REASON_FAILURE_MESSAGE",
-                                "FOUND_VAR",
-                            ):
-                                break
-                            required_vars.append(arg)
-
-                        if "FOUND_VAR" in args:
-                            f_idx = args.index("FOUND_VAR")
-                            if f_idx + 1 < len(args):
-                                found_var = args[f_idx + 1]
-                    else:
-                        # Basic signature
-                        # args[1] is message, usually DEFAULT_MSG
-                        required_vars = args[2:]
-
-                    # Check if all required vars are set and not NOTFOUND
-                    all_found = True
+                pkg_name = args[0]
+                extended_keywords = {
+                    "REQUIRED_VARS",
+                    "FOUND_VAR",
+                    "HANDLE_COMPONENTS",
+                    "CONFIG_MODE",
+                    "FAIL_MESSAGE",
+                    "REQUIRED_VERSIONS",
+                    "NAME_MISMATCHED",
+                    "REASON_FAILURE_MESSAGE",
+                    "VERSION_VAR",
+                }
+                # Basic signature:
+                #   find_package_handle_standard_args(Pkg DEFAULT_MSG VAR1 VAR2 ...)
+                # Detected when arg[1] is not an extended-signature keyword.
+                is_basic = len(args) >= 3 and args[1] not in extended_keywords
+                if is_basic:
+                    required_vars = args[2:]
+                    found = True
                     for var in required_vars:
-                        val = ctx.variables.get(var, "")
-                        if not val or val.endswith("-NOTFOUND") or val == "FALSE":
-                            all_found = False
+                        value = ctx.variables.get(var, "")
+                        if not value or value.endswith("-NOTFOUND"):
+                            found = False
                             break
+                    ctx.variables[f"{pkg_name}_FOUND"] = "TRUE" if found else "FALSE"
 
-                    if all_found:
-                        ctx.variables[found_var] = "TRUE"
-                    else:
-                        ctx.variables[found_var] = "FALSE"
-                        # Check if package was REQUIRED
-                        if ctx.variables.get(f"{package_name}_FIND_REQUIRED") == "TRUE":
-                            ctx.print_error(
-                                f"Could NOT find {package_name} (missing: {', '.join(required_vars)})",
-                                cmd.line,
-                            )
-                            sys.exit(1)
+                # Extended signature:
+                #   find_package_handle_standard_args(Pkg
+                #       REQUIRED_VARS VAR1 VAR2 ...
+                #       FOUND_VAR <var-name>
+                #       [...])
+                required_vars_ext: list[str] = []
+                found_var_name = ""
+                idx_fph = 1
+                while idx_fph < len(args):
+                    token = args[idx_fph]
+                    if token == "REQUIRED_VARS":
+                        idx_fph += 1
+                        while (
+                            idx_fph < len(args)
+                            and args[idx_fph] not in extended_keywords
+                        ):
+                            required_vars_ext.append(args[idx_fph])
+                            idx_fph += 1
+                        continue
+                    if token == "FOUND_VAR" and idx_fph + 1 < len(args):
+                        found_var_name = args[idx_fph + 1]
+                        idx_fph += 2
+                        continue
+                    idx_fph += 1
+
+                if required_vars_ext:
+                    found_ext = True
+                    for var in required_vars_ext:
+                        value = ctx.variables.get(var, "")
+                        if not value or value.endswith("-NOTFOUND"):
+                            found_ext = False
+                            break
+                    if found_var_name:
+                        ctx.variables[found_var_name] = "TRUE" if found_ext else "FALSE"
+                    # If no basic signature was used, also populate <Pkg>_FOUND.
+                    if f"{pkg_name}_FOUND" not in ctx.variables:
+                        ctx.variables[f"{pkg_name}_FOUND"] = (
+                            "TRUE" if found_ext else "FALSE"
+                        )
+
+                # If the package was required and not found, fail the configure step.
+                pkg_required_var = f"{pkg_name}_FIND_REQUIRED"
+                if (
+                    ctx.variables.get(pkg_required_var) == "TRUE"
+                    and ctx.variables.get(f"{pkg_name}_FOUND") != "TRUE"
+                ):
+                    ctx.print_error(
+                        f"could not find package: {pkg_name}",
+                        cmd.line,
+                    )
+                    raise SystemExit(1)
 
             case "install":
                 if len(args) >= 2 and args[0] == "TARGETS":

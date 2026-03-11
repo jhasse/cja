@@ -83,6 +83,47 @@ def test_find_package_handle_standard_args_required_fails() -> None:
         process_commands(commands, ctx)
 
 
+def test_find_package_handle_standard_args_handle_components_config_mode() -> None:
+    """HANDLE_COMPONENTS and CONFIG_MODE keywords should not break parsing.
+
+    FindGTest.cmake uses:
+        find_package_handle_standard_args(GTest HANDLE_COMPONENTS CONFIG_MODE)
+    The HANDLE_COMPONENTS and CONFIG_MODE keywords must not be mistaken for
+    required-variable names in the basic signature.
+    """
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    ctx.variables["GTest_FOUND"] = "TRUE"
+
+    commands = [
+        Command(
+            name="find_package_handle_standard_args",
+            args=["GTest", "HANDLE_COMPONENTS", "CONFIG_MODE"],
+            line=1,
+        ),
+    ]
+    process_commands(commands, ctx)
+    # GTest_FOUND should remain TRUE (HANDLE_COMPONENTS and CONFIG_MODE are
+    # keywords, not variable names to check).
+    assert ctx.variables["GTest_FOUND"] == "TRUE"
+
+
+def test_find_package_handle_standard_args_extended_sets_pkg_found() -> None:
+    """Extended signature with REQUIRED_VARS should set <Pkg>_FOUND."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    ctx.variables["FOO_LIBRARY"] = "/usr/lib/libfoo.so"
+    ctx.variables["FOO_INCLUDE_DIR"] = "/usr/include"
+
+    commands = [
+        Command(
+            name="find_package_handle_standard_args",
+            args=["FOO", "REQUIRED_VARS", "FOO_LIBRARY", "FOO_INCLUDE_DIR"],
+            line=1,
+        ),
+    ]
+    process_commands(commands, ctx)
+    assert ctx.variables["FOO_FOUND"] == "TRUE"
+
+
 def test_include_find_package_handle_standard_args() -> None:
     """Test including FindPackageHandleStandardArgs module."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
