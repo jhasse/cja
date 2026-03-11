@@ -3,6 +3,7 @@
 from dataclasses import dataclass, field
 import hashlib
 import json
+import os
 import platform
 import re
 import shlex
@@ -753,6 +754,74 @@ def process_commands(
             i += 1
         result.append("".join(current))
         return result
+
+    def _search_dirs_with_defaults(kind: str, hints: list[str], paths: list[str]) -> list[str]:
+        """Build search dirs in CMake-like order: hints, paths, then defaults."""
+        dirs: list[str] = []
+        seen: set[str] = set()
+
+        def add_dir(candidate: str) -> None:
+            if not candidate:
+                return
+            path = candidate.strip()
+            if not path:
+                return
+            # Expand user-home paths to align with shell/env behavior.
+            path = os.path.expanduser(path)
+            if path in seen:
+                return
+            seen.add(path)
+            dirs.append(path)
+
+        for d in hints:
+            add_dir(d)
+        for d in paths:
+            add_dir(d)
+
+        cmake_prefix_path = ctx.variables.get("CMAKE_PREFIX_PATH", "")
+        for prefix in split_unquoted_list_args(cmake_prefix_path) if cmake_prefix_path else []:
+            if kind == "path":
+                add_dir(str(Path(prefix) / "include"))
+                add_dir(prefix)
+            else:
+                add_dir(str(Path(prefix) / "lib"))
+                add_dir(str(Path(prefix) / "lib64"))
+                add_dir(prefix)
+
+        env_prefix_path = os.environ.get("CMAKE_PREFIX_PATH", "")
+        for prefix in env_prefix_path.split(os.pathsep) if env_prefix_path else []:
+            if kind == "path":
+                add_dir(str(Path(prefix) / "include"))
+                add_dir(prefix)
+            else:
+                add_dir(str(Path(prefix) / "lib"))
+                add_dir(str(Path(prefix) / "lib64"))
+                add_dir(prefix)
+
+        if platform.system() == "Windows":
+            windows_roots = ["C:/Program Files", "C:/Program Files (x86)"]
+            for root in windows_roots:
+                if kind == "path":
+                    add_dir(str(Path(root) / "include"))
+                else:
+                    add_dir(str(Path(root) / "lib"))
+                add_dir(root)
+        else:
+            unix_defaults = ["/usr/local", "/usr"]
+            for root in unix_defaults:
+                if kind == "path":
+                    add_dir(str(Path(root) / "include"))
+                else:
+                    add_dir(str(Path(root) / "lib"))
+                    add_dir(str(Path(root) / "lib64"))
+                    add_dir(str(Path(root) / "lib/x86_64-linux-gnu"))
+                    add_dir(str(Path(root) / "lib/aarch64-linux-gnu"))
+                add_dir(root)
+            if kind == "lib":
+                add_dir("/lib")
+                add_dir("/lib64")
+
+        return dirs
 
     while stack:
         frame = stack[-1]
@@ -2257,6 +2326,7 @@ int main() {{
             case "find_program":
                 if len(args) >= 2:
                     var_name = args[0]
+                    ctx.cache_variables.add(var_name)
                     # Parse arguments: find_program(VAR name1 [name2...] [NAMES name1...] [REQUIRED])
                     names: list[str] = []
                     required = False
@@ -2300,6 +2370,7 @@ int main() {{
             case "find_path":
                 if len(args) >= 2:
                     var_name = args[0]
+                    ctx.cache_variables.add(var_name)
                     names: list[str] = []
                     paths: list[str] = []
                     hints: list[str] = []
@@ -2328,8 +2399,16 @@ int main() {{
                                 "PATH_SUFFIXES",
                                 "REQUIRED",
                             ):
-                                paths.append(args[i])
-                                i += 1
+                                if args[i] == "ENV" and i + 1 < len(args):
+                                    env_value = os.environ.get(args[i + 1], "")
+                                    if env_value:
+                                        paths.extend(
+                                            p for p in env_value.split(os.pathsep) if p
+                                        )
+                                    i += 2
+                                else:
+                                    paths.append(args[i])
+                                    i += 1
                             continue
                         elif arg == "HINTS":
                             i += 1
@@ -2339,8 +2418,16 @@ int main() {{
                                 "PATH_SUFFIXES",
                                 "REQUIRED",
                             ):
-                                hints.append(args[i])
-                                i += 1
+                                if args[i] == "ENV" and i + 1 < len(args):
+                                    env_value = os.environ.get(args[i + 1], "")
+                                    if env_value:
+                                        hints.extend(
+                                            p for p in env_value.split(os.pathsep) if p
+                                        )
+                                    i += 2
+                                else:
+                                    hints.append(args[i])
+                                    i += 1
                             continue
                         elif arg == "PATH_SUFFIXES":
                             i += 1
@@ -2362,13 +2449,7 @@ int main() {{
                                 paths.append(arg)
                         i += 1
 
-                    search_dirs = []
-                    # HINTS come first
-                    search_dirs.extend(hints)
-                    # Then PATHS
-                    search_dirs.extend(paths)
-                    # Standard system paths if none found?
-                    # For now just use provided paths
+                    search_dirs = _search_dirs_with_defaults("path", hints, paths)
 
                     found_dir = None
                     for name in names:
@@ -2397,6 +2478,7 @@ int main() {{
             case "find_library":
                 if len(args) >= 2:
                     var_name = args[0]
+                    ctx.cache_variables.add(var_name)
                     names: list[str] = []
                     paths: list[str] = []
                     hints: list[str] = []
@@ -2425,8 +2507,16 @@ int main() {{
                                 "PATH_SUFFIXES",
                                 "REQUIRED",
                             ):
-                                paths.append(args[j])
-                                j += 1
+                                if args[j] == "ENV" and j + 1 < len(args):
+                                    env_value = os.environ.get(args[j + 1], "")
+                                    if env_value:
+                                        paths.extend(
+                                            p for p in env_value.split(os.pathsep) if p
+                                        )
+                                    j += 2
+                                else:
+                                    paths.append(args[j])
+                                    j += 1
                             continue
                         elif arg == "HINTS":
                             j += 1
@@ -2436,8 +2526,16 @@ int main() {{
                                 "PATH_SUFFIXES",
                                 "REQUIRED",
                             ):
-                                hints.append(args[j])
-                                j += 1
+                                if args[j] == "ENV" and j + 1 < len(args):
+                                    env_value = os.environ.get(args[j + 1], "")
+                                    if env_value:
+                                        hints.extend(
+                                            p for p in env_value.split(os.pathsep) if p
+                                        )
+                                    j += 2
+                                else:
+                                    hints.append(args[j])
+                                    j += 1
                             continue
                         elif arg == "PATH_SUFFIXES":
                             j += 1
@@ -2459,9 +2557,7 @@ int main() {{
                                 paths.append(arg)
                         j += 1
 
-                    search_dirs = []
-                    search_dirs.extend(hints)
-                    search_dirs.extend(paths)
+                    search_dirs = _search_dirs_with_defaults("lib", hints, paths)
 
                     if platform.system() == "Darwin":
                         default_framework_dirs = [
@@ -2706,8 +2802,10 @@ int main() {{
                     required = "REQUIRED" in upper_args
                     no_module = "NO_MODULE" in upper_args
                     quiet = "QUIET" in upper_args or ctx.quiet
-                    ctx.variables[f"{package_name}_FIND_REQUIRED"] = (
-                        "TRUE" if required else "FALSE"
+                    find_required_var = f"{package_name}_FIND_REQUIRED"
+                    prev_required = ctx.variables.get(find_required_var) == "TRUE"
+                    ctx.variables[find_required_var] = (
+                        "TRUE" if (required or prev_required) else "FALSE"
                     )
                     if not handle_builtin_find_package(
                         ctx=ctx,
@@ -3971,6 +4069,14 @@ def generate_ninja(
                     imported = ctx.imported_targets[lib_name]
                     if imported.cflags:
                         compile_flags.append(imported.cflags)
+                    elif lib_name.startswith("GTest::"):
+                        gtest_includes = ctx.variables.get("GTEST_INCLUDE_DIRS", "")
+                        if gtest_includes:
+                            for inc_dir in gtest_includes.split(";"):
+                                if inc_dir:
+                                    compile_flags.append(
+                                        f"-I{_ninja_flag_path(inc_dir, ctx.source_dir)}"
+                                    )
 
             # Filter out headers, .rc, and .manifest files from compileable sources
             compileable_sources: list[str] = [
@@ -4126,6 +4232,17 @@ def generate_ninja(
                     imported = ctx.imported_targets[lib_name]
                     if imported.libs:
                         link_flags.append(imported.libs)
+                    if lib_name == "GTest::gtest_main":
+                        main_libs = ctx.variables.get("GTEST_MAIN_LIBRARIES", "")
+                        gtest_libs = ctx.variables.get("GTEST_LIBRARIES", "")
+                        if main_libs:
+                            link_flags.append(main_libs.replace(";", " "))
+                        if gtest_libs:
+                            link_flags.append(gtest_libs.replace(";", " "))
+                    elif lib_name == "GTest::gtest":
+                        gtest_libs = ctx.variables.get("GTEST_LIBRARIES", "")
+                        if gtest_libs:
+                            link_flags.append(gtest_libs.replace(";", " "))
                 else:
                     # Generic library name or path
                     if (

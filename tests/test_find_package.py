@@ -6,8 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from cja.generator import BuildContext, process_commands
+from cja.generator import BuildContext, generate_ninja, process_commands
 from cja.parser import Command
+from cja.targets import ImportedTarget
 
 
 def has_pkg_config_gtest() -> bool:
@@ -96,6 +97,65 @@ def test_find_package_no_module_skips_module_fallback(
     process_commands(commands, ctx)
 
     assert ctx.variables["LoopPkg_FOUND"] == "FALSE"
+
+
+def test_find_package_no_module_does_not_clear_required_in_module(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Nested NO_MODULE probes must not disable outer REQUIRED behavior."""
+    module_dir = tmp_path / "cmake"
+    module_dir.mkdir(parents=True)
+    (module_dir / "FindLoopPkg.cmake").write_text(
+        "\n".join(
+            [
+                "find_package(LoopPkg QUIET NO_MODULE)",
+                "find_package_handle_standard_args(LoopPkg DEFAULT_MSG LOOPPKG_LIB)",
+            ]
+        )
+    )
+
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    ctx.variables["CMAKE_MODULE_PATH"] = str(module_dir)
+
+    monkeypatch.setattr(
+        "cja.generator.handle_builtin_find_package",
+        lambda **_kwargs: False,
+    )
+
+    commands = [Command(name="find_package", args=["LoopPkg", "REQUIRED"], line=1)]
+    with pytest.raises(SystemExit) as exc_info:
+        process_commands(commands, ctx)
+    assert exc_info.value.code == 1
+
+
+def test_gtest_imported_target_fallback_link_flags(tmp_path: Path) -> None:
+    """GTest imported targets should link via GTEST_*_LIBRARIES when needed."""
+    (tmp_path / "sample.cpp").write_text("int main() { return 0; }\n")
+
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    ctx.imported_targets["GTest::gtest_main"] = ImportedTarget(libs="-pthread")
+    ctx.variables["GTEST_MAIN_LIBRARIES"] = "/opt/lib/libgtest_main.a"
+    ctx.variables["GTEST_LIBRARIES"] = "/opt/lib/libgtest.a"
+
+    process_commands(
+        [
+            Command(name="add_executable", args=["app", "sample.cpp"], line=1),
+            Command(
+                name="target_link_libraries",
+                args=["app", "PRIVATE", "GTest::gtest_main"],
+                line=2,
+            ),
+        ],
+        ctx,
+    )
+
+    ninja_path = tmp_path / "build.ninja"
+    generate_ninja(ctx, ninja_path, "build")
+    ninja_content = ninja_path.read_text()
+
+    assert "/opt/lib/libgtest_main.a" in ninja_content
+    assert "/opt/lib/libgtest.a" in ninja_content
 
 
 def test_find_package_gtest_with_if() -> None:

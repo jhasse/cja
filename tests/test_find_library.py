@@ -113,3 +113,55 @@ def test_find_library_required_fails(tmp_path: Path) -> None:
 
     with pytest.raises(FileNotFoundError, match="Could not find library: nonexistent"):
         process_commands(commands, ctx)
+
+
+def test_find_library_uses_cmake_prefix_path(tmp_path: Path) -> None:
+    """Test find_library fallback search in CMAKE_PREFIX_PATH lib directories."""
+    prefix = tmp_path / "prefix"
+    lib_dir = prefix / "lib"
+    lib_dir.mkdir(parents=True)
+
+    if platform.system() == "Darwin":
+        lib_name = "libpref.dylib"
+    elif platform.system() == "Windows":
+        lib_name = "pref.lib"
+    else:
+        lib_name = "libpref.so"
+
+    lib_file = lib_dir / lib_name
+    lib_file.touch()
+
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    ctx.variables["CMAKE_PREFIX_PATH"] = str(prefix)
+
+    commands = [
+        Command(name="find_library", args=["PREF_LIB", "pref"], line=1),
+    ]
+
+    process_commands(commands, ctx)
+
+    assert ctx.variables["PREF_LIB"] == str(lib_file.absolute())
+
+
+def test_find_library_persists_from_function_scope(tmp_path: Path) -> None:
+    """Test find_library result survives function scope via cache semantics."""
+    lib_dir = tmp_path / "lib"
+    lib_dir.mkdir()
+    lib_file = lib_dir / "libinside.a"
+    lib_file.touch()
+
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    commands = [
+        Command(name="function", args=["probe"], line=1),
+        Command(
+            name="find_library",
+            args=["INNER_LIB", "NAMES", "inside", "PATHS", str(lib_dir)],
+            line=2,
+        ),
+        Command(name="endfunction", args=[], line=3),
+        Command(name="probe", args=[], line=4),
+    ]
+
+    process_commands(commands, ctx)
+
+    assert ctx.variables["INNER_LIB"] == str(lib_file.absolute())

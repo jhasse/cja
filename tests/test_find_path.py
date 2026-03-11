@@ -122,3 +122,47 @@ def test_find_path_required_fails(tmp_path: Path) -> None:
         FileNotFoundError, match="Could not find path for: nonexistent.h"
     ):
         process_commands(commands, ctx)
+
+
+def test_find_path_uses_cmake_prefix_path(tmp_path: Path) -> None:
+    """Test find_path fallback search in CMAKE_PREFIX_PATH include directories."""
+    prefix = tmp_path / "prefix"
+    include_dir = prefix / "include"
+    include_dir.mkdir(parents=True)
+    header_file = include_dir / "pref.h"
+    header_file.touch()
+
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    ctx.variables["CMAKE_PREFIX_PATH"] = str(prefix)
+
+    commands = [
+        Command(name="find_path", args=["PREF_HEADER_PATH", "pref.h"], line=1),
+    ]
+
+    process_commands(commands, ctx)
+
+    assert ctx.variables["PREF_HEADER_PATH"] == str(include_dir.absolute())
+
+
+def test_find_path_persists_from_function_scope(tmp_path: Path) -> None:
+    """Test find_path result survives function scope via cache semantics."""
+    include_dir = tmp_path / "include"
+    include_dir.mkdir()
+    header_file = include_dir / "inside.h"
+    header_file.touch()
+
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    commands = [
+        Command(name="function", args=["probe"], line=1),
+        Command(
+            name="find_path",
+            args=["INNER_HEADER_PATH", "inside.h", "PATHS", str(include_dir)],
+            line=2,
+        ),
+        Command(name="endfunction", args=[], line=3),
+        Command(name="probe", args=[], line=4),
+    ]
+
+    process_commands(commands, ctx)
+
+    assert ctx.variables["INNER_HEADER_PATH"] == str(include_dir.absolute())

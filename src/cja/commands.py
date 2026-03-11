@@ -3,6 +3,7 @@ import hashlib
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import sys
 from .build_context import (
@@ -17,7 +18,7 @@ from .syntax import (
     evaluate_condition,
 )
 from .parser import Command
-from .targets import Executable, Library
+from .targets import Executable, ImportedTarget, Library
 from .utils import (
     UNDEFINED_VAR_SENTINEL,
     is_truthy,
@@ -205,6 +206,20 @@ def handle_target_link_libraries(
                     exe = ctx.get_executable(target_name)
                     if exe:
                         exe.link_libraries.append(arg)
+                    elif target_name in ctx.imported_targets:
+                        imported_target = ctx.imported_targets[target_name]
+                        existing = shlex.split(imported_target.libs) if imported_target.libs else []
+                        if arg in ctx.imported_targets and ctx.imported_targets[arg].libs:
+                            existing.extend(shlex.split(ctx.imported_targets[arg].libs))
+                        elif (
+                            arg.startswith("-")
+                            or "/" in arg
+                            or arg.endswith((".a", ".so", ".dylib", ".lib", ".dll"))
+                        ):
+                            existing.append(arg)
+                        else:
+                            existing.append(f"-l{arg}")
+                        imported_target.libs = " ".join(dict.fromkeys(existing))
 
 
 def handle_target_link_directories(
@@ -525,8 +540,53 @@ def handle_set_target_properties(
         for target_name in target_names:
             lib = ctx.get_library(target_name)
             exe = ctx.get_executable(target_name)
+            imported_target = ctx.imported_targets.get(target_name)
 
             for prop_name, prop_value in properties.items():
+                if imported_target is not None:
+                    if prop_name.startswith("IMPORTED_LOCATION") or prop_name.startswith(
+                        "IMPORTED_IMPLIB"
+                    ):
+                        current = shlex.split(imported_target.libs) if imported_target.libs else []
+                        current.append(prop_value)
+                        imported_target.libs = " ".join(dict.fromkeys(current))
+                    elif prop_name == "INTERFACE_INCLUDE_DIRECTORIES":
+                        include_flags: list[str] = []
+                        for d in prop_value.split(";"):
+                            if not d:
+                                continue
+                            expanded = resolve_cmake_path(d, ctx.current_source_dir)
+                            include_flags.append(f"-I{expanded}")
+                        current = shlex.split(imported_target.cflags) if imported_target.cflags else []
+                        current.extend(include_flags)
+                        imported_target.cflags = " ".join(dict.fromkeys(current))
+                    elif prop_name == "INTERFACE_LINK_LIBRARIES":
+                        linked_flags: list[str] = []
+                        for entry in prop_value.split(";"):
+                            if not entry:
+                                continue
+                            if (
+                                entry in ctx.imported_targets
+                                and ctx.imported_targets[entry].libs
+                            ):
+                                linked_flags.extend(
+                                    shlex.split(ctx.imported_targets[entry].libs)
+                                )
+                            elif (
+                                entry.startswith("-")
+                                or "/" in entry
+                                or entry.endswith(
+                                    (".a", ".so", ".dylib", ".lib", ".dll")
+                                )
+                            ):
+                                linked_flags.append(entry)
+                            else:
+                                linked_flags.append(f"-l{entry}")
+                        current = shlex.split(imported_target.libs) if imported_target.libs else []
+                        current.extend(linked_flags)
+                        imported_target.libs = " ".join(dict.fromkeys(current))
+                    continue
+
                 if prop_name == "INTERFACE_INCLUDE_DIRECTORIES":
                     # Split semicolon-separated list
                     dirs = prop_value.split(";")
@@ -992,6 +1052,13 @@ def handle_add_library(
             sources = sources[1:]
         if lib_type == "INTERFACE":
             sources = []
+
+        # add_library(<name> ... IMPORTED): treat as imported target and avoid
+        # generating a real archive for placeholder/foreign libraries.
+        if "IMPORTED" in sources:
+            if name not in ctx.imported_targets:
+                ctx.imported_targets[name] = ImportedTarget()
+            return
         resolved_sources: list[str] = []
         for source in sources:
             normalized = strip_generator_expressions(source)
