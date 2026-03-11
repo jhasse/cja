@@ -1,6 +1,5 @@
 """Built-in find_package() handlers."""
 
-import os
 from pathlib import Path
 import re
 import shutil
