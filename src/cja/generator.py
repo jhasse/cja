@@ -2702,8 +2702,10 @@ int main() {{
             case "find_package":
                 if args:
                     package_name = args[0]
-                    required = "REQUIRED" in args
-                    quiet = "QUIET" in args or ctx.quiet
+                    upper_args = {arg.upper() for arg in args[1:]}
+                    required = "REQUIRED" in upper_args
+                    no_module = "NO_MODULE" in upper_args
+                    quiet = "QUIET" in upper_args or ctx.quiet
                     ctx.variables[f"{package_name}_FIND_REQUIRED"] = (
                         "TRUE" if required else "FALSE"
                     )
@@ -2715,6 +2717,18 @@ int main() {{
                         required=required,
                         quiet=quiet,
                     ):
+                        # NO_MODULE requests config-mode lookup only; do not load
+                        # Find<Package>.cmake from CMAKE_MODULE_PATH to avoid recursion.
+                        if no_module:
+                            ctx.variables[f"{package_name}_FOUND"] = "FALSE"
+                            if required:
+                                ctx.print_error(
+                                    f"could not find package: {package_name}", cmd.line
+                                )
+                                raise SystemExit(1)
+                            frame.pc += 1
+                            continue
+
                         # Search for Find<PackageName>.cmake in CMAKE_MODULE_PATH
                         module_path = ctx.variables.get("CMAKE_MODULE_PATH", "")
                         search_dirs = module_path.split(";") if module_path else []
@@ -2731,6 +2745,20 @@ int main() {{
                             if candidate.exists():
                                 found_file = candidate
                                 break
+
+                        # Avoid infinite recursion when a Find module calls
+                        # find_package(<Pkg> NO_MODULE) and we would otherwise
+                        # include the same Find<Pkg>.cmake again.
+                        if found_file:
+                            try:
+                                same_file = (
+                                    found_file.resolve()
+                                    == ctx.current_list_file.resolve()
+                                )
+                            except FileNotFoundError:
+                                same_file = found_file == ctx.current_list_file
+                            if same_file:
+                                found_file = None
 
                         if found_file:
                             from .parser import parse_file

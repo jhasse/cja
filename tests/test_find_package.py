@@ -70,6 +70,34 @@ def test_find_package_unknown_required() -> None:
     assert exc_info.value.code == 1
 
 
+def test_find_package_no_module_skips_module_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Test find_package(NO_MODULE) does not load Find<Package>.cmake."""
+    module_dir = tmp_path / "cmake"
+    module_dir.mkdir(parents=True)
+    (module_dir / "FindLoopPkg.cmake").write_text("message(FATAL_ERROR should_not_run)")
+
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    ctx.variables["CMAKE_MODULE_PATH"] = str(module_dir)
+
+    monkeypatch.setattr(
+        "cja.generator.handle_builtin_find_package",
+        lambda **_kwargs: False,
+    )
+
+    def fail_parse(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise AssertionError("parse_file should not be called for NO_MODULE")
+
+    monkeypatch.setattr("cja.parser.parse_file", fail_parse)
+
+    commands = [Command(name="find_package", args=["LoopPkg", "NO_MODULE"], line=1)]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["LoopPkg_FOUND"] == "FALSE"
+
+
 def test_find_package_gtest_with_if() -> None:
     """Test find_package(GTest) used in if condition."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
