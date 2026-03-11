@@ -2872,12 +2872,22 @@ int main() {{
                             find_commands = parse_file(found_file)
 
                             saved_list_file = ctx.current_list_file
+                            saved_list_dir = str(saved_list_file.parent)
                             ctx.current_list_file = found_file
+                            ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(found_file)
+                            ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
+                                found_file.parent
+                            )
 
                             def on_exit_find_package(
                                 saved_list_file: Path = saved_list_file,
+                                saved_list_dir: str = saved_list_dir,
                             ) -> None:
                                 ctx.current_list_file = saved_list_file
+                                ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(
+                                    saved_list_file
+                                )
+                                ctx.variables["CMAKE_CURRENT_LIST_DIR"] = saved_list_dir
 
                             stack.append(
                                 Frame(
