@@ -3645,7 +3645,7 @@ def generate_ninja(
 
         # Archive rule for static libraries
         if platform.system() == "Windows":
-            ar_command = "del /q $out 2>nul & $ar rcs $out $in"
+            ar_command = "if exist $out del /q $out & $ar rcs $out $in"
         else:
             ar_command = "rm -f $out && $ar rcs $out $in"
         n.rule(
