@@ -3644,9 +3644,24 @@ def generate_ninja(
         n.newline()
 
         # Archive rule for static libraries
+        # We must delete the old archive before creating a new one because
+        # ar rcs only adds/replaces members but never removes them.
+        if platform.system() == "Windows":
+            # On Windows, shell metacharacters (&, |, <, >, ^) cause ninja to
+            # wrap the command with cmd.exe, which corrupts pipe handles
+            # ("ReadFile: The handle is invalid"). Use a Python one-liner to
+            # avoid all shell metacharacters so ninja uses CreateProcess directly.
+            ar_command = (
+                'python -c "import os,subprocess,sys;'
+                "o=sys.argv[1];os.path.exists(o) and os.remove(o);"
+                'sys.exit(subprocess.call(sys.argv[2:]))"'
+                " $out $ar rcs $out $in"
+            )
+        else:
+            ar_command = "rm -f $out && $ar rcs $out $in"
         n.rule(
             "ar",
-            command="rm -f $out && $ar rcs $out $in",
+            command=ar_command,
             description="\x1b[32;1mArchiving $out\x1b[0m",
             # TODO: CMake shows "Linking C static library" or "Linking C++ static library" instead.
             # "static" is redundant info here, but we should also distinguish C vs C++.
