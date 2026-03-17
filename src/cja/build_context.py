@@ -48,6 +48,21 @@ class CustomCommand:
 
 
 @dataclass
+class CustomTarget:
+    """A custom target (phony build target)."""
+
+    name: str
+    commands: list[list[str]]
+    depends: list[str]
+    all: bool = False
+    working_directory: str | None = None
+    verbatim: bool = False
+    comment: str = ""
+    defined_file: Path | None = None
+    defined_line: int = 0
+
+
+@dataclass
 class BuildContext:
     """Context for processing CMake commands."""
 
@@ -58,7 +73,9 @@ class BuildContext:
     project_name: str = ""
     variables: dict[str, str] = field(default_factory=dict)
     cache_variables: set[str] = field(default_factory=set)  # Variables from -D flags
-    cli_variables: dict[str, str] = field(default_factory=dict)  # Original -D flag values
+    cli_variables: dict[str, str] = field(
+        default_factory=dict
+    )  # Original -D flag values
     libraries: list[Library] = field(default_factory=list)
     executables: list[Executable] = field(default_factory=list)
     imported_targets: dict[str, ImportedTarget] = field(default_factory=dict)
@@ -69,6 +86,9 @@ class BuildContext:
     custom_commands: list[CustomCommand] = field(
         default_factory=list
     )  # Custom build commands
+    custom_targets: list[CustomTarget] = field(
+        default_factory=list
+    )  # Custom targets (phony)
     functions: dict[str, FunctionDef] = field(
         default_factory=dict
     )  # User-defined functions
@@ -179,7 +199,9 @@ class BuildContext:
                 if allow_undefined_empty:
                     return ""
                 if allow_undefined_warning:
-                    self.print_warning(f"undefined variable referenced: {var_name}", line)
+                    self.print_warning(
+                        f"undefined variable referenced: {var_name}", line
+                    )
                     return ""
                 level = self.print_error if strict else self.print_warning
                 level(f"undefined variable referenced: {var_name}", line)

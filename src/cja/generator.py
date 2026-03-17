@@ -27,6 +27,7 @@ from .syntax import (
 from .build_context import (
     BuildContext,
     CustomCommand,
+    CustomTarget,
     find_matching_endforeach,
     find_matching_endif,
 )
@@ -2235,6 +2236,64 @@ int main() {{
                         )
                     )
 
+            case "add_custom_target":
+                # Support: add_custom_target(<name> [ALL] [COMMAND cmd ...] [DEPENDS ...] [WORKING_DIRECTORY ...] [VERBATIM] [COMMENT ...])
+                if not args:
+                    break
+                target_name = ctx.expand_variables(args[0], strict, cmd.line)
+                ct_commands: list[list[str]] = []
+                ct_depends: list[str] = []
+                ct_all = False
+                ct_working_directory: str | None = None
+                ct_verbatim = False
+                ct_comment = ""
+                ct_section: str | None = None
+                ct_idx = 1
+                while ct_idx < len(args):
+                    arg = args[ct_idx]
+                    if arg == "ALL":
+                        ct_all = True
+                    elif arg in ("COMMAND", "DEPENDS", "WORKING_DIRECTORY", "COMMENT"):
+                        ct_section = arg
+                        if arg == "COMMAND":
+                            ct_commands.append([])
+                    elif arg in ("VERBATIM", "USES_TERMINAL", "COMMAND_EXPAND_LISTS"):
+                        if arg == "VERBATIM":
+                            ct_verbatim = True
+                        ct_section = None
+                    elif arg == "SOURCES":
+                        ct_section = "SOURCES"
+                    else:
+                        arg = ctx.expand_variables(arg, strict, cmd.line)
+                        if ct_section == "COMMAND":
+                            ct_commands[-1].append(arg)
+                        elif ct_section == "DEPENDS":
+                            rel = make_relative(arg, ctx.build_dir)
+                            if rel == arg:
+                                rel = ctx.resolve_path(arg)
+                            ct_depends.append(rel)
+                        elif ct_section == "WORKING_DIRECTORY":
+                            ct_working_directory = arg
+                        elif ct_section == "COMMENT":
+                            ct_comment = arg
+                        elif ct_section == "SOURCES":
+                            pass  # Ignored, only for IDE integration
+                    ct_idx += 1
+
+                ctx.custom_targets.append(
+                    CustomTarget(
+                        name=target_name,
+                        commands=ct_commands,
+                        depends=ct_depends,
+                        all=ct_all,
+                        working_directory=ct_working_directory,
+                        verbatim=ct_verbatim,
+                        comment=ct_comment,
+                        defined_file=ctx.current_list_file,
+                        defined_line=cmd.line,
+                    )
+                )
+
             case "add_test":
                 # Support: add_test(NAME <name> COMMAND <command> ...)
                 # Or: add_test(<name> <command> ...)
@@ -3728,6 +3787,52 @@ def generate_ninja(
                 register_output(out, custom_cmd.defined_file, custom_cmd.defined_line)
             n.newline()
 
+        # Generate custom targets (phony targets)
+        custom_target_all: list[str] = []
+        for ct in ctx.custom_targets:
+            ct_depends = [
+                f"$builddir/{d}"
+                if d in custom_command_outputs and not Path(d).is_absolute()
+                else d
+                for d in ct.depends
+            ]
+
+            if ct.commands:
+                # Custom target with commands: use custom_command rule
+                ct_cmd_parts: list[str] = []
+                for command in ct.commands:
+                    if ct.verbatim:
+                        parts = []
+                        for arg in command:
+                            if arg in shell_operators:
+                                parts.append(str(arg))
+                            else:
+                                parts.append(shlex.quote(str(arg)))
+                        ct_cmd_parts.append(" ".join(parts))
+                    else:
+                        ct_cmd_parts.append(" ".join(str(c) for c in command))
+
+                ct_cmd_str = " && ".join(ct_cmd_parts)
+                if ct.working_directory:
+                    ct_cmd_str = f"cd {ct.working_directory} && {ct_cmd_str}"
+
+                # Use a stamp file so ninja can track when the target last ran
+                stamp = f"$builddir/{ct.name}.stamp"
+                n.build(
+                    [stamp],
+                    "custom_command",
+                    ct_depends,
+                    variables={"cmd": f"{ct_cmd_str} && touch {stamp}"},
+                )
+                n.build([ct.name], "phony", [stamp])
+            else:
+                # No commands: purely a phony dependency aggregator
+                n.build([ct.name], "phony", ct_depends)
+
+            if ct.all:
+                custom_target_all.append(ct.name)
+            n.newline()
+
         # Helper to expand link libraries recursively
         def expand_link_libraries(
             initial: list[str], follow_private_of_static: bool
@@ -4008,6 +4113,7 @@ def generate_ninja(
 
         # Collect default targets (libraries that produce real output files)
         default_targets: list[str] = list(lib_outputs.values())
+        default_targets.extend(custom_target_all)
 
         # Generate build statements for executables
 
