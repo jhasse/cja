@@ -13,8 +13,8 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Install uv
-      run: brew install uv
+    - name: Install dependencies
+      run: brew install uv googletest
 
     - name: Run tests
       run: uv run pytest --color=yes

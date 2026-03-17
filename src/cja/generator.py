@@ -809,6 +809,8 @@ def process_commands(
                 add_dir(root)
         else:
             unix_defaults = ["/usr/local", "/usr"]
+            if platform.system() == "Darwin" and Path("/opt/homebrew").is_dir():
+                unix_defaults.insert(0, "/opt/homebrew")
             for root in unix_defaults:
                 if kind == "path":
                     add_dir(str(Path(root) / "include"))
