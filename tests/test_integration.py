@@ -304,8 +304,9 @@ def test_stale_object_removed_from_static_library(tmp_path: Path) -> None:
     assert lib_path.exists()
 
     # Verify both objects are in the archive
+    ar_cmd = "llvm-ar" if platform.system() == "Windows" else "ar"
     ar_result = subprocess.run(
-        ["ar", "t", str(lib_path)], capture_output=True, text=True, check=True,
+        [ar_cmd, "t", str(lib_path)], capture_output=True, text=True, check=True,
     )
     members = ar_result.stdout.strip().split("\n")
     assert any("bar" in m for m in members), f"bar not in archive: {members}"
@@ -329,7 +330,7 @@ def test_stale_object_removed_from_static_library(tmp_path: Path) -> None:
 
     # bar's object must no longer be in the archive
     ar_result = subprocess.run(
-        ["ar", "t", str(lib_path)], capture_output=True, text=True, check=True,
+        [ar_cmd, "t", str(lib_path)], capture_output=True, text=True, check=True,
     )
     members = ar_result.stdout.strip().split("\n")
     assert not any("bar" in m for m in members), (

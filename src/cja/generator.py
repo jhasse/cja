@@ -3644,9 +3644,13 @@ def generate_ninja(
         n.newline()
 
         # Archive rule for static libraries
+        if platform.system() == "Windows":
+            ar_command = "cmd /c (if exist $out del $out) & $ar rcs $out $in"
+        else:
+            ar_command = "rm -f $out && $ar rcs $out $in"
         n.rule(
             "ar",
-            command="rm -f $out && $ar rcs $out $in",
+            command=ar_command,
             description="\x1b[32;1mArchiving $out\x1b[0m",
             # TODO: CMake shows "Linking C static library" or "Linking C++ static library" instead.
             # "static" is redundant info here, but we should also distinguish C vs C++.
