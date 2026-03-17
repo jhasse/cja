@@ -3646,7 +3646,7 @@ def generate_ninja(
         # Archive rule for static libraries
         n.rule(
             "ar",
-            command="$ar rcs $out $in",
+            command="rm -f $out && $ar rcs $out $in",
             description="\x1b[32;1mArchiving $out\x1b[0m",
             # TODO: CMake shows "Linking C static library" or "Linking C++ static library" instead.
             # "static" is redundant info here, but we should also distinguish C vs C++.

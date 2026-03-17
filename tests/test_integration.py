@@ -267,3 +267,71 @@ def test_linker_unknown_argument_captured_output_gxx_only(tmp_path: Path) -> Non
     output_lower = f"{result.stdout}\n{result.stderr}".lower()
     assert "unrecognized command-line option" in output_lower
     assert "\x1b[01m\x1b[k--asdf\x1b[m\x1b[k" in output_lower
+
+
+def test_stale_object_removed_from_static_library(tmp_path: Path) -> None:
+    """Removing a source file should remove its object from the static library."""
+    source_dir = tmp_path / "stale_obj"
+    source_dir.mkdir()
+
+    # Create a static library with two source files
+    (source_dir / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.10)\n"
+        "project(stale_obj)\n"
+        "add_library(mylib STATIC foo.cpp bar.cpp)\n"
+        "add_executable(app main.cpp)\n"
+        "target_link_libraries(app PRIVATE mylib)\n"
+    )
+    (source_dir / "foo.cpp").write_text(
+        'extern "C" int foo_func() { return 1; }\n'
+    )
+    (source_dir / "bar.cpp").write_text(
+        'extern "C" int bar_func() { return 2; }\n'
+    )
+    (source_dir / "main.cpp").write_text(
+        'extern "C" int foo_func();\n'
+        "int main() { return foo_func() - 1; }\n"
+    )
+
+    # First build with both sources
+    configure(source_dir, "build")
+    result = subprocess.run(
+        ["ninja"], cwd=source_dir, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, f"ninja failed: {result.stderr}"
+
+    lib_path = source_dir / "build" / f"libmylib{LIB_EXT}"
+    assert lib_path.exists()
+
+    # Verify both objects are in the archive
+    ar_result = subprocess.run(
+        ["ar", "t", str(lib_path)], capture_output=True, text=True, check=True,
+    )
+    members = ar_result.stdout.strip().split("\n")
+    assert any("bar" in m for m in members), f"bar not in archive: {members}"
+    assert any("foo" in m for m in members), f"foo not in archive: {members}"
+
+    # Remove bar.cpp from CMakeLists.txt (keep only foo.cpp)
+    (source_dir / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.10)\n"
+        "project(stale_obj)\n"
+        "add_library(mylib STATIC foo.cpp)\n"
+        "add_executable(app main.cpp)\n"
+        "target_link_libraries(app PRIVATE mylib)\n"
+    )
+
+    # Reconfigure and rebuild
+    configure(source_dir, "build")
+    result = subprocess.run(
+        ["ninja"], cwd=source_dir, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, f"ninja rebuild failed: {result.stderr}"
+
+    # bar's object must no longer be in the archive
+    ar_result = subprocess.run(
+        ["ar", "t", str(lib_path)], capture_output=True, text=True, check=True,
+    )
+    members = ar_result.stdout.strip().split("\n")
+    assert not any("bar" in m for m in members), (
+        f"stale bar object still in archive after source removal: {members}"
+    )
