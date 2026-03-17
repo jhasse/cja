@@ -3719,6 +3719,19 @@ def generate_ninja(
         )
         n.newline()
 
+        shell_operators = (
+            ">",
+            ">>",
+            "2>",
+            "2>&1",
+            "<",
+            "|",
+            "&",
+            "&&",
+            "||",
+            ";",
+        )
+
         # Generate custom commands
         for custom_cmd in ctx.custom_commands:
             outputs = []
@@ -3732,18 +3745,6 @@ def generate_ninja(
 
             # Process multiple commands
             cmd_parts: list[str] = []
-            shell_operators = (
-                ">",
-                ">>",
-                "2>",
-                "2>&1",
-                "<",
-                "|",
-                "&",
-                "&&",
-                "||",
-                ";",
-            )
             for command in custom_cmd.commands:
                 if custom_cmd.verbatim:
                     parts = []
