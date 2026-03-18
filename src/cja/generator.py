@@ -1000,7 +1000,6 @@ def process_commands(
                         from .parser import parse_file
 
                         ctx.record_cmake_file(sub_cmakelists)
-                        ctx.record_cmake_file(sub_cmakelists)
                         sub_commands = parse_file(sub_cmakelists)
 
                         saved_current_source_dir = ctx.current_source_dir
@@ -1330,6 +1329,7 @@ def process_commands(
                     if sub_cmakelists.exists():
                         from .parser import parse_file
 
+                        ctx.record_cmake_file(sub_cmakelists)
                         sub_commands = parse_file(sub_cmakelists)
 
                         saved_current_source_dir = ctx.current_source_dir
