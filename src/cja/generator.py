@@ -3580,7 +3580,14 @@ def generate_ninja(
                     return f"-D{name}="
                 return f"-D{name}={value}"
 
-            reconfigure_cmd_parts = ["cja", "--regenerate-during-build"]
+            cja_cmd = ["cja"]
+            if shutil.which(cja_cmd[0]) is None:
+                # If cja is not in PATH, use the current Python executable to run it as a module
+                cja_cmd = [sys.executable, "-m", "cja"]
+            elif os.getenv("VIRTUAL_ENV") is not None:
+                # The venv might not be active when the user runs ninja (e.g. the IDE runs it)
+                cja_cmd = [shutil.which(cja_cmd[0])]
+            reconfigure_cmd_parts = cja_cmd + ["--regenerate-during-build"]
             if builddir != "build":
                 reconfigure_cmd_parts += ["-B", "$builddir"]
             for var_name in sorted(ctx.cli_variables):
