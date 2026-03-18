@@ -3588,6 +3588,8 @@ def generate_ninja(
             elif os.getenv("VIRTUAL_ENV") is not None:
                 # The venv might not be active when the user runs ninja (e.g. the IDE runs it)
                 cja_cmd = [absolute_cja_cmd]
+            if platform.system() == "Windows":
+                cja_cmd[0] = to_posix_path(cja_cmd[0])
             reconfigure_cmd_parts = cja_cmd + ["--regenerate-during-build"]
             if builddir != "build":
                 reconfigure_cmd_parts += ["-B", "$builddir"]
