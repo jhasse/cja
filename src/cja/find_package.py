@@ -519,4 +519,104 @@ def handle_builtin_find_package(
                 print(f"{colored('✗', 'red')} {package_name}")
         return True
 
+    if package_name == "Qt5":
+        keywords = {
+            "REQUIRED",
+            "QUIET",
+            "COMPONENTS",
+            "OPTIONAL_COMPONENTS",
+            "EXACT",
+            "MODULE",
+            "CONFIG",
+            "NO_MODULE",
+        }
+        required_components: list[str] = []
+        optional_components: list[str] = []
+        i = 1
+        while i < len(args):
+            token = args[i]
+            if token == "COMPONENTS":
+                i += 1
+                while i < len(args) and args[i] not in keywords:
+                    required_components.append(args[i])
+                    i += 1
+                continue
+            if token == "OPTIONAL_COMPONENTS":
+                i += 1
+                while i < len(args) and args[i] not in keywords:
+                    optional_components.append(args[i])
+                    i += 1
+                continue
+            i += 1
+
+        all_components = required_components + optional_components
+        if not all_components:
+            all_components = ["Core"]
+
+        found = False
+        missing_required: list[str] = []
+
+        for component in all_components:
+            pkg_name = f"Qt5{component}"
+            component_found = False
+            try:
+                result = subprocess.run(
+                    ["pkg-config", "--exists", pkg_name],
+                    capture_output=True,
+                )
+                component_found = result.returncode == 0
+            except FileNotFoundError:
+                component_found = False
+
+            if component_found:
+                found = True
+                cflags_result = subprocess.run(
+                    ["pkg-config", "--cflags", pkg_name],
+                    capture_output=True,
+                    text=True,
+                )
+                libs_result = subprocess.run(
+                    ["pkg-config", "--libs", pkg_name],
+                    capture_output=True,
+                    text=True,
+                )
+                version_result = subprocess.run(
+                    ["pkg-config", "--modversion", pkg_name],
+                    capture_output=True,
+                    text=True,
+                )
+
+                comp_cflags = cflags_result.stdout.strip()
+                comp_libs = libs_result.stdout.strip()
+                comp_version = version_result.stdout.strip()
+
+                ctx.variables[f"Qt5{component}_FOUND"] = "TRUE"
+                if comp_version:
+                    ctx.variables[f"Qt5{component}_VERSION"] = comp_version
+                    ctx.variables["Qt5_VERSION"] = comp_version
+
+                ctx.imported_targets[f"Qt5::{component}"] = ImportedTarget(
+                    cflags=comp_cflags,
+                    libs=comp_libs,
+                )
+            else:
+                ctx.variables[f"Qt5{component}_FOUND"] = "FALSE"
+                if component in required_components:
+                    missing_required.append(component)
+
+        found = found and not missing_required
+        ctx.variables["Qt5_FOUND"] = "TRUE" if found else "FALSE"
+
+        if found:
+            if not quiet:
+                print(f"{colored('✓', 'green')} {package_name}")
+        else:
+            ctx.variables["Qt5_FOUND"] = "FALSE"
+            if required:
+                ctx.print_error("could not find package: Qt5", cmd.line)
+                raise SystemExit(1)
+            if not quiet:
+                print(f"{colored('✗', 'red')} {package_name}")
+        return True
+
     return False
