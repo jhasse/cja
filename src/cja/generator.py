@@ -2431,6 +2431,12 @@ int main() {{
             case "find_path":
                 if len(args) >= 2:
                     var_name = args[0]
+                    existing = ctx.variables.get(var_name, "")
+                    if var_name in ctx.cache_variables or (
+                        existing and not existing.endswith("-NOTFOUND")
+                    ):
+                        frame.pc += 1
+                        continue
                     ctx.cache_variables.add(var_name)
                     names: list[str] = []
                     paths: list[str] = []
@@ -2539,6 +2545,12 @@ int main() {{
             case "find_library":
                 if len(args) >= 2:
                     var_name = args[0]
+                    existing = ctx.variables.get(var_name, "")
+                    if var_name in ctx.cache_variables or (
+                        existing and not existing.endswith("-NOTFOUND")
+                    ):
+                        frame.pc += 1
+                        continue
                     ctx.cache_variables.add(var_name)
                     names: list[str] = []
                     paths: list[str] = []

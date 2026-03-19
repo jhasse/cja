@@ -166,3 +166,21 @@ def test_find_path_persists_from_function_scope(tmp_path: Path) -> None:
     process_commands(commands, ctx)
 
     assert ctx.variables["INNER_HEADER_PATH"] == str(include_dir.absolute())
+
+
+def test_find_path_skips_when_already_set(tmp_path: Path) -> None:
+    """Test find_path does not search when the variable already has a valid value."""
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    ctx.variables["MY_HEADER_PATH"] = "/preset/include"
+
+    commands = [
+        Command(
+            name="find_path",
+            args=["MY_HEADER_PATH", "nonexistent.h", str(tmp_path)],
+            line=1,
+        ),
+    ]
+
+    process_commands(commands, ctx)
+
+    assert ctx.variables["MY_HEADER_PATH"] == "/preset/include"

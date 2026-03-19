@@ -165,3 +165,21 @@ def test_find_library_persists_from_function_scope(tmp_path: Path) -> None:
     process_commands(commands, ctx)
 
     assert ctx.variables["INNER_LIB"] == str(lib_file.absolute())
+
+
+def test_find_library_skips_when_already_set(tmp_path: Path) -> None:
+    """Test find_library does not search when the variable already has a valid value."""
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    ctx.variables["MY_LIB"] = "/preset/lib/libtest.a"
+
+    commands = [
+        Command(
+            name="find_library",
+            args=["MY_LIB", "nonexistent", str(tmp_path)],
+            line=1,
+        ),
+    ]
+
+    process_commands(commands, ctx)
+
+    assert ctx.variables["MY_LIB"] == "/preset/lib/libtest.a"
