@@ -492,7 +492,8 @@ def test_find_package_boost_component_library_fallback(
     def fake_exists(self: Path) -> bool:
         if self.name == lib_file_name:
             return original_exists(tmp_path / self.name)
-        if "boost_" in self.name and self.suffix in (".so", ".dylib", ".a", ".lib"):
+        if (self.name.startswith(("boost_", "libboost_"))
+                and self.suffix in (".so", ".dylib", ".a", ".lib")):
             return False
         return original_exists(self)
 
