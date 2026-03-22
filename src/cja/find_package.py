@@ -368,6 +368,14 @@ def handle_builtin_find_package(
                 if version_match:
                     boost_version = version_match.group(1).replace("_", ".")
 
+        lib_search_dirs = _unique_existing_dirs(
+            [
+                Path("/usr/lib"),
+                Path("/usr/lib64"),
+                Path("/usr/local/lib"),
+                Path("/opt/homebrew/lib"),
+            ]
+        )
         component_libs: list[str] = []
         for component in required_components + optional_components:
             pkg_component = f"boost_{component.lower()}"
@@ -383,8 +391,6 @@ def handle_builtin_find_package(
             except FileNotFoundError:
                 component_found = False
 
-            var_name = f"Boost_{component}_FOUND"
-            upper_var_name = f"Boost_{component.upper()}_FOUND"
             if component_found:
                 cflags_result = subprocess.run(
                     ["pkg-config", "--cflags", pkg_component],
@@ -398,6 +404,19 @@ def handle_builtin_find_package(
                 )
                 component_cflags = cflags_result.stdout.strip()
                 component_link_flags = libs_result.stdout.strip()
+            else:
+                # Fallback: search for the library file directly
+                lib_name = f"libboost_{component.lower()}.so"
+                for lib_dir in lib_search_dirs:
+                    if (lib_dir / lib_name).exists():
+                        component_found = True
+                        component_cflags = boost_cflags
+                        component_link_flags = f"-lboost_{component.lower()}"
+                        break
+
+            var_name = f"Boost_{component}_FOUND"
+            upper_var_name = f"Boost_{component.upper()}_FOUND"
+            if component_found:
                 if component_link_flags:
                     component_libs.append(component_link_flags)
                 ctx.imported_targets[f"Boost::{component}"] = ImportedTarget(

@@ -428,6 +428,15 @@ def test_find_package_boost_required_component_missing(
 
     monkeypatch.setattr("cja.generator.subprocess.run", fake_run)
 
+    original_exists = Path.exists
+
+    def fake_exists(self: Path) -> bool:
+        if "libboost_" in str(self):
+            return False
+        return original_exists(self)
+
+    monkeypatch.setattr(Path, "exists", fake_exists)
+
     commands = [
         Command(
             name="find_package",
@@ -438,6 +447,57 @@ def test_find_package_boost_required_component_missing(
     with pytest.raises(SystemExit) as exc_info:
         process_commands(commands, ctx)
     assert exc_info.value.code == 1
+
+
+def test_find_package_boost_component_library_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Test find_package(Boost COMPONENTS thread) falls back to library file search."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+
+    # pkg-config finds boost headers but not the component
+    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        if cmd == ["pkg-config", "--exists", "boost"]:
+            return subprocess.CompletedProcess(cmd, 0)
+        if cmd == ["pkg-config", "--cflags", "boost"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="-I/usr/include")
+        if cmd == ["pkg-config", "--libs", "boost"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="")
+        if cmd == ["pkg-config", "--modversion", "boost"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="1.84.0")
+        return subprocess.CompletedProcess(cmd, 1)
+
+    monkeypatch.setattr("cja.generator.subprocess.run", fake_run)
+
+    # Create a fake library file in tmp_path
+    fake_lib = tmp_path / "libboost_thread.so"
+    fake_lib.touch()
+
+    original_exists = Path.exists
+
+    def fake_exists(self: Path) -> bool:
+        if self.name == "libboost_thread.so":
+            return original_exists(tmp_path / self.name)
+        if "libboost_" in str(self):
+            return False
+        return original_exists(self)
+
+    monkeypatch.setattr(Path, "exists", fake_exists)
+
+    commands = [
+        Command(
+            name="find_package",
+            args=["Boost", "REQUIRED", "COMPONENTS", "thread"],
+            line=1,
+        )
+    ]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["Boost_FOUND"] == "TRUE"
+    assert ctx.variables["Boost_thread_FOUND"] == "TRUE"
+    assert "Boost::thread" in ctx.imported_targets
+    assert ctx.imported_targets["Boost::thread"].libs == "-lboost_thread"
 
 
 def test_find_package_png_found_via_pkg_config(
