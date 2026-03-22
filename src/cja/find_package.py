@@ -1,6 +1,7 @@
 """Built-in find_package() handlers."""
 
 from pathlib import Path
+import platform
 import re
 import shutil
 import shlex
@@ -406,12 +407,29 @@ def handle_builtin_find_package(
                 component_link_flags = libs_result.stdout.strip()
             else:
                 # Fallback: search for the library file directly
-                lib_name = f"libboost_{component.lower()}.so"
+                if platform.system() == "Windows":
+                    lib_names = [
+                        f"boost_{component.lower()}.lib",
+                        f"libboost_{component.lower()}.lib",
+                    ]
+                elif platform.system() == "Darwin":
+                    lib_names = [
+                        f"libboost_{component.lower()}.dylib",
+                        f"libboost_{component.lower()}.a",
+                    ]
+                else:
+                    lib_names = [
+                        f"libboost_{component.lower()}.so",
+                        f"libboost_{component.lower()}.a",
+                    ]
                 for lib_dir in lib_search_dirs:
-                    if (lib_dir / lib_name).exists():
-                        component_found = True
-                        component_cflags = boost_cflags
-                        component_link_flags = f"-lboost_{component.lower()}"
+                    for lib_name in lib_names:
+                        if (lib_dir / lib_name).exists():
+                            component_found = True
+                            component_cflags = boost_cflags
+                            component_link_flags = f"-lboost_{component.lower()}"
+                            break
+                    if component_found:
                         break
 
             var_name = f"Boost_{component}_FOUND"
