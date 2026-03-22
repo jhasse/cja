@@ -1,5 +1,6 @@
 """Tests for find_package command."""
 
+import platform
 import subprocess
 import sys
 from pathlib import Path
@@ -470,16 +471,28 @@ def test_find_package_boost_component_library_fallback(
 
     monkeypatch.setattr("cja.generator.subprocess.run", fake_run)
 
-    # Create a fake library file in tmp_path
-    fake_lib = tmp_path / "libboost_thread.so"
+    # Create a fake library file in tmp_path with platform-appropriate name
+    if platform.system() == "Windows":
+        lib_file_name = "boost_thread.lib"
+    elif platform.system() == "Darwin":
+        lib_file_name = "libboost_thread.dylib"
+    else:
+        lib_file_name = "libboost_thread.so"
+    fake_lib = tmp_path / lib_file_name
     fake_lib.touch()
+
+    # Ensure lib_search_dirs includes tmp_path on all platforms
+    monkeypatch.setattr(
+        "cja.find_package._unique_existing_dirs",
+        lambda candidates: [tmp_path],
+    )
 
     original_exists = Path.exists
 
     def fake_exists(self: Path) -> bool:
-        if self.name == "libboost_thread.so":
+        if self.name == lib_file_name:
             return original_exists(tmp_path / self.name)
-        if "libboost_" in str(self):
+        if "boost_" in self.name and self.suffix in (".so", ".dylib", ".a", ".lib"):
             return False
         return original_exists(self)
 
