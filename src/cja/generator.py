@@ -1067,6 +1067,7 @@ def process_commands(
             continue
 
         cmd = current_commands[frame.pc]
+        ctx.variables["CMAKE_CURRENT_LIST_LINE"] = str(cmd.line)
         expanded_args: list[str] = []
         for idx, arg in enumerate(cmd.args):
             allow_undefined = False
