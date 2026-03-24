@@ -1,6 +1,6 @@
 [project]
 name = "cja"
-version = "0.2.3"
+version = "0.2.4"
 description = "CMake-compatible build system that generates Ninja build files"
 readme = "README.md"
 license = { text = "GPL-3.0-or-later" }
