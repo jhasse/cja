@@ -136,6 +136,8 @@ class BuildContext:
     def get_library(self, name: str) -> Library | None:
         for lib in self.libraries:
             if lib.name == name:
+                if lib.is_alias and lib.alias_for:
+                    return self.get_library(lib.alias_for)
                 return lib
         return None
 

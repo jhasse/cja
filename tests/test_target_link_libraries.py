@@ -85,7 +85,9 @@ def test_alias_to_shared_library_is_linked_by_output(tmp_path: Path) -> None:
         Command(name="add_library", args=["core", "SHARED", "core.cpp"], line=1),
         Command(name="add_library", args=["Pkg::core", "ALIAS", "core"], line=2),
         Command(name="add_executable", args=["app", "main.cpp"], line=3),
-        Command(name="target_link_libraries", args=["app", "PRIVATE", "Pkg::core"], line=4),
+        Command(
+            name="target_link_libraries", args=["app", "PRIVATE", "Pkg::core"], line=4
+        ),
     ]
     process_commands(commands, ctx)
 
@@ -94,5 +96,57 @@ def test_alias_to_shared_library_is_linked_by_output(tmp_path: Path) -> None:
     content = ninja_file.read_text()
 
     assert "-lPkg::core" not in content
-    ext = ".dll" if platform.system() == "Windows" else ".dylib" if platform.system() == "Darwin" else ".so"
+    ext = (
+        ".dll"
+        if platform.system() == "Windows"
+        else ".dylib"
+        if platform.system() == "Darwin"
+        else ".so"
+    )
     assert f"$builddir/libcore{ext}" in content
+
+
+def test_alias_propagates_public_include_directories(tmp_path: Path) -> None:
+    """Public include dirs should propagate through an alias with a link chain.
+
+    Mimics the Catch2 pattern: Base has PUBLIC includes, Wrapper links Base
+    publicly, alias is created for Wrapper before the link, app links the alias.
+    """
+    inc = tmp_path / "include"
+    inc.mkdir()
+    (tmp_path / "base.cpp").write_text("int f() { return 0; }\n")
+    (tmp_path / "wrapper.cpp").write_text("int g() { return 0; }\n")
+    (tmp_path / "main.cpp").write_text("int main() { return 0; }\n")
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    commands = [
+        Command(name="add_library", args=["Base", "STATIC", "base.cpp"], line=1),
+        Command(
+            name="target_include_directories",
+            args=["Base", "PUBLIC", str(inc)],
+            line=2,
+        ),
+        Command(name="add_library", args=["Wrapper", "STATIC", "wrapper.cpp"], line=3),
+        # Alias created BEFORE target_link_libraries on the original.
+        Command(name="add_library", args=["Pkg::Wrapper", "ALIAS", "Wrapper"], line=4),
+        Command(
+            name="target_link_libraries",
+            args=["Wrapper", "PUBLIC", "Base"],
+            line=5,
+        ),
+        Command(name="add_executable", args=["app", "main.cpp"], line=6),
+        Command(
+            name="target_link_libraries",
+            args=["app", "PRIVATE", "Pkg::Wrapper"],
+            line=7,
+        ),
+    ]
+    process_commands(commands, ctx, strict=True)
+
+    ninja_file = tmp_path / "build.ninja"
+    generate_ninja(ctx, ninja_file, "build")
+    content = ninja_file.read_text()
+    # The include must appear on the app source, not just on Base's own source.
+    app_line_idx = content.index("app_main.o: cxx main.cpp")
+    rest = content[app_line_idx:]
+    block = rest.split("\n\n")[0]
+    assert "-Iinclude" in block
