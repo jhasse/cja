@@ -261,7 +261,7 @@ def test_linker_unknown_argument_captured_output_gxx_only(tmp_path: Path) -> Non
         cwd=source_dir,
         capture_output=True,
         text=True,
-        env={**os.environ, "CLICOLOR_FORCE": "1"},
+        env={**os.environ, "CLICOLOR_FORCE": "1", "LC_ALL": "C"},
     )
     assert result.returncode != 0
     output_lower = f"{result.stdout}\n{result.stderr}".lower()
