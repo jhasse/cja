@@ -44,3 +44,31 @@ def test_string_regex_match_clears_previous_match_vars() -> None:
     assert ctx.variables["CMAKE_MATCH_COUNT"] == "0"
     assert ctx.variables["CMAKE_MATCH_0"] == ""
     assert ctx.variables.get("CMAKE_MATCH_1", "") == ""
+
+
+def test_string_make_c_identifier() -> None:
+    """string(MAKE_C_IDENTIFIER) should convert to a valid C identifier."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(
+            name="string",
+            args=["MAKE_C_IDENTIFIER", "my-flag-name", "result"],
+            line=1,
+        ),
+    ]
+    process_commands(commands, ctx, strict=True)
+    assert ctx.variables["result"] == "my_flag_name"
+
+
+def test_string_make_c_identifier_leading_digit() -> None:
+    """string(MAKE_C_IDENTIFIER) should prepend underscore for leading digit."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(
+            name="string",
+            args=["MAKE_C_IDENTIFIER", "2bad", "result"],
+            line=1,
+        ),
+    ]
+    process_commands(commands, ctx, strict=True)
+    assert ctx.variables["result"] == "_2bad"

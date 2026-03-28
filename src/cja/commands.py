@@ -1990,6 +1990,16 @@ def handle_string(
                 result = s1 > s2
             ctx.variables[out_var] = "1" if result else "0"
 
+    elif subcommand == "MAKE_C_IDENTIFIER":
+        # string(MAKE_C_IDENTIFIER <string> <output_variable>)
+        if len(args) >= 3:
+            string_val = args[1]
+            out_var = args[2]
+            result = re.sub(r"[^a-zA-Z0-9_]", "_", string_val)
+            if result and result[0].isdigit():
+                result = "_" + result
+            ctx.variables[out_var] = result
+
 
 def handle_file(
     ctx: BuildContext,
