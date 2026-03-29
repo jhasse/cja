@@ -194,41 +194,42 @@ def handle_target_link_libraries(
             elif arg == "PRIVATE":
                 visibility = "PRIVATE"
             else:
-                # It's a library name
+                # It's a library name (may be a semicolon-separated list from
+                # a CMake variable expansion like "${LIBS_PRIVATE}")
                 if "$<" in arg:
                     arg = strip_generator_expressions(arg, ctx.variables)
                     if not arg:
                         continue
 
-                lib = ctx.get_library(target_name)
-                if lib:
-                    # For libraries, we track linked libraries but don't use them yet
-                    # (static libraries don't link, but they might need to propagate flags)
-                    if visibility == "PUBLIC":
-                        lib.link_libraries.append(arg)
-                        lib.public_link_libraries.append(arg)
-                    elif visibility == "INTERFACE":
-                        lib.public_link_libraries.append(arg)
-                    else:
-                        lib.link_libraries.append(arg)
-                else:
-                    exe = ctx.get_executable(target_name)
-                    if exe:
-                        exe.link_libraries.append(arg)
-                    elif target_name in ctx.imported_targets:
-                        imported_target = ctx.imported_targets[target_name]
-                        existing = shlex.split(imported_target.libs) if imported_target.libs else []
-                        if arg in ctx.imported_targets and ctx.imported_targets[arg].libs:
-                            existing.extend(shlex.split(ctx.imported_targets[arg].libs))
-                        elif (
-                            arg.startswith("-")
-                            or "/" in arg
-                            or arg.endswith((".a", ".so", ".dylib", ".lib", ".dll"))
-                        ):
-                            existing.append(arg)
+                parts = [p for p in arg.split(";") if p]
+                for part in parts:
+                    lib = ctx.get_library(target_name)
+                    if lib:
+                        if visibility == "PUBLIC":
+                            lib.link_libraries.append(part)
+                            lib.public_link_libraries.append(part)
+                        elif visibility == "INTERFACE":
+                            lib.public_link_libraries.append(part)
                         else:
-                            existing.append(f"-l{arg}")
-                        imported_target.libs = " ".join(dict.fromkeys(existing))
+                            lib.link_libraries.append(part)
+                    else:
+                        exe = ctx.get_executable(target_name)
+                        if exe:
+                            exe.link_libraries.append(part)
+                        elif target_name in ctx.imported_targets:
+                            imported_target = ctx.imported_targets[target_name]
+                            existing = shlex.split(imported_target.libs) if imported_target.libs else []
+                            if part in ctx.imported_targets and ctx.imported_targets[part].libs:
+                                existing.extend(shlex.split(ctx.imported_targets[part].libs))
+                            elif (
+                                part.startswith("-")
+                                or "/" in part
+                                or part.endswith((".a", ".so", ".dylib", ".lib", ".dll"))
+                            ):
+                                existing.append(part)
+                            else:
+                                existing.append(f"-l{part}")
+                            imported_target.libs = " ".join(dict.fromkeys(existing))
 
 
 def handle_target_link_directories(

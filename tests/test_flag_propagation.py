@@ -161,3 +161,30 @@ def test_target_link_libraries_compiler_version_genex(tmp_path):
     # Genex should resolve and produce stdc++fs for GNU < 9.0.
     assert "stdc++fs" in content
     assert "$<" not in content
+
+
+def test_semicolon_separated_link_libraries(tmp_path):
+    """Semicolon-separated library lists from variable expansion should be split."""
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+
+    commands = [
+        Command(name="add_library", args=["mylib", "STATIC", "lib.c"], line=1),
+        Command(
+            name="target_link_libraries",
+            args=["mylib", "PRIVATE", "m;pthread;GL"],
+            line=2,
+        ),
+        Command(name="add_executable", args=["app", "main.c"], line=3),
+        Command(name="target_link_libraries", args=["app", "mylib"], line=4),
+    ]
+
+    process_commands(commands, ctx)
+
+    ninja_file = tmp_path / "build.ninja"
+    generate_ninja(ctx, ninja_file, "build")
+
+    content = ninja_file.read_text()
+    assert "-lm" in content
+    assert "-lpthread" in content
+    assert "-lGL" in content
+    assert ";" not in content.split("libs = ")[1].split("\n")[0]
