@@ -237,6 +237,24 @@ def test_pkg_check_modules_version_constraints() -> None:
     assert ctx.variables.get("ZLIB_VER_LIBRARIES", "") != ""
 
 
+def _has_pkg_config_packages(*packages: str) -> bool:
+    """Check if pkg-config can find all given packages."""
+    try:
+        result = subprocess.run(
+            ["pkg-config", "--exists"] + list(packages),
+            capture_output=True,
+        )
+        return result.returncode == 0
+    except FileNotFoundError:
+        return False
+
+
+@pytest.mark.skipif(
+    not _has_pkg_config_packages(
+        "wayland-client", "wayland-cursor", "wayland-egl", "xkbcommon"
+    ),
+    reason="wayland/xkbcommon not found via pkg-config",
+)
 def test_pkg_check_modules_multiple_modules_with_versions() -> None:
     """Test pkg_check_modules with multiple modules and version constraints."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
