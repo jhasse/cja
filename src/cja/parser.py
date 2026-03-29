@@ -123,6 +123,26 @@ def tokenize(content: str) -> list[tuple[str, int]]:
             continue
 
         # Unquoted token (identifier or value)
+        # First check for bracket argument: [=*[...]=*]
+        if content[i] == "[":
+            bracket_start = i
+            j = i + 1
+            while j < len(content) and content[j] == "=":
+                j += 1
+            if j < len(content) and content[j] == "[":
+                # Bracket argument
+                num_equals = j - bracket_start - 1
+                j += 1  # skip second [
+                closing = "]" + "=" * num_equals + "]"
+                closing_idx = content.find(closing, j)
+                if closing_idx != -1:
+                    val = content[j:closing_idx]
+                    line += val.count("\n")
+                    tokens.append((val, line))
+                    i = closing_idx + len(closing)
+                    continue
+                # Unterminated bracket argument - fall through to unquoted
+
         start = i
         genex_depth = 0
         while i < len(content):

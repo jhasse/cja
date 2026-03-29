@@ -21,6 +21,7 @@ from .parser import Command
 from .targets import Executable, ImportedTarget, Library
 from .utils import (
     UNDEFINED_VAR_SENTINEL,
+    cmake_regex_to_python,
     is_truthy,
     resolve_cmake_path,
     strip_generator_expressions,
@@ -1450,15 +1451,16 @@ def handle_list(
                     items = list_val.split(";")
                     import re as regex_module
 
+                    py_pattern = cmake_regex_to_python(pattern)
                     if mode == "INCLUDE":
                         items = [
-                            item for item in items if regex_module.search(pattern, item)
+                            item for item in items if regex_module.search(py_pattern, item)
                         ]
                     elif mode == "EXCLUDE":
                         items = [
                             item
                             for item in items
-                            if not regex_module.search(pattern, item)
+                            if not regex_module.search(py_pattern, item)
                         ]
                     ctx.variables[list_name] = ";".join(items)
     else:
@@ -1872,7 +1874,7 @@ def handle_string(
                     out_var = args[3]
                     inputs = args[4:]
                     full_input = "".join(inputs)
-                    match = re.search(pattern, full_input)
+                    match = re.search(cmake_regex_to_python(pattern), full_input)
                     reset_cmake_match_vars()
                     if match:
                         ctx.variables[out_var] = match.group(0)
@@ -1894,7 +1896,10 @@ def handle_string(
                     out_var = args[3]
                     inputs = args[4:]
                     full_input = "".join(inputs)
-                    matches = re.findall(pattern, full_input)
+                    matches = [
+                        m.group(0)
+                        for m in re.finditer(cmake_regex_to_python(pattern), full_input)
+                    ]
                     ctx.variables[out_var] = ";".join(matches)
             elif regex_sub == "REPLACE":
                 # string(REGEX REPLACE <regex> <replace_string> <out_var> <input> [<input>...])
@@ -1908,7 +1913,7 @@ def handle_string(
                     # CMake uses \1, \2 etc for backreferences, Python uses \1, \2
                     # but also supports \g<1> which is safer.
                     # Actually CMake's REGEX REPLACE is a bit different.
-                    ctx.variables[out_var] = re.sub(pattern, replace_str, full_input)
+                    ctx.variables[out_var] = re.sub(cmake_regex_to_python(pattern), replace_str, full_input)
 
     elif subcommand == "SUBSTRING":
         # string(SUBSTRING <string> <begin> <length> <out_var>)

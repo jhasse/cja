@@ -4,7 +4,7 @@ import re
 from typing import Callable
 
 from .parser import Command
-from .utils import UNDEFINED_VAR_SENTINEL, is_constant_truthy, is_truthy
+from .utils import UNDEFINED_VAR_SENTINEL, cmake_regex_to_python, is_constant_truthy, is_truthy
 
 
 @dataclass
@@ -159,7 +159,7 @@ def evaluate_condition(
                 if op == "STRGREATER":
                     return left_val > right_val
                 if op == "MATCHES":
-                    match = re.search(right_val, left_val)
+                    match = re.search(cmake_regex_to_python(right_val), left_val)
                     if match:
                         variables["CMAKE_MATCH_0"] = match.group(0)
                         for idx, group in enumerate(match.groups(), start=1):

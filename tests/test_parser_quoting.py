@@ -56,7 +56,28 @@ def test_genex_with_spaces_is_single_argument() -> None:
 
 def test_parse_file_latin1_fallback(tmp_path: Path) -> None:
     cmake = tmp_path / "CMakeLists.txt"
-    cmake.write_bytes(b"message(STATUS \"ok\")\n# Python\x92s os.path.join\n")
+    cmake.write_bytes(b'message(STATUS "ok")\n# Python\x92s os.path.join\n')
     commands = parse_file(cmake)
     assert len(commands) == 1
     assert commands[0].name == "message"
+
+
+def test_bracket_argument() -> None:
+    content = "set(FOO [=[hello world]=])"
+    commands = parse(content)
+    assert len(commands) == 1
+    assert commands[0].args == ["FOO", "hello world"]
+
+
+def test_bracket_argument_with_special_chars() -> None:
+    content = 'set(PATTERN [=["?[A-Za-z_0-9.-]+"?]=])'
+    commands = parse(content)
+    assert len(commands) == 1
+    assert commands[0].args == ["PATTERN", '"?[A-Za-z_0-9.-]+"?']
+
+
+def test_bracket_argument_no_equals() -> None:
+    content = "set(FOO [[bar]])"
+    commands = parse(content)
+    assert len(commands) == 1
+    assert commands[0].args == ["FOO", "bar"]

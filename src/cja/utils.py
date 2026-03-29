@@ -7,6 +7,55 @@ _UNC_PATH_RE = re.compile(r"^[\\/]{2}[^\\/]+[\\/][^\\/]+")
 UNDEFINED_VAR_SENTINEL = "__CJA_UNDEFINED_VAR__"
 
 
+def cmake_regex_to_python(pattern: str) -> str:
+    """Convert a CMake regex pattern to a Python-compatible one.
+
+    CMake uses POSIX-like regex where backslash has no special meaning inside
+    character classes, while Python treats it as an escape character.  Double
+    any backslash found inside ``[...]`` so Python's ``re`` interprets it as a
+    literal backslash.
+    """
+    result: list[str] = []
+    i = 0
+    in_bracket = False
+    while i < len(pattern):
+        c = pattern[i]
+        if in_bracket:
+            if c == "\\":
+                result.append("\\\\")
+                i += 1
+            elif c == "]":
+                result.append(c)
+                in_bracket = False
+                i += 1
+            else:
+                result.append(c)
+                i += 1
+        else:
+            if c == "[":
+                result.append(c)
+                i += 1
+                in_bracket = True
+                # Handle negation
+                if i < len(pattern) and pattern[i] == "^":
+                    result.append("^")
+                    i += 1
+                # First char after [ or [^ can be ] without closing the class
+                if i < len(pattern) and pattern[i] == "]":
+                    result.append("]")
+                    i += 1
+            elif c == "\\":
+                result.append(c)
+                i += 1
+                if i < len(pattern):
+                    result.append(pattern[i])
+                    i += 1
+            else:
+                result.append(c)
+                i += 1
+    return "".join(result)
+
+
 def to_posix_path(path: str | Path) -> str:
     """Normalize path separators to forward slashes."""
     return str(path).replace("\\", "/")
@@ -176,11 +225,15 @@ def strip_generator_expressions(
         if content == "C_COMPILER_VERSION":
             return variables.get("CMAKE_C_COMPILER_VERSION", "")
         if content.startswith("CXX_COMPILER_ID:"):
-            args = [a for a in split_top_level(content[len("CXX_COMPILER_ID:") :], ",") if a]
+            args = [
+                a for a in split_top_level(content[len("CXX_COMPILER_ID:") :], ",") if a
+            ]
             current = variables.get("CMAKE_CXX_COMPILER_ID", "")
             return "1" if current and current in args else "0"
         if content.startswith("C_COMPILER_ID:"):
-            args = [a for a in split_top_level(content[len("C_COMPILER_ID:") :], ",") if a]
+            args = [
+                a for a in split_top_level(content[len("C_COMPILER_ID:") :], ",") if a
+            ]
             current = variables.get("CMAKE_C_COMPILER_ID", "")
             return "1" if current and current in args else "0"
         if content.startswith("TARGET_PROPERTY:"):
