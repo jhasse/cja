@@ -218,3 +218,46 @@ def test_pkg_check_modules_quiet_output(capsys, tmp_path):
     captured = capsys.readouterr()
     assert "✓ zlib" not in captured.out
     assert "✗ nonexistent_package_123" not in captured.out
+
+
+def test_pkg_check_modules_version_constraints() -> None:
+    """Test pkg_check_modules with version constraints like >=0.2.7."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="find_package", args=["PkgConfig", "REQUIRED"], line=1),
+        Command(
+            name="pkg_check_modules",
+            args=["ZLIB_VER", "REQUIRED", "zlib>=1.0"],
+            line=2,
+        ),
+    ]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["ZLIB_VER_FOUND"] == "1"
+    assert ctx.variables.get("ZLIB_VER_LIBRARIES", "") != ""
+
+
+def test_pkg_check_modules_multiple_modules_with_versions() -> None:
+    """Test pkg_check_modules with multiple modules and version constraints."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="find_package", args=["PkgConfig", "REQUIRED"], line=1),
+        Command(
+            name="pkg_check_modules",
+            args=[
+                "WAYLAND",
+                "REQUIRED",
+                "wayland-client>=0.2.7",
+                "wayland-cursor>=0.2.7",
+                "wayland-egl>=0.2.7",
+                "xkbcommon>=0.5.0",
+            ],
+            line=2,
+        ),
+    ]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["WAYLAND_FOUND"] == "1"
+    libs = ctx.variables.get("WAYLAND_LIBRARIES", "")
+    assert "wayland-client" in libs
+    assert "xkbcommon" in libs

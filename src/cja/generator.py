@@ -3025,9 +3025,22 @@ int main() {{
                         all_prefixes = []
 
                         for module in modules:
+                            # Split version constraint: "foo>=1.0" -> ("foo", ">= 1.0")
+                            import re as _re
+                            ver_match = _re.match(
+                                r"^([A-Za-z0-9_.+-]+)\s*(>=|<=|=)\s*(.+)$", module
+                            )
+                            if ver_match:
+                                mod_name = ver_match.group(1)
+                                exists_arg = (
+                                    f"{mod_name} {ver_match.group(2)} {ver_match.group(3)}"
+                                )
+                            else:
+                                mod_name = module
+                                exists_arg = module
                             try:
                                 result = subprocess.run(
-                                    ["pkg-config", "--exists", module],
+                                    ["pkg-config", "--exists", exists_arg],
                                     capture_output=True,
                                 )
                                 if result.returncode != 0:
@@ -3035,7 +3048,7 @@ int main() {{
                                     break
 
                                 cflags_res = subprocess.run(
-                                    ["pkg-config", "--cflags", module],
+                                    ["pkg-config", "--cflags", mod_name],
                                     capture_output=True,
                                     text=True,
                                 )
@@ -3046,7 +3059,7 @@ int main() {{
                                         all_include_dirs.append(entry[2:])
 
                                 libs_res = subprocess.run(
-                                    ["pkg-config", "--libs", module],
+                                    ["pkg-config", "--libs", mod_name],
                                     capture_output=True,
                                     text=True,
                                 )
@@ -3068,7 +3081,7 @@ int main() {{
                                         [
                                             "pkg-config",
                                             f"--variable={var_name}",
-                                            module,
+                                            mod_name,
                                         ],
                                         capture_output=True,
                                         text=True,
@@ -3126,9 +3139,11 @@ int main() {{
                                 print(f"{colored('✗', 'red')} {', '.join(modules)}")
                             ctx.variables[f"{prefix}_FOUND"] = "0"
                             if is_required:
-                                raise FileNotFoundError(
-                                    f"could not find modules: {', '.join(modules)}"
+                                ctx.print_error(
+                                    f"could not find modules: {', '.join(modules)}",
+                                    cmd.line,
                                 )
+                                raise SystemExit(1)
 
             case "message":
                 if args:
