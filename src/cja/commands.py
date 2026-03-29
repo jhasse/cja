@@ -67,7 +67,15 @@ def handle_project(
         ctx.variables["PROJECT_NAME"] = args[0]
         ctx.variables["CMAKE_PROJECT_NAME"] = args[0]
         ctx.variables["CMAKE_C_FLAGS"] = ""  # TODO: Only set when C is enabled
+        ctx.variables["CMAKE_C_FLAGS_DEBUG"] = ""
+        ctx.variables["CMAKE_C_FLAGS_RELEASE"] = ""
+        ctx.variables["CMAKE_C_FLAGS_RELWITHDEBINFO"] = ""
+        ctx.variables["CMAKE_C_FLAGS_MINSIZEREL"] = ""
         ctx.variables["CMAKE_CXX_FLAGS"] = ""  # TODO: Only set when CXX is enabled
+        ctx.variables["CMAKE_CXX_FLAGS_DEBUG"] = ""
+        ctx.variables["CMAKE_CXX_FLAGS_RELEASE"] = ""
+        ctx.variables["CMAKE_CXX_FLAGS_RELWITHDEBINFO"] = ""
+        ctx.variables["CMAKE_CXX_FLAGS_MINSIZEREL"] = ""
         ctx.variables["PROJECT_SOURCE_DIR"] = str(ctx.current_source_dir)
         ctx.variables["PROJECT_BINARY_DIR"] = str(ctx.build_dir)
         source_var = f"{args[0]}_SOURCE_DIR"

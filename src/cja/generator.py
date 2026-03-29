@@ -1259,9 +1259,17 @@ def process_commands(
                     ctx.variables["CMAKE_C_FLAGS"] = (
                         ""  # TODO: Only set when C is enabled
                     )
+                    ctx.variables["CMAKE_C_FLAGS_DEBUG"] = ""
+                    ctx.variables["CMAKE_C_FLAGS_RELEASE"] = ""
+                    ctx.variables["CMAKE_C_FLAGS_RELWITHDEBINFO"] = ""
+                    ctx.variables["CMAKE_C_FLAGS_MINSIZEREL"] = ""
                     ctx.variables["CMAKE_CXX_FLAGS"] = (
                         ""  # TODO: Only set when CXX is enabled
                     )
+                    ctx.variables["CMAKE_CXX_FLAGS_DEBUG"] = ""
+                    ctx.variables["CMAKE_CXX_FLAGS_RELEASE"] = ""
+                    ctx.variables["CMAKE_CXX_FLAGS_RELWITHDEBINFO"] = ""
+                    ctx.variables["CMAKE_CXX_FLAGS_MINSIZEREL"] = ""
                     ctx.variables["CMAKE_EXE_LINKER_FLAGS"] = ""
                     ctx.variables["CMAKE_LINKER_FLAGS"] = ""
                     ctx.variables["PROJECT_SOURCE_DIR"] = str(ctx.current_source_dir)
@@ -3636,7 +3644,13 @@ def generate_ninja(
         # Compile rules - include build type flags
         base_cflags = f"-fdiagnostics-color {build_type_flags} {ipo_flags}".strip()
         c_flags = ctx.variables.get("CMAKE_C_FLAGS", "")
+        c_flags_config = ctx.variables.get(f"CMAKE_C_FLAGS_{build_type}", "")
+        if c_flags_config:
+            c_flags = f"{c_flags} {c_flags_config}".strip()
         cxx_flags = ctx.variables.get("CMAKE_CXX_FLAGS", "")
+        cxx_flags_config = ctx.variables.get(f"CMAKE_CXX_FLAGS_{build_type}", "")
+        if cxx_flags_config:
+            cxx_flags = f"{cxx_flags} {cxx_flags_config}".strip()
         cxx_flags = _normalize_windows_clang_cxx_std(cxx_flags, windows_clangxx)
         linker_flags_parts = [
             ctx.variables.get("CMAKE_EXE_LINKER_FLAGS", ""),

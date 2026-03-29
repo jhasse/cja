@@ -99,3 +99,22 @@ def test_cmake_linker_flags_append(tmp_path: Path) -> None:
     content = ninja_file.read_text()
 
     assert "-fsanitize=address" in content
+
+
+def test_cmake_c_flags_debug(tmp_path: Path) -> None:
+    """Test that CMAKE_C_FLAGS_DEBUG are included in the ninja file."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    (source_dir / "CMakeLists.txt").write_text(
+        "project(test_flags_debug)\n"
+        'set(CMAKE_C_FLAGS_DEBUG "-fsanitize=undefined")\n'
+        "add_executable(main main.c)"
+    )
+    (source_dir / "main.c").write_text("int main() { return 0; }")
+
+    configure(source_dir, "build")
+
+    ninja_file = source_dir / "build.ninja"
+    content = ninja_file.read_text()
+
+    assert "-fsanitize=undefined" in content
