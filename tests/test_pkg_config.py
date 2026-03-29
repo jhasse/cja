@@ -220,6 +220,22 @@ def test_pkg_check_modules_quiet_output(capsys, tmp_path):
     assert "✗ nonexistent_package_123" not in captured.out
 
 
+def _has_pkg_config_packages(*packages: str) -> bool:
+    """Check if pkg-config can find all given packages."""
+    try:
+        result = subprocess.run(
+            ["pkg-config", "--exists"] + list(packages),
+            capture_output=True,
+        )
+        return result.returncode == 0
+    except FileNotFoundError:
+        return False
+
+
+@pytest.mark.skipif(
+    not _has_pkg_config_packages("zlib"),
+    reason="zlib not found via pkg-config",
+)
 def test_pkg_check_modules_version_constraints() -> None:
     """Test pkg_check_modules with version constraints like >=0.2.7."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
@@ -235,18 +251,6 @@ def test_pkg_check_modules_version_constraints() -> None:
 
     assert ctx.variables["ZLIB_VER_FOUND"] == "1"
     assert ctx.variables.get("ZLIB_VER_LIBRARIES", "") != ""
-
-
-def _has_pkg_config_packages(*packages: str) -> bool:
-    """Check if pkg-config can find all given packages."""
-    try:
-        result = subprocess.run(
-            ["pkg-config", "--exists"] + list(packages),
-            capture_output=True,
-        )
-        return result.returncode == 0
-    except FileNotFoundError:
-        return False
 
 
 @pytest.mark.skipif(
