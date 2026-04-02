@@ -49,6 +49,7 @@ class Test:
 
     name: str
     command: list[str]
+    working_directory: str | None = None
 
 
 def evaluate_condition(

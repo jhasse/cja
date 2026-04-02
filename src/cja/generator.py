@@ -726,6 +726,7 @@ def process_commands(
     ctx.variables["CMAKE_COMMAND"] = "cja"
     ctx.variables["CMAKE_VERSION"] = "3.28.0"
     stack: list[Frame] = [Frame(commands=commands, pc=0, kind="commands")]
+
     def split_unquoted_list_args(value: str) -> list[str]:
         """Split list arguments on semicolons outside generator expressions."""
         if ";" not in value:
@@ -756,7 +757,9 @@ def process_commands(
         result.append("".join(current))
         return result
 
-    def _search_dirs_with_defaults(kind: str, hints: list[str], paths: list[str]) -> list[str]:
+    def _search_dirs_with_defaults(
+        kind: str, hints: list[str], paths: list[str]
+    ) -> list[str]:
         """Build search dirs in CMake-like order: hints, paths, then defaults."""
         dirs: list[str] = []
         seen: set[str] = set()
@@ -780,7 +783,9 @@ def process_commands(
             add_dir(d)
 
         cmake_prefix_path = ctx.variables.get("CMAKE_PREFIX_PATH", "")
-        for prefix in split_unquoted_list_args(cmake_prefix_path) if cmake_prefix_path else []:
+        for prefix in (
+            split_unquoted_list_args(cmake_prefix_path) if cmake_prefix_path else []
+        ):
             if kind == "path":
                 add_dir(str(Path(prefix) / "include"))
                 add_dir(prefix)
@@ -942,7 +947,9 @@ def process_commands(
 
                 if not src_dir.exists():
                     print(f"Cloning {name} from {git_repo}")
-                    fetch_cmd_line = frame.fetchcontent_cmd.line if frame.fetchcontent_cmd else 0
+                    fetch_cmd_line = (
+                        frame.fetchcontent_cmd.line if frame.fetchcontent_cmd else 0
+                    )
                     try:
                         clone_cmd = ["git", "clone"]
                         if git_tag:
@@ -963,7 +970,9 @@ def process_commands(
                             )
                             sys.exit(1)
                 elif git_tag:
-                    fetch_cmd_line = frame.fetchcontent_cmd.line if frame.fetchcontent_cmd else 0
+                    fetch_cmd_line = (
+                        frame.fetchcontent_cmd.line if frame.fetchcontent_cmd else 0
+                    )
                     try:
                         subprocess.run(
                             ["git", "-C", str(src_dir), "checkout", git_tag], check=True
@@ -1024,10 +1033,14 @@ def process_commands(
                             saved_current_list_file: Path = saved_current_list_file,
                             saved_parent_directory: str = saved_parent_directory,
                             saved_vars: dict[str, str] = saved_vars,
-                            saved_parent_scope_vars: dict[str, str | None] = saved_parent_scope_vars,
+                            saved_parent_scope_vars: dict[
+                                str, str | None
+                            ] = saved_parent_scope_vars,
                         ) -> None:
                             cache_updates = {
-                                k: v for k, v in ctx.variables.items() if k in ctx.cache_variables
+                                k: v
+                                for k, v in ctx.variables.items()
+                                if k in ctx.cache_variables
                             }
                             parent_scope_updates = ctx.parent_scope_vars
                             ctx.parent_scope_vars = saved_parent_scope_vars
@@ -1087,13 +1100,10 @@ def process_commands(
                 # Common CMake pattern:
                 #   option(FOO "help" ${SOME_DEFAULT})
                 # where SOME_DEFAULT can be undefined and should evaluate empty.
-                allow_undefined = (
-                    idx == 2
-                    and (
-                        (arg.startswith("${") and arg.endswith("}"))
-                        or (arg.startswith('"${') and arg.endswith('}"'))
-                        or (arg.startswith("'${") and arg.endswith("}'"))
-                    )
+                allow_undefined = idx == 2 and (
+                    (arg.startswith("${") and arg.endswith("}"))
+                    or (arg.startswith('"${') and arg.endswith('}"'))
+                    or (arg.startswith("'${") and arg.endswith("}'"))
                 )
             expanded = ctx.expand_variables(
                 arg,
@@ -1398,7 +1408,9 @@ def process_commands(
                             )
 
                         stack.append(
-                            Frame(commands=sub_commands, on_exit=on_exit_add_subdirectory)
+                            Frame(
+                                commands=sub_commands, on_exit=on_exit_add_subdirectory
+                            )
                         )
                     elif strict:
                         ctx.print_error(
@@ -1501,16 +1513,19 @@ def process_commands(
                         ctx.variables.setdefault("CMAKE_INSTALL_LOCALSTATEDIR", "var")
                         ctx.variables.setdefault("CMAKE_INSTALL_LIBDIR", "lib")
                         ctx.variables.setdefault("CMAKE_INSTALL_INCLUDEDIR", "include")
-                        ctx.variables.setdefault("CMAKE_INSTALL_OLDINCLUDEDIR", "/usr/include")
+                        ctx.variables.setdefault(
+                            "CMAKE_INSTALL_OLDINCLUDEDIR", "/usr/include"
+                        )
                         ctx.variables.setdefault("CMAKE_INSTALL_DATAROOTDIR", "share")
                         ctx.variables.setdefault("CMAKE_INSTALL_DATADIR", "share")
                         ctx.variables.setdefault("CMAKE_INSTALL_INFODIR", "share/info")
-                        ctx.variables.setdefault("CMAKE_INSTALL_LOCALEDIR", "share/locale")
+                        ctx.variables.setdefault(
+                            "CMAKE_INSTALL_LOCALEDIR", "share/locale"
+                        )
                         ctx.variables.setdefault("CMAKE_INSTALL_MANDIR", "share/man")
                         project_name = ctx.variables.get("PROJECT_NAME", "")
                         ctx.variables.setdefault(
-                            "CMAKE_INSTALL_DOCDIR",
-                            f"share/doc/{project_name}"
+                            "CMAKE_INSTALL_DOCDIR", f"share/doc/{project_name}"
                         )
 
                         install_prefix = to_posix_path(
@@ -1524,7 +1539,9 @@ def process_commands(
                             if Path(include_dir).is_absolute():
                                 full_include_dir = include_dir
                             else:
-                                full_include_dir = str(Path(install_prefix) / include_dir)
+                                full_include_dir = str(
+                                    Path(install_prefix) / include_dir
+                                )
                             ctx.variables["CMAKE_INSTALL_FULL_INCLUDEDIR"] = (
                                 to_posix_path(full_include_dir)
                             )
@@ -1538,7 +1555,11 @@ def process_commands(
                             ctx.variables["CMAKE_INSTALL_FULL_LIBDIR"] = to_posix_path(
                                 full_lib_dir
                             )
-                    elif module_name.endswith(".cmake") or "/" in module_name or "." in module_name:
+                    elif (
+                        module_name.endswith(".cmake")
+                        or "/" in module_name
+                        or "." in module_name
+                    ):
                         inc_file = Path(module_name)
                         if not inc_file.is_absolute():
                             inc_file = ctx.current_source_dir / inc_file
@@ -2306,20 +2327,34 @@ int main() {{
                 )
 
             case "add_test":
-                # Support: add_test(NAME <name> COMMAND <command> ...)
+                # Support: add_test(NAME <name> COMMAND <command> ...
+                #                   [WORKING_DIRECTORY <dir>])
                 # Or: add_test(<name> <command> ...)
                 if len(args) >= 2:
                     test_name = ""
                     test_command = []
+                    test_working_directory: str | None = None
                     if args[0] == "NAME":
-                        # NAME ... COMMAND ...
+                        # NAME ... COMMAND ... [WORKING_DIRECTORY ...]
                         test_name = ctx.expand_variables(args[1], strict, cmd.line)
                         if "COMMAND" in args:
                             cmd_idx = args.index("COMMAND")
+                            # Collect command args until next keyword
+                            cmd_args = []
+                            for a in args[cmd_idx + 1 :]:
+                                if a == "WORKING_DIRECTORY":
+                                    break
+                                cmd_args.append(a)
                             test_command = [
                                 ctx.expand_variables(a, strict, cmd.line)
-                                for a in args[cmd_idx + 1 :]
+                                for a in cmd_args
                             ]
+                        if "WORKING_DIRECTORY" in args:
+                            wd_idx = args.index("WORKING_DIRECTORY")
+                            if wd_idx + 1 < len(args):
+                                test_working_directory = ctx.expand_variables(
+                                    args[wd_idx + 1], strict, cmd.line
+                                )
                     else:
                         # <name> <command> ...
                         test_name = ctx.expand_variables(args[0], strict, cmd.line)
@@ -2328,7 +2363,13 @@ int main() {{
                         ]
 
                     if test_name and test_command:
-                        ctx.tests.append(Test(name=test_name, command=test_command))
+                        ctx.tests.append(
+                            Test(
+                                name=test_name,
+                                command=test_command,
+                                working_directory=test_working_directory,
+                            )
+                        )
 
             case "set_source_files_properties":
                 if "PROPERTIES" in args:
@@ -3027,14 +3068,13 @@ int main() {{
                         for module in modules:
                             # Split version constraint: "foo>=1.0" -> ("foo", ">= 1.0")
                             import re as _re
+
                             ver_match = _re.match(
                                 r"^([A-Za-z0-9_.+-]+)\s*(>=|<=|=)\s*(.+)$", module
                             )
                             if ver_match:
                                 mod_name = ver_match.group(1)
-                                exists_arg = (
-                                    f"{mod_name} {ver_match.group(2)} {ver_match.group(3)}"
-                                )
+                                exists_arg = f"{mod_name} {ver_match.group(2)} {ver_match.group(3)}"
                             else:
                                 mod_name = module
                                 exists_arg = module
@@ -3531,7 +3571,13 @@ def generate_ninja(
     # Detect extensions
     exe_ext = ".exe" if platform.system() == "Windows" else ""
     lib_ext = ".lib" if platform.system() == "Windows" else ".a"
-    shared_lib_ext = ".dll" if platform.system() == "Windows" else ".dylib" if platform.system() == "Darwin" else ".so"
+    shared_lib_ext = (
+        ".dll"
+        if platform.system() == "Windows"
+        else ".dylib"
+        if platform.system() == "Darwin"
+        else ".so"
+    )
     module_lib_ext = ".dll" if platform.system() == "Windows" else ".so"
 
     # Determine build type flags
@@ -4138,9 +4184,7 @@ def generate_ninja(
                         tidy_stamp,
                         "clang_tidy",
                         actual_source,
-                        variables=cast(
-                            dict[str, str | list[str] | None], tidy_vars
-                        ),
+                        variables=cast(dict[str, str | list[str] | None], tidy_vars),
                     )
 
                 n.build(
@@ -4374,9 +4418,7 @@ def generate_ninja(
                         tidy_stamp,
                         "clang_tidy",
                         actual_source,
-                        variables=cast(
-                            dict[str, str | list[str] | None], tidy_vars
-                        ),
+                        variables=cast(dict[str, str | list[str] | None], tidy_vars),
                     )
 
                 n.build(
@@ -4513,7 +4555,7 @@ def generate_ninja(
         if ctx.tests:
             n.rule(
                 "test_run",
-                command="cd $builddir && $cmd",
+                command="$cmd",
                 description="\x1b[1;34mRunning $name\x1b[0m",
                 pool="console",
             )
@@ -4521,27 +4563,66 @@ def generate_ninja(
 
             test_targets: list[str] = []
             for test in ctx.tests:
-                # Resolve target in command
+                # Resolve target in command: if COMMAND specifies an
+                # executable target created by add_executable(), it will
+                # automatically be replaced by the location of the executable
+                # created at build time.
                 cmd = list(test.command)
                 depends = []
+
+                # Check if WORKING_DIRECTORY is the build dir (the default)
+                is_builddir = not test.working_directory
+                if test.working_directory:
+                    try:
+                        build_dir = ctx.build_dir.resolve()
+                        wd_path = Path(test.working_directory).resolve()
+                        is_builddir = wd_path == build_dir
+                    except (OSError, RuntimeError, ValueError):
+                        pass
+
                 if cmd[0] in exe_outputs:
                     target_exe = exe_outputs[cmd[0]]
-                    if target_exe.startswith("$builddir/"):
+                    if is_builddir and target_exe.startswith("$builddir/"):
                         cmd[0] = "./" + target_exe[len("$builddir/") :]
                     else:
                         cmd[0] = target_exe
                     depends.append(target_exe)
 
+                cmd_str = " ".join(cmd)
+
+                # Determine cd prefix for the working directory
+                if is_builddir:
+                    cmd_str = f"cd $builddir && {cmd_str}"
+                elif test.working_directory:
+                    try:
+                        source_dir = ctx.source_dir.resolve()
+                        wd_path = Path(test.working_directory).resolve()
+                        if wd_path == source_dir:
+                            # Source dir itself: no cd needed
+                            pass
+                        elif wd_path.is_relative_to(source_dir):
+                            rel = wd_path.relative_to(source_dir)
+                            cmd_str = f"cd {rel} && {cmd_str}"
+                        else:
+                            cmd_str = (
+                                f"cd {test.working_directory} && {cmd_str}"
+                            )
+                    except (OSError, RuntimeError, ValueError):
+                        cmd_str = (
+                            f"cd {test.working_directory} && {cmd_str}"
+                        )
+
                 test_target = f"test_{test.name}"
                 register_output(test_target, None, 0)
+                variables: dict[str, str] = {
+                    "cmd": cmd_str,
+                    "name": test.name,
+                }
                 n.build(
                     test_target,
                     "test_run",
                     implicit=depends,
-                    variables={
-                        "cmd": " ".join(cmd),
-                        "name": test.name,
-                    },
+                    variables=variables,
                 )
                 test_targets.append(test_target)
 
@@ -4606,9 +4687,7 @@ def generate_ninja(
                     run_target = startup_proj
 
             if run_target in exe_outputs:
-                exe_path = exe_outputs[run_target].replace(
-                    "$builddir", builddir
-                )
+                exe_path = exe_outputs[run_target].replace("$builddir", builddir)
                 cja_json = {"run_executable": exe_path}
                 ctx.build_dir.mkdir(parents=True, exist_ok=True)
                 cja_json_path = ctx.build_dir / "cja.json"
