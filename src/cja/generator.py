@@ -1414,11 +1414,13 @@ def generate_ninja(
                             pass
                         elif wd_path.is_relative_to(source_dir):
                             rel = wd_path.relative_to(source_dir)
-                            cmd_str = f"cd {rel} && {cmd_str}"
+                            cmd_str = f"cd {to_posix_path(rel)} && {cmd_str}"
                         else:
-                            cmd_str = f"cd {test.working_directory} && {cmd_str}"
+                            cmd_str = f"cd {to_posix_path(test.working_directory)} && {cmd_str}"
                     except (OSError, RuntimeError, ValueError):
-                        cmd_str = f"cd {test.working_directory} && {cmd_str}"
+                        cmd_str = (
+                            f"cd {to_posix_path(test.working_directory)} && {cmd_str}"
+                        )
 
                 test_target = f"test_{test.name}"
                 register_output(test_target, None, 0)
