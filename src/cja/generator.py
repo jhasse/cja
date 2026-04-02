@@ -4614,7 +4614,7 @@ def generate_ninja(
 
                 test_target = f"test_{test.name}"
                 register_output(test_target, None, 0)
-                variables: dict[str, str] = {
+                test_variables: dict[str, str | list[str] | None] = {
                     "cmd": cmd_str,
                     "name": test.name,
                 }
@@ -4622,7 +4622,7 @@ def generate_ninja(
                     test_target,
                     "test_run",
                     implicit=depends,
-                    variables=variables,
+                    variables=test_variables,
                 )
                 test_targets.append(test_target)
 
