@@ -85,7 +85,7 @@ def test_find_package_no_module_skips_module_fallback(
     ctx.variables["CMAKE_MODULE_PATH"] = str(module_dir)
 
     monkeypatch.setattr(
-        "cja.generator.handle_builtin_find_package",
+        "cja.find_package.handle_builtin_find_package",
         lambda **_kwargs: False,
     )
 
@@ -120,7 +120,7 @@ def test_find_package_no_module_does_not_clear_required_in_module(
     ctx.variables["CMAKE_MODULE_PATH"] = str(module_dir)
 
     monkeypatch.setattr(
-        "cja.generator.handle_builtin_find_package",
+        "cja.find_package.handle_builtin_find_package",
         lambda **_kwargs: False,
     )
 
@@ -492,8 +492,12 @@ def test_find_package_boost_component_library_fallback(
     def fake_exists(self: Path) -> bool:
         if self.name == lib_file_name:
             return original_exists(tmp_path / self.name)
-        if (self.name.startswith(("boost_", "libboost_"))
-                and self.suffix in (".so", ".dylib", ".a", ".lib")):
+        if self.name.startswith(("boost_", "libboost_")) and self.suffix in (
+            ".so",
+            ".dylib",
+            ".a",
+            ".lib",
+        ):
             return False
         return original_exists(self)
 
