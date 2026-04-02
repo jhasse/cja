@@ -703,7 +703,7 @@ def generate_ninja(
 
             working_dir = custom_cmd.working_directory
             if working_dir:
-                cmd_str = f"cd {working_dir} && {cmd_str}"
+                cmd_str = f"cd {to_posix_path(working_dir)} && {cmd_str}"
 
             n.build(
                 outputs,
