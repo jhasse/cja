@@ -135,7 +135,9 @@ def is_constant_truthy(value: str) -> bool:
 
 
 def strip_generator_expressions(
-    value: str, variables: dict[str, str] | None = None
+    value: str,
+    variables: dict[str, str] | None = None,
+    target_file_dirs: dict[str, str] | None = None,
 ) -> str:
     """Strip or evaluate common CMake generator expressions."""
     variables = variables or {}
@@ -236,6 +238,11 @@ def strip_generator_expressions(
             ]
             current = variables.get("CMAKE_C_COMPILER_ID", "")
             return "1" if current and current in args else "0"
+        if content.startswith("TARGET_FILE_DIR:"):
+            target_name = expand_text(content[len("TARGET_FILE_DIR:"):])
+            if target_file_dirs and target_name in target_file_dirs:
+                return target_file_dirs[target_name]
+            return ""
         if content.startswith("TARGET_PROPERTY:"):
             # No property lookup support in generator expressions yet.
             return ""

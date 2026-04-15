@@ -639,6 +639,14 @@ def generate_ninja(
         object_lib_objects: dict[str, list[str]] = {}
         custom_command_outputs: set[str] = set()
 
+        # Pre-compute target file directories for $<TARGET_FILE_DIR:...> genex
+        target_file_dirs: dict[str, str] = {}
+        for exe in ctx.executables:
+            target_file_dirs[exe.name] = "$builddir"
+        for lib in ctx.libraries:
+            if not lib.is_alias:
+                target_file_dirs[lib.name] = "$builddir"
+
         # Generate custom command rule
         n.rule(
             "custom_command",
@@ -703,6 +711,9 @@ def generate_ninja(
 
             working_dir = custom_cmd.working_directory
             if working_dir:
+                working_dir = strip_generator_expressions(
+                    working_dir, ctx.variables, target_file_dirs
+                )
                 cmd_str = f"cd {to_posix_path(working_dir)} && {cmd_str}"
 
             n.build(
@@ -742,7 +753,10 @@ def generate_ninja(
 
                 ct_cmd_str = " && ".join(ct_cmd_parts)
                 if ct.working_directory:
-                    ct_cmd_str = f"cd {ct.working_directory} && {ct_cmd_str}"
+                    ct_wd = strip_generator_expressions(
+                        ct.working_directory, ctx.variables, target_file_dirs
+                    )
+                    ct_cmd_str = f"cd {ct_wd} && {ct_cmd_str}"
 
                 # Use a stamp file so ninja can track when the target last ran
                 stamp = f"$builddir/{ct.name}.stamp"
@@ -1373,6 +1387,15 @@ def generate_ninja(
             )
             n.newline()
 
+            # For tests, resolve TARGET_FILE_DIR to actual filesystem paths
+            # so the is_builddir comparison works correctly.
+            target_file_dirs_resolved: dict[str, str] = {}
+            for exe in ctx.executables:
+                target_file_dirs_resolved[exe.name] = str(ctx.build_dir)
+            for lib in ctx.libraries:
+                if not lib.is_alias:
+                    target_file_dirs_resolved[lib.name] = str(ctx.build_dir)
+
             test_targets: list[str] = []
             for test in ctx.tests:
                 # Resolve target in command: if COMMAND specifies an
@@ -1382,12 +1405,18 @@ def generate_ninja(
                 cmd = list(test.command)
                 depends = []
 
+                test_wd = test.working_directory
+                if test_wd:
+                    test_wd = strip_generator_expressions(
+                        test_wd, ctx.variables, target_file_dirs_resolved
+                    )
+
                 # Check if WORKING_DIRECTORY is the build dir (the default)
-                is_builddir = not test.working_directory
-                if test.working_directory:
+                is_builddir = not test_wd
+                if test_wd:
                     try:
                         build_dir = ctx.build_dir.resolve()
-                        wd_path = Path(test.working_directory).resolve()
+                        wd_path = Path(test_wd).resolve()
                         is_builddir = wd_path == build_dir
                     except (OSError, RuntimeError, ValueError):
                         pass
@@ -1405,10 +1434,10 @@ def generate_ninja(
                 # Determine cd prefix for the working directory
                 if is_builddir:
                     cmd_str = f"cd $builddir && {cmd_str}"
-                elif test.working_directory:
+                elif test_wd:
                     try:
                         source_dir = ctx.source_dir.resolve()
-                        wd_path = Path(test.working_directory).resolve()
+                        wd_path = Path(test_wd).resolve()
                         if wd_path == source_dir:
                             # Source dir itself: no cd needed
                             pass
@@ -1416,11 +1445,9 @@ def generate_ninja(
                             rel = wd_path.relative_to(source_dir)
                             cmd_str = f"cd {to_posix_path(rel)} && {cmd_str}"
                         else:
-                            cmd_str = f"cd {to_posix_path(test.working_directory)} && {cmd_str}"
+                            cmd_str = f"cd {to_posix_path(test_wd)} && {cmd_str}"
                     except (OSError, RuntimeError, ValueError):
-                        cmd_str = (
-                            f"cd {to_posix_path(test.working_directory)} && {cmd_str}"
-                        )
+                        cmd_str = f"cd {to_posix_path(test_wd)} && {cmd_str}"
 
                 test_target = f"test_{test.name}"
                 register_output(test_target, None, 0)

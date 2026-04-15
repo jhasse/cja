@@ -246,3 +246,31 @@ add_custom_target(gen_target DEPENDS generated.txt)
 
     # The custom target should depend on the custom command output with $builddir prefix
     assert "build gen_target: phony $builddir/generated.txt" in ninja_content
+
+
+def test_add_custom_target_target_file_dir_working_directory(tmp_path: Path) -> None:
+    """Test that $<TARGET_FILE_DIR:target> is resolved in WORKING_DIRECTORY."""
+    from cja.generator import configure
+
+    source_dir = tmp_path
+    cmake_content = """\
+cmake_minimum_required(VERSION 3.10)
+project(TargetFileDirTest)
+
+add_executable(myapp main.c)
+
+add_custom_target(
+    run_in_output_dir
+    COMMAND echo hello
+    WORKING_DIRECTORY $<TARGET_FILE_DIR:myapp>
+)
+"""
+    (source_dir / "CMakeLists.txt").write_text(cmake_content)
+    (source_dir / "main.c").write_text("int main() { return 0; }\n")
+
+    configure(source_dir, "build")
+
+    ninja_file = source_dir / "build.ninja"
+    ninja_content = ninja_file.read_text()
+
+    assert "cd $builddir && echo hello" in ninja_content
