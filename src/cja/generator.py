@@ -639,13 +639,25 @@ def generate_ninja(
         object_lib_objects: dict[str, list[str]] = {}
         custom_command_outputs: set[str] = set()
 
+        def _output_prefix(binary_dir: str) -> str:
+            """Compute the Ninja output prefix for a target's binary directory."""
+            if not binary_dir:
+                return "$builddir"
+            try:
+                rel = Path(binary_dir).relative_to(ctx.build_dir)
+            except ValueError:
+                return "$builddir"
+            if str(rel) == ".":
+                return "$builddir"
+            return f"$builddir/{to_posix_path(str(rel))}"
+
         # Pre-compute target file directories for $<TARGET_FILE_DIR:...> genex
         target_file_dirs: dict[str, str] = {}
         for exe in ctx.executables:
-            target_file_dirs[exe.name] = "$builddir"
+            target_file_dirs[exe.name] = _output_prefix(exe.binary_dir)
         for lib in ctx.libraries:
             if not lib.is_alias:
-                target_file_dirs[lib.name] = "$builddir"
+                target_file_dirs[lib.name] = _output_prefix(lib.binary_dir)
 
         # Generate custom command rule
         n.rule(
@@ -1028,17 +1040,19 @@ def generate_ninja(
                 n.newline()
             elif lib.lib_type == "STATIC":
                 # Create static library archive
-                lib_name = f"$builddir/lib{lib.name}{lib_ext}"
+                prefix = _output_prefix(lib.binary_dir)
+                lib_name = f"{prefix}/lib{lib.name}{lib_ext}"
                 register_output(lib_name, lib.defined_file, lib.defined_line)
                 n.build(lib_name, "ar", objects)
                 n.newline()
                 lib_outputs[lib.name] = lib_name
             elif lib.lib_type in ("SHARED", "MODULE"):
                 # Create shared/module library output so aliases can resolve to real artifacts.
+                prefix = _output_prefix(lib.binary_dir)
                 if lib.lib_type == "SHARED":
-                    lib_name = f"$builddir/lib{lib.name}{shared_lib_ext}"
+                    lib_name = f"{prefix}/lib{lib.name}{shared_lib_ext}"
                 else:
-                    lib_name = f"$builddir/lib{lib.name}{module_lib_ext}"
+                    lib_name = f"{prefix}/lib{lib.name}{module_lib_ext}"
 
                 register_output(lib_name, lib.defined_file, lib.defined_line)
                 link_rule = "solink_cxx" if uses_cxx else "solink"
@@ -1360,7 +1374,8 @@ def generate_ninja(
                     link_inputs.append(res_name)
 
             # Link
-            exe_name = f"$builddir/{exe.name}{exe_ext}"
+            prefix = _output_prefix(exe.binary_dir)
+            exe_name = f"{prefix}/{exe.name}{exe_ext}"
             register_output(exe_name, exe.defined_file, exe.defined_line)
             link_rule = "link_cxx" if uses_cxx else "link"
             variables: dict[str, str | list[str] | None] = {}
@@ -1391,10 +1406,14 @@ def generate_ninja(
             # so the is_builddir comparison works correctly.
             target_file_dirs_resolved: dict[str, str] = {}
             for exe in ctx.executables:
-                target_file_dirs_resolved[exe.name] = str(ctx.build_dir)
+                target_file_dirs_resolved[exe.name] = (
+                    exe.binary_dir if exe.binary_dir else str(ctx.build_dir)
+                )
             for lib in ctx.libraries:
                 if not lib.is_alias:
-                    target_file_dirs_resolved[lib.name] = str(ctx.build_dir)
+                    target_file_dirs_resolved[lib.name] = (
+                        lib.binary_dir if lib.binary_dir else str(ctx.build_dir)
+                    )
 
             test_targets: list[str] = []
             for test in ctx.tests:

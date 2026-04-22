@@ -157,6 +157,83 @@ def test_project_source_dir_is_global_across_subdirectory(tmp_path: Path) -> Non
     assert ctx.variables["gtest_SOURCE_DIR"] == str(sub_dir.resolve())
 
 
+def test_add_subdirectory_library_output_in_subdir(tmp_path: Path) -> None:
+    """Libraries defined in add_subdirectory should output to matching subdir."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    sub_dir = source_dir / "subprojects" / "mylib"
+    sub_dir.mkdir(parents=True)
+
+    (source_dir / "CMakeLists.txt").write_text(
+        "add_subdirectory(subprojects/mylib)\nadd_executable(app main.c)\n"
+    )
+    (sub_dir / "CMakeLists.txt").write_text("add_library(mylib STATIC lib.c)\n")
+    (source_dir / "main.c").write_text("int main() { return 0; }\n")
+    (sub_dir / "lib.c").write_text("void f() {}\n")
+
+    from cja.generator import configure
+
+    configure(source_dir, "build")
+    ninja = (source_dir / "build.ninja").read_text()
+
+    assert (
+        "build $builddir/subprojects/mylib/libmylib.a: ar" in ninja
+    ), "library should be placed in subdirectory matching source tree"
+    assert (
+        "build $builddir/app: link" in ninja
+    ), "top-level executable should stay in $builddir"
+
+
+def test_add_subdirectory_nested_binary_dir(tmp_path: Path) -> None:
+    """Libraries in nested subdirectories get correct binary_dir paths."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    sub_dir = source_dir / "sub"
+    sub_dir.mkdir()
+    inner_dir = sub_dir / "inner"
+    inner_dir.mkdir()
+
+    (source_dir / "CMakeLists.txt").write_text("add_subdirectory(sub)\n")
+    (sub_dir / "CMakeLists.txt").write_text(
+        "add_library(sublib STATIC sub.c)\nadd_subdirectory(inner)\n"
+    )
+    (sub_dir / "sub.c").write_text("void f() {}\n")
+    (inner_dir / "CMakeLists.txt").write_text(
+        "add_library(innerlib STATIC inner.c)\n"
+    )
+    (inner_dir / "inner.c").write_text("void g() {}\n")
+
+    from cja.generator import configure
+
+    build_dir = tmp_path / "build"
+    configure(source_dir, "build")
+    ninja = (source_dir / "build.ninja").read_text()
+
+    assert "build $builddir/sub/libsublib.a: ar" in ninja
+    assert "build $builddir/sub/inner/libinnerlib.a: ar" in ninja
+
+
+def test_add_subdirectory_exe_output_in_subdir(tmp_path: Path) -> None:
+    """Executables defined in add_subdirectory should output to matching subdir."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    sub_dir = source_dir / "test"
+    sub_dir.mkdir()
+
+    (source_dir / "CMakeLists.txt").write_text("add_subdirectory(test)\n")
+    (sub_dir / "CMakeLists.txt").write_text("add_executable(test_app main.c)\n")
+    (sub_dir / "main.c").write_text("int main() { return 0; }\n")
+
+    from cja.generator import configure
+
+    configure(source_dir, "build")
+    ninja = (source_dir / "build.ninja").read_text()
+
+    assert (
+        "build $builddir/test/test_app: link" in ninja
+    ), "executable from subdirectory should be placed in matching subdir"
+
+
 def test_subdirectory_compile_options_do_not_leak_to_parent(tmp_path: Path) -> None:
     """add_compile_options in subdirectory should not affect parent targets."""
     source_dir = tmp_path / "src"

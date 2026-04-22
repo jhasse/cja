@@ -385,9 +385,17 @@ def process_commands(
                         saved_current_source_dir = ctx.current_source_dir
                         saved_current_list_file = ctx.current_list_file
                         saved_parent_directory = ctx.parent_directory
+                        saved_binary_dir = ctx.variables.get(
+                            "CMAKE_CURRENT_BINARY_DIR", str(ctx.build_dir)
+                        )
                         saved_vars = ctx.variables.copy()
                         saved_parent_scope_vars = ctx.parent_scope_vars
                         ctx.parent_scope_vars = {}
+
+                        fc_binary_dir = (
+                            ctx.build_dir / "_deps" / f"{name.lower()}-build"
+                        )
+                        fc_binary_dir.mkdir(parents=True, exist_ok=True)
 
                         ctx.current_source_dir = actual_src_dir
                         ctx.current_list_file = sub_cmakelists
@@ -397,12 +405,13 @@ def process_commands(
                         ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
                             sub_cmakelists.parent
                         )
-                        ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(ctx.build_dir)
+                        ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(fc_binary_dir)
 
                         def on_exit_fetchcontent(
                             saved_current_source_dir: Path = saved_current_source_dir,
                             saved_current_list_file: Path = saved_current_list_file,
                             saved_parent_directory: str = saved_parent_directory,
+                            saved_binary_dir: str = saved_binary_dir,
                             saved_vars: dict[str, str] = saved_vars,
                             saved_parent_scope_vars: dict[
                                 str, str | None
@@ -434,9 +443,7 @@ def process_commands(
                             ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
                                 saved_current_list_file.parent
                             )
-                            ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(
-                                ctx.build_dir
-                            )
+                            ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = saved_binary_dir
 
                         stack.append(
                             Frame(commands=sub_commands, on_exit=on_exit_fetchcontent)
@@ -653,12 +660,15 @@ def process_commands(
                     ctx.variables["CMAKE_CXX_FLAGS_MINSIZEREL"] = ""
                     ctx.variables["CMAKE_EXE_LINKER_FLAGS"] = ""
                     ctx.variables["CMAKE_LINKER_FLAGS"] = ""
+                    current_binary_dir = ctx.variables.get(
+                        "CMAKE_CURRENT_BINARY_DIR", str(ctx.build_dir)
+                    )
                     ctx.variables["PROJECT_SOURCE_DIR"] = str(ctx.current_source_dir)
-                    ctx.variables["PROJECT_BINARY_DIR"] = str(ctx.build_dir)
+                    ctx.variables["PROJECT_BINARY_DIR"] = current_binary_dir
                     source_var = f"{project_name}_SOURCE_DIR"
                     binary_var = f"{project_name}_BINARY_DIR"
                     ctx.variables[source_var] = str(ctx.current_source_dir)
-                    ctx.variables[binary_var] = str(ctx.build_dir)
+                    ctx.variables[binary_var] = current_binary_dir
                     # Keep project source/binary dirs globally visible across scopes
                     # (e.g. when project() is called in add_subdirectory()).
                     ctx.cache_variables.add(source_var)
@@ -725,9 +735,15 @@ def process_commands(
                         saved_current_source_dir = ctx.current_source_dir
                         saved_current_list_file = ctx.current_list_file
                         saved_parent_directory = ctx.parent_directory
+                        saved_binary_dir = ctx.variables.get(
+                            "CMAKE_CURRENT_BINARY_DIR", str(ctx.build_dir)
+                        )
                         saved_vars = ctx.variables.copy()
                         saved_parent_scope_vars = ctx.parent_scope_vars
                         ctx.parent_scope_vars = {}
+
+                        sub_binary_dir = Path(saved_binary_dir) / sub_dir_name
+                        sub_binary_dir.mkdir(parents=True, exist_ok=True)
 
                         ctx.current_source_dir = sub_source_dir
                         ctx.current_list_file = sub_cmakelists
@@ -737,12 +753,13 @@ def process_commands(
                         ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
                             sub_cmakelists.parent
                         )
-                        ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(ctx.build_dir)
+                        ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(sub_binary_dir)
 
                         def on_exit_add_subdirectory(
                             saved_current_source_dir: Path = saved_current_source_dir,
                             saved_current_list_file: Path = saved_current_list_file,
                             saved_parent_directory: str = saved_parent_directory,
+                            saved_binary_dir: str = saved_binary_dir,
                             saved_vars: dict[str, str] = saved_vars,
                             saved_parent_scope_vars: dict[
                                 str, str | None
@@ -774,9 +791,7 @@ def process_commands(
                             ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
                                 saved_current_list_file.parent
                             )
-                            ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(
-                                ctx.build_dir
-                            )
+                            ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = saved_binary_dir
 
                         stack.append(
                             Frame(
@@ -2750,6 +2765,9 @@ int main() {{
                     saved_current_source_dir = ctx.current_source_dir
                     saved_current_list_file = ctx.current_list_file
                     saved_parent_directory = ctx.parent_directory
+                    saved_binary_dir = ctx.variables.get(
+                        "CMAKE_CURRENT_BINARY_DIR", str(ctx.build_dir)
+                    )
 
                     # Set up function arguments
                     ctx.variables["ARGC"] = str(len(args))
@@ -2783,6 +2801,7 @@ int main() {{
                         saved_current_source_dir: Path = saved_current_source_dir,
                         saved_current_list_file: Path = saved_current_list_file,
                         saved_parent_directory: str = saved_parent_directory,
+                        saved_binary_dir: str = saved_binary_dir,
                         saved_parent_scope_vars: dict[
                             str, str | None
                         ] = saved_parent_scope_vars,
@@ -2812,7 +2831,7 @@ int main() {{
                         ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
                             saved_current_list_file.parent
                         )
-                        ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(ctx.build_dir)
+                        ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = saved_binary_dir
 
                     frame.pc += 1
                     stack.append(
@@ -2830,6 +2849,9 @@ int main() {{
                     saved_current_source_dir = ctx.current_source_dir
                     saved_current_list_file = ctx.current_list_file
                     saved_parent_directory = ctx.parent_directory
+                    saved_binary_dir = ctx.variables.get(
+                        "CMAKE_CURRENT_BINARY_DIR", str(ctx.build_dir)
+                    )
                     saved_argc = ctx.variables.get("ARGC", "")
                     saved_argv = ctx.variables.get("ARGV", "")
                     saved_argn = ctx.variables.get("ARGN", "")
@@ -2871,6 +2893,7 @@ int main() {{
                         saved_current_source_dir: Path = saved_current_source_dir,
                         saved_current_list_file: Path = saved_current_list_file,
                         saved_parent_directory: str = saved_parent_directory,
+                        saved_binary_dir: str = saved_binary_dir,
                         saved_argc: str = saved_argc,
                         saved_argv: str = saved_argv,
                         saved_argn: str = saved_argn,
@@ -2917,7 +2940,7 @@ int main() {{
                         ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
                             saved_current_list_file.parent
                         )
-                        ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(ctx.build_dir)
+                        ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = saved_binary_dir
 
                     frame.pc += 1
                     stack.append(Frame(commands=macro_def.body, on_exit=on_exit))

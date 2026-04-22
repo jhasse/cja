@@ -1044,6 +1044,7 @@ def handle_add_library(
                         alias_for=target_name,
                         defined_file=ctx.current_list_file,
                         defined_line=cmd.line,
+                        binary_dir=lib.binary_dir,
                     )
                 )
             return
@@ -1092,6 +1093,9 @@ def handle_add_library(
                 compile_features=default_features,
                 defined_file=ctx.current_list_file,
                 defined_line=cmd.line,
+                binary_dir=ctx.variables.get(
+                    "CMAKE_CURRENT_BINARY_DIR", str(ctx.build_dir)
+                ),
             )
         )
 
@@ -1121,6 +1125,9 @@ def handle_add_executable(
                 compile_features=default_features,
                 defined_file=ctx.current_list_file,
                 defined_line=cmd.line,
+                binary_dir=ctx.variables.get(
+                    "CMAKE_CURRENT_BINARY_DIR", str(ctx.build_dir)
+                ),
             )
         )
 

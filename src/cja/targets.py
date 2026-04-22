@@ -11,6 +11,7 @@ class Library:
     lib_type: str = "STATIC"  # STATIC, SHARED, OBJECT, MODULE, or INTERFACE
     defined_file: Path | None = None
     defined_line: int = 0
+    binary_dir: str = ""
     compile_features: list[str] = field(default_factory=list)  # PRIVATE features
     public_compile_features: list[str] = field(default_factory=list)  # PUBLIC features
     include_directories: list[str] = field(default_factory=list)  # PRIVATE includes
@@ -44,6 +45,7 @@ class Executable:
     sources: list[str]
     defined_file: Path | None = None
     defined_line: int = 0
+    binary_dir: str = ""
     link_libraries: list[str] = field(default_factory=list)
     compile_features: list[str] = field(default_factory=list)
     include_directories: list[str] = field(default_factory=list)
