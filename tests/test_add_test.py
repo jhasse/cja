@@ -178,6 +178,6 @@ def test_add_test_target_file_in_command(tmp_path: Path) -> None:
     ninja_content = ninja_path.read_text()
 
     assert "TARGET_FILE" not in ninja_content
-    expected_path = str(tmp_path / "build" / f"myapp{EXE_EXT}")
-    assert expected_path in ninja_content
+    expected_path = (tmp_path / "build" / f"myapp{EXE_EXT}").as_posix()
+    assert expected_path in ninja_content.replace("\\", "/")
     assert "--arg" in ninja_content

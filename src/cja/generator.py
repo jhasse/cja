@@ -1432,7 +1432,7 @@ def generate_ninja(
             for exe in ctx.executables:
                 bd = exe.binary_dir if exe.binary_dir else str(ctx.build_dir)
                 target_file_dirs_resolved[exe.name] = bd
-                target_files_resolved[exe.name] = (
+                target_files_resolved[exe.name] = to_posix_path(
                     f"{bd}/{exe.name}{exe_ext}"
                 )
             for lib in ctx.libraries:
@@ -1440,15 +1440,15 @@ def generate_ninja(
                     bd = lib.binary_dir if lib.binary_dir else str(ctx.build_dir)
                     target_file_dirs_resolved[lib.name] = bd
                     if lib.lib_type == "SHARED":
-                        target_files_resolved[lib.name] = (
+                        target_files_resolved[lib.name] = to_posix_path(
                             f"{bd}/lib{lib.name}{shared_lib_ext}"
                         )
                     elif lib.lib_type == "MODULE":
-                        target_files_resolved[lib.name] = (
+                        target_files_resolved[lib.name] = to_posix_path(
                             f"{bd}/lib{lib.name}{module_lib_ext}"
                         )
                     elif lib.lib_type not in ("OBJECT", "INTERFACE"):
-                        target_files_resolved[lib.name] = (
+                        target_files_resolved[lib.name] = to_posix_path(
                             f"{bd}/lib{lib.name}{lib_ext}"
                         )
 
