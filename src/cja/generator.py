@@ -659,6 +659,22 @@ def generate_ninja(
             if not lib.is_alias:
                 target_file_dirs[lib.name] = _output_prefix(lib.binary_dir)
 
+        # Pre-compute target file paths for $<TARGET_FILE:...> genex
+        target_files: dict[str, str] = {}
+        for exe in ctx.executables:
+            prefix = _output_prefix(exe.binary_dir)
+            target_files[exe.name] = f"{prefix}/{exe.name}{exe_ext}"
+        for lib in ctx.libraries:
+            if lib.is_alias or lib.lib_type in ("OBJECT", "INTERFACE"):
+                continue
+            prefix = _output_prefix(lib.binary_dir)
+            if lib.lib_type == "SHARED":
+                target_files[lib.name] = f"{prefix}/lib{lib.name}{shared_lib_ext}"
+            elif lib.lib_type == "MODULE":
+                target_files[lib.name] = f"{prefix}/lib{lib.name}{module_lib_ext}"
+            else:
+                target_files[lib.name] = f"{prefix}/lib{lib.name}{lib_ext}"
+
         # Generate custom command rule
         n.rule(
             "custom_command",
@@ -679,6 +695,11 @@ def generate_ninja(
             ";",
         )
 
+        def _expand_genex(arg: str) -> str:
+            return strip_generator_expressions(
+                arg, ctx.variables, target_file_dirs, target_files
+            )
+
         # Generate custom commands
         for custom_cmd in ctx.custom_commands:
             outputs = []
@@ -696,13 +717,16 @@ def generate_ninja(
                 if custom_cmd.verbatim:
                     parts = []
                     for arg in command:
-                        if arg in shell_operators:
-                            parts.append(str(arg))
+                        expanded = _expand_genex(arg)
+                        if expanded in shell_operators:
+                            parts.append(str(expanded))
                         else:
-                            parts.append(shlex.quote(str(arg)))
+                            parts.append(shlex.quote(str(expanded)))
                     cmd_parts.append(" ".join(parts))
                 else:
-                    cmd_parts.append(" ".join(str(c) for c in command))
+                    cmd_parts.append(
+                        " ".join(str(_expand_genex(c)) for c in command)
+                    )
 
             cmd_str = " && ".join(cmd_parts)
 
@@ -723,9 +747,7 @@ def generate_ninja(
 
             working_dir = custom_cmd.working_directory
             if working_dir:
-                working_dir = strip_generator_expressions(
-                    working_dir, ctx.variables, target_file_dirs
-                )
+                working_dir = _expand_genex(working_dir)
                 cmd_str = f"cd {to_posix_path(working_dir)} && {cmd_str}"
 
             n.build(
@@ -755,19 +777,20 @@ def generate_ninja(
                     if ct.verbatim:
                         parts = []
                         for arg in command:
-                            if arg in shell_operators:
-                                parts.append(str(arg))
+                            expanded = _expand_genex(arg)
+                            if expanded in shell_operators:
+                                parts.append(str(expanded))
                             else:
-                                parts.append(shlex.quote(str(arg)))
+                                parts.append(shlex.quote(str(expanded)))
                         ct_cmd_parts.append(" ".join(parts))
                     else:
-                        ct_cmd_parts.append(" ".join(str(c) for c in command))
+                        ct_cmd_parts.append(
+                            " ".join(str(_expand_genex(c)) for c in command)
+                        )
 
                 ct_cmd_str = " && ".join(ct_cmd_parts)
                 if ct.working_directory:
-                    ct_wd = strip_generator_expressions(
-                        ct.working_directory, ctx.variables, target_file_dirs
-                    )
+                    ct_wd = _expand_genex(ct.working_directory)
                     ct_cmd_str = f"cd {ct_wd} && {ct_cmd_str}"
 
                 # Use a stamp file so ninja can track when the target last ran
@@ -1402,18 +1425,40 @@ def generate_ninja(
             )
             n.newline()
 
-            # For tests, resolve TARGET_FILE_DIR to actual filesystem paths
-            # so the is_builddir comparison works correctly.
+            # For tests, resolve TARGET_FILE_DIR and TARGET_FILE to actual
+            # filesystem paths so the is_builddir comparison works correctly.
             target_file_dirs_resolved: dict[str, str] = {}
+            target_files_resolved: dict[str, str] = {}
             for exe in ctx.executables:
-                target_file_dirs_resolved[exe.name] = (
-                    exe.binary_dir if exe.binary_dir else str(ctx.build_dir)
+                bd = exe.binary_dir if exe.binary_dir else str(ctx.build_dir)
+                target_file_dirs_resolved[exe.name] = bd
+                target_files_resolved[exe.name] = (
+                    f"{bd}/{exe.name}{exe_ext}"
                 )
             for lib in ctx.libraries:
                 if not lib.is_alias:
-                    target_file_dirs_resolved[lib.name] = (
-                        lib.binary_dir if lib.binary_dir else str(ctx.build_dir)
-                    )
+                    bd = lib.binary_dir if lib.binary_dir else str(ctx.build_dir)
+                    target_file_dirs_resolved[lib.name] = bd
+                    if lib.lib_type == "SHARED":
+                        target_files_resolved[lib.name] = (
+                            f"{bd}/lib{lib.name}{shared_lib_ext}"
+                        )
+                    elif lib.lib_type == "MODULE":
+                        target_files_resolved[lib.name] = (
+                            f"{bd}/lib{lib.name}{module_lib_ext}"
+                        )
+                    elif lib.lib_type not in ("OBJECT", "INTERFACE"):
+                        target_files_resolved[lib.name] = (
+                            f"{bd}/lib{lib.name}{lib_ext}"
+                        )
+
+            def _expand_genex_for_test(arg: str) -> str:
+                return strip_generator_expressions(
+                    arg,
+                    ctx.variables,
+                    target_file_dirs_resolved,
+                    target_files_resolved,
+                )
 
             test_targets: list[str] = []
             for test in ctx.tests:
@@ -1421,14 +1466,12 @@ def generate_ninja(
                 # executable target created by add_executable(), it will
                 # automatically be replaced by the location of the executable
                 # created at build time.
-                cmd = list(test.command)
+                cmd = [_expand_genex_for_test(a) for a in test.command]
                 depends = []
 
                 test_wd = test.working_directory
                 if test_wd:
-                    test_wd = strip_generator_expressions(
-                        test_wd, ctx.variables, target_file_dirs_resolved
-                    )
+                    test_wd = _expand_genex_for_test(test_wd)
 
                 # Check if WORKING_DIRECTORY is the build dir (the default)
                 is_builddir = not test_wd

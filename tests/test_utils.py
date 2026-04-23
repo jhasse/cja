@@ -57,6 +57,24 @@ def test_strip_generator_expressions_compiler_version_condition() -> None:
     assert strip_generator_expressions(value, variables) == "stdc++fs"
 
 
+def test_strip_generator_expressions_target_file() -> None:
+    """$<TARGET_FILE:name> should resolve to the target's output file path."""
+    target_files = {"myapp": "$builddir/myapp", "mylib": "$builddir/libmylib.a"}
+    assert (
+        strip_generator_expressions(
+            "$<TARGET_FILE:myapp>", target_files=target_files
+        )
+        == "$builddir/myapp"
+    )
+    assert (
+        strip_generator_expressions(
+            "$<TARGET_FILE:mylib>", target_files=target_files
+        )
+        == "$builddir/libmylib.a"
+    )
+    assert strip_generator_expressions("$<TARGET_FILE:unknown>") == ""
+
+
 def test_strip_generator_expressions_multiline_content() -> None:
     """Newlines inside genex results should be normalized to spaces."""
     value = (

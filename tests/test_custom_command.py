@@ -276,3 +276,32 @@ add_custom_command(
     ninja_content = ninja_file.read_text()
 
     assert "cd $builddir && echo" in ninja_content
+
+
+def test_add_custom_command_target_file_in_command(tmp_path: Path) -> None:
+    """Test that $<TARGET_FILE:target> is resolved in COMMAND arguments."""
+    from cja.generator import configure
+
+    source_dir = tmp_path
+    cmake_content = """\
+cmake_minimum_required(VERSION 3.10)
+project(TargetFileTest)
+
+add_executable(myapp main.c)
+
+add_custom_command(
+    OUTPUT out.txt
+    COMMAND $<TARGET_FILE:myapp> --generate out.txt
+    VERBATIM
+)
+"""
+    (source_dir / "CMakeLists.txt").write_text(cmake_content)
+    (source_dir / "main.c").write_text("int main() { return 0; }\n")
+
+    configure(source_dir, "build")
+
+    ninja_file = source_dir / "build.ninja"
+    ninja_content = ninja_file.read_text()
+
+    assert "$builddir/myapp" in ninja_content
+    assert "TARGET_FILE" not in ninja_content

@@ -150,3 +150,34 @@ def test_add_test_working_directory_subdir(tmp_path: Path) -> None:
     ninja_content = ninja_path.read_text()
     # Should cd to relative path
     assert "cd sub/dir && echo hello" in ninja_content
+
+
+def test_add_test_target_file_in_command(tmp_path: Path) -> None:
+    """Test that $<TARGET_FILE:target> is resolved in test COMMAND."""
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+
+    commands = [
+        Command(name="add_executable", args=["myapp", "main.cpp"], line=1),
+        Command(
+            name="add_test",
+            args=[
+                "NAME",
+                "mytest",
+                "COMMAND",
+                "$<TARGET_FILE:myapp>",
+                "--arg",
+            ],
+            line=2,
+        ),
+    ]
+    process_commands(commands, ctx)
+
+    ninja_path = tmp_path / "build.ninja"
+    generate_ninja(ctx, ninja_path, "build")
+
+    ninja_content = ninja_path.read_text()
+
+    assert "TARGET_FILE" not in ninja_content
+    expected_path = str(tmp_path / "build" / f"myapp{EXE_EXT}")
+    assert expected_path in ninja_content
+    assert "--arg" in ninja_content
