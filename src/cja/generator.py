@@ -675,6 +675,27 @@ def generate_ninja(
             else:
                 target_files[lib.name] = f"{prefix}/lib{lib.name}{lib_ext}"
 
+        def _resolve_target_dep(name: str) -> str | None:
+            """Resolve a target name to a ninja node for use as an order-only dep."""
+            if name in target_files:
+                return target_files[name]
+            lib = ctx.get_library(name)
+            if lib is not None and lib.name in target_files:
+                return target_files[lib.name]
+            for ct in ctx.custom_targets:
+                if ct.name == name:
+                    return ct.name
+            return None
+
+        def _target_order_only(dep_names: list[str]) -> list[str]:
+            """Resolve a list of target-name dependencies to ninja nodes."""
+            nodes: list[str] = []
+            for name in dep_names:
+                node = _resolve_target_dep(name)
+                if node is not None and node not in nodes:
+                    nodes.append(node)
+            return nodes
+
         # Generate custom command rule
         n.rule(
             "custom_command",
@@ -770,6 +791,8 @@ def generate_ninja(
                 for d in ct.depends
             ]
 
+            ct_dep_order_only = _target_order_only(ct.dependencies)
+
             if ct.commands:
                 # Custom target with commands: use custom_command rule
                 ct_cmd_parts: list[str] = []
@@ -799,12 +822,17 @@ def generate_ninja(
                     [stamp],
                     "custom_command",
                     ct_depends,
+                    order_only=ct_dep_order_only or None,
                     variables={"cmd": f"{ct_cmd_str} && touch {stamp}"},
                 )
                 n.build([ct.name], "phony", [stamp])
             else:
                 # No commands: purely a phony dependency aggregator
-                n.build([ct.name], "phony", ct_depends)
+                combined = list(ct_depends)
+                for dep in ct_dep_order_only:
+                    if dep not in combined:
+                        combined.append(dep)
+                n.build([ct.name], "phony", combined)
 
             if ct.all:
                 custom_target_all.append(ct.name)
@@ -952,6 +980,8 @@ def generate_ninja(
             cxx_clang_tidy = lib.properties.get("CXX_CLANG_TIDY")
             c_clang_tidy = lib.properties.get("C_CLANG_TIDY")
 
+            lib_dep_order_only = _target_order_only(lib.dependencies)
+
             for source in compileable_sources:
                 actual_source = source
                 if source in custom_command_outputs:
@@ -1053,6 +1083,7 @@ def generate_ninja(
                     rule,
                     actual_source,
                     implicit=source_depends,
+                    order_only=lib_dep_order_only or None,
                     variables=source_vars,
                     validation=tidy_stamp,
                 )
@@ -1066,7 +1097,12 @@ def generate_ninja(
                 prefix = _output_prefix(lib.binary_dir)
                 lib_name = f"{prefix}/lib{lib.name}{lib_ext}"
                 register_output(lib_name, lib.defined_file, lib.defined_line)
-                n.build(lib_name, "ar", objects)
+                n.build(
+                    lib_name,
+                    "ar",
+                    objects,
+                    order_only=lib_dep_order_only or None,
+                )
                 n.newline()
                 lib_outputs[lib.name] = lib_name
             elif lib.lib_type in ("SHARED", "MODULE"):
@@ -1079,7 +1115,12 @@ def generate_ninja(
 
                 register_output(lib_name, lib.defined_file, lib.defined_line)
                 link_rule = "solink_cxx" if uses_cxx else "solink"
-                n.build(lib_name, link_rule, objects)
+                n.build(
+                    lib_name,
+                    link_rule,
+                    objects,
+                    order_only=lib_dep_order_only or None,
+                )
                 n.newline()
                 lib_outputs[lib.name] = lib_name
 
@@ -1188,6 +1229,8 @@ def generate_ninja(
             cxx_clang_tidy = exe.properties.get("CXX_CLANG_TIDY")
             c_clang_tidy = exe.properties.get("C_CLANG_TIDY")
 
+            exe_dep_order_only = _target_order_only(exe.dependencies)
+
             for source in compileable_sources:
                 actual_source = source
                 if source in custom_command_outputs:
@@ -1289,6 +1332,7 @@ def generate_ninja(
                     rule,
                     actual_source,
                     implicit=source_depends,
+                    order_only=exe_dep_order_only or None,
                     variables=source_vars,
                     validation=tidy_stamp,
                 )
@@ -1408,6 +1452,7 @@ def generate_ninja(
                 exe_name,
                 link_rule,
                 link_inputs,
+                order_only=exe_dep_order_only or None,
                 variables=variables if variables else None,
             )
             n.newline()

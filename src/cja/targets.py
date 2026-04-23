@@ -35,6 +35,7 @@ class Library:
     properties: dict[str, str] = field(default_factory=dict)
     is_alias: bool = False
     alias_for: str | None = None
+    dependencies: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -53,6 +54,7 @@ class Executable:
     compile_options: list[str] = field(default_factory=list)
     link_directories: list[str] = field(default_factory=list)
     properties: dict[str, str] = field(default_factory=dict)
+    dependencies: list[str] = field(default_factory=list)
 
 
 @dataclass

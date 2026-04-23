@@ -60,6 +60,7 @@ class CustomTarget:
     comment: str = ""
     defined_file: Path | None = None
     defined_line: int = 0
+    dependencies: list[str] = field(default_factory=list)
 
 
 @dataclass

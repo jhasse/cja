@@ -1712,6 +1712,45 @@ int main() {{
                     )
                 )
 
+            case "add_dependencies":
+                # add_dependencies(<target> [<target-dep>]...)
+                if len(args) >= 2:
+                    dep_target_name = ctx.expand_variables(
+                        args[0], strict, cmd.line
+                    )
+                    dep_names = [
+                        ctx.expand_variables(a, strict, cmd.line) for a in args[1:]
+                    ]
+                    target_exe = ctx.get_executable(dep_target_name)
+                    target_lib = ctx.get_library(dep_target_name)
+                    target_ct = next(
+                        (ct for ct in ctx.custom_targets if ct.name == dep_target_name),
+                        None,
+                    )
+                    if target_exe is not None:
+                        for dep in dep_names:
+                            if dep not in target_exe.dependencies:
+                                target_exe.dependencies.append(dep)
+                    elif target_lib is not None:
+                        for dep in dep_names:
+                            if dep not in target_lib.dependencies:
+                                target_lib.dependencies.append(dep)
+                    elif target_ct is not None:
+                        for dep in dep_names:
+                            if dep not in target_ct.dependencies:
+                                target_ct.dependencies.append(dep)
+                    elif strict:
+                        ctx.print_error(
+                            f"add_dependencies called on unknown target \"{dep_target_name}\"",
+                            cmd.line,
+                        )
+                        sys.exit(1)
+                    else:
+                        ctx.print_warning(
+                            f"add_dependencies called on unknown target \"{dep_target_name}\"",
+                            cmd.line,
+                        )
+
             case "add_test":
                 # Support: add_test(NAME <name> COMMAND <command> ...
                 #                   [WORKING_DIRECTORY <dir>])
