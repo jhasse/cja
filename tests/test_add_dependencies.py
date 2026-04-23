@@ -1,9 +1,12 @@
 """Tests for add_dependencies command."""
 
+import platform
 from pathlib import Path
 
 from cja.generator import BuildContext, generate_ninja, process_commands
 from cja.parser import Command
+
+LIB_EXT = ".lib" if platform.system() == "Windows" else ".a"
 
 
 def test_add_dependencies_on_executable() -> None:
@@ -129,7 +132,7 @@ def test_add_dependencies_in_ninja_library(tmp_path: Path) -> None:
 
     ninja_content = ninja_path.read_text()
 
-    assert "$builddir/libmylib.a: ar" in ninja_content
+    assert f"$builddir/libmylib{LIB_EXT}: ar" in ninja_content
     assert "|| gen" in ninja_content
 
 
@@ -171,8 +174,11 @@ def test_add_dependencies_target_to_library(tmp_path: Path) -> None:
 
     ninja_content = ninja_path.read_text()
 
-    # The executable object build should have '|| $builddir/libmylib.a' as order-only
-    assert "|| $builddir/libmylib.a" in ninja_content
+    # The executable object build should have '|| $builddir/libmylib.<ext>' as order-only
+    assert f"$builddir/libmylib{LIB_EXT}" in ninja_content
+    # Verify it's used as an order-only dep (normalize ninja's line continuations)
+    normalized = ninja_content.replace("$\n    ", "").replace("$\n  ", "")
+    assert f"|| $builddir/libmylib{LIB_EXT}" in normalized
 
 
 def test_add_dependencies_unknown_target_ignored() -> None:
