@@ -1,8 +1,12 @@
 """Tests for add_subdirectory command."""
 
 from pathlib import Path
+import platform
 from cja.generator import BuildContext, process_commands
 from cja.parser import Command
+
+EXE_EXT = ".exe" if platform.system() == "Windows" else ""
+LIB_EXT = ".lib" if platform.system() == "Windows" else ".a"
 
 
 def test_add_subdirectory(tmp_path: Path) -> None:
@@ -176,12 +180,12 @@ def test_add_subdirectory_library_output_in_subdir(tmp_path: Path) -> None:
     configure(source_dir, "build")
     ninja = (source_dir / "build.ninja").read_text()
 
-    assert (
-        "build $builddir/subprojects/mylib/libmylib.a: ar" in ninja
-    ), "library should be placed in subdirectory matching source tree"
-    assert (
-        "build $builddir/app: link" in ninja
-    ), "top-level executable should stay in $builddir"
+    assert f"build $builddir/subprojects/mylib/libmylib{LIB_EXT}: ar" in ninja, (
+        "library should be placed in subdirectory matching source tree"
+    )
+    assert f"build $builddir/app{EXE_EXT}: link" in ninja, (
+        "top-level executable should stay in $builddir"
+    )
 
 
 def test_add_subdirectory_nested_binary_dir(tmp_path: Path) -> None:
@@ -198,9 +202,7 @@ def test_add_subdirectory_nested_binary_dir(tmp_path: Path) -> None:
         "add_library(sublib STATIC sub.c)\nadd_subdirectory(inner)\n"
     )
     (sub_dir / "sub.c").write_text("void f() {}\n")
-    (inner_dir / "CMakeLists.txt").write_text(
-        "add_library(innerlib STATIC inner.c)\n"
-    )
+    (inner_dir / "CMakeLists.txt").write_text("add_library(innerlib STATIC inner.c)\n")
     (inner_dir / "inner.c").write_text("void g() {}\n")
 
     from cja.generator import configure
@@ -208,8 +210,8 @@ def test_add_subdirectory_nested_binary_dir(tmp_path: Path) -> None:
     configure(source_dir, "build")
     ninja = (source_dir / "build.ninja").read_text()
 
-    assert "build $builddir/sub/libsublib.a: ar" in ninja
-    assert "build $builddir/sub/inner/libinnerlib.a: ar" in ninja
+    assert f"build $builddir/sub/libsublib{LIB_EXT}: ar" in ninja
+    assert f"build $builddir/sub/inner/libinnerlib{LIB_EXT}: ar" in ninja
 
 
 def test_add_subdirectory_exe_output_in_subdir(tmp_path: Path) -> None:
@@ -228,9 +230,9 @@ def test_add_subdirectory_exe_output_in_subdir(tmp_path: Path) -> None:
     configure(source_dir, "build")
     ninja = (source_dir / "build.ninja").read_text()
 
-    assert (
-        "build $builddir/test/test_app: link" in ninja
-    ), "executable from subdirectory should be placed in matching subdir"
+    assert f"build $builddir/test/test_app{EXE_EXT}: link" in ninja, (
+        "executable from subdirectory should be placed in matching subdir"
+    )
 
 
 def test_subdirectory_compile_options_do_not_leak_to_parent(tmp_path: Path) -> None:
