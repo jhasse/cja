@@ -12,7 +12,8 @@ ninja
 This is equivalent to the following with CMake:
 
 ```sh
-cmake -Bbuild -GNinja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_COLOR_DIAGNOSTICS=1 -DCMAKE_EXPORT_COMPILE_COMMANDS=1
+cmake -Bbuild -GNinja -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_COLOR_DIAGNOSTICS=1 -DCMAKE_EXPORT_COMPILE_COMMANDS=1
 ninja -Cbuild
 ```
 
