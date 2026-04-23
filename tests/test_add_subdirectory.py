@@ -205,7 +205,6 @@ def test_add_subdirectory_nested_binary_dir(tmp_path: Path) -> None:
 
     from cja.generator import configure
 
-    build_dir = tmp_path / "build"
     configure(source_dir, "build")
     ninja = (source_dir / "build.ninja").read_text()
 
