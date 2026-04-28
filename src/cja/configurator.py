@@ -1109,6 +1109,50 @@ def process_commands(
                 if output_var:
                     ctx.variables[output_var] = error_msg
 
+            case "check_type_size":
+                # check_type_size(<type> <var> [LANGUAGE <lang>] ...)
+                if len(args) >= 2:
+                    import ctypes
+
+                    type_name = args[0].strip().strip('"').strip("'")
+                    result_var = args[1]
+
+                    fixed_width_sizes = {
+                        "int8_t": 1,
+                        "uint8_t": 1,
+                        "u_int8_t": 1,
+                        "int16_t": 2,
+                        "uint16_t": 2,
+                        "int32_t": 4,
+                        "uint32_t": 4,
+                        "int64_t": 8,
+                        "uint64_t": 8,
+                        "size_t": ctypes.sizeof(ctypes.c_size_t),
+                        "ssize_t": ctypes.sizeof(ctypes.c_ssize_t),
+                        "void*": ctypes.sizeof(ctypes.c_void_p),
+                    }
+                    primitive_sizes = {
+                        "char": ctypes.sizeof(ctypes.c_char),
+                        "signed char": ctypes.sizeof(ctypes.c_byte),
+                        "unsigned char": ctypes.sizeof(ctypes.c_ubyte),
+                        "short": ctypes.sizeof(ctypes.c_short),
+                        "unsigned short": ctypes.sizeof(ctypes.c_ushort),
+                        "int": ctypes.sizeof(ctypes.c_int),
+                        "unsigned int": ctypes.sizeof(ctypes.c_uint),
+                        "long": ctypes.sizeof(ctypes.c_long),
+                        "unsigned long": ctypes.sizeof(ctypes.c_ulong),
+                        "long long": ctypes.sizeof(ctypes.c_longlong),
+                        "unsigned long long": ctypes.sizeof(ctypes.c_ulonglong),
+                    }
+
+                    if type_name in fixed_width_sizes:
+                        ctx.variables[result_var] = str(fixed_width_sizes[type_name])
+                    elif type_name in primitive_sizes:
+                        ctx.variables[result_var] = str(primitive_sizes[type_name])
+                    else:
+                        # Unknown/unavailable types are reported empty by CMake.
+                        ctx.variables[result_var] = ""
+
             case "check_cxx_compiler_flag":
                 # check_cxx_compiler_flag(<flag> <var>)
                 if len(args) >= 2:
