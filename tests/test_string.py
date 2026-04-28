@@ -72,3 +72,31 @@ def test_string_make_c_identifier_leading_digit() -> None:
     ]
     process_commands(commands, ctx, strict=True)
     assert ctx.variables["result"] == "_2bad"
+
+
+def test_string_find_returns_index() -> None:
+    """string(FIND) should return the first match position."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(
+            name="string",
+            args=["FIND", "libsharpyuv_la_SOURCES += sharpyuv.c", "=", "offset"],
+            line=1,
+        ),
+    ]
+    process_commands(commands, ctx, strict=True)
+    assert ctx.variables["offset"] == "24"
+
+
+def test_string_find_reverse_returns_last_match() -> None:
+    """string(FIND ... REVERSE) should return the last match position."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(
+            name="string",
+            args=["FIND", "abc=def=ghi", "=", "offset", "REVERSE"],
+            line=1,
+        ),
+    ]
+    process_commands(commands, ctx, strict=True)
+    assert ctx.variables["offset"] == "7"

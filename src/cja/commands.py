@@ -1938,6 +1938,20 @@ def handle_string(
             except ValueError:
                 pass
 
+    elif subcommand == "FIND":
+        # string(FIND <string> <substring> <out_var> [REVERSE])
+        if len(args) >= 4:
+            string_val = args[1]
+            substring = args[2]
+            out_var = args[3]
+            reverse = len(args) >= 5 and args[4] == "REVERSE"
+            idx = (
+                string_val.rfind(substring)
+                if reverse
+                else string_val.find(substring)
+            )
+            ctx.variables[out_var] = str(idx)
+
     elif subcommand == "TOLOWER":
         # string(TOLOWER <string> <out_var>)
         if len(args) >= 3:
