@@ -1,8 +1,10 @@
 """Tests for utility helpers."""
 
 from pathlib import Path
+from types import SimpleNamespace
 
 from cja.utils import make_relative
+from cja.utils import status_marker
 from cja.utils import strip_generator_expressions
 
 
@@ -89,3 +91,16 @@ def test_strip_generator_expressions_multiline_content() -> None:
     assert "-Wshadow" in result
     assert "-Wdisabled-optimization" in result
     assert "-Waggregate-return" in result
+
+
+def test_status_marker_unicode_encoding() -> None:
+    """Unicode-capable terminals should keep check/cross markers."""
+    assert status_marker(True) == "✓"
+    assert status_marker(False) == "✗"
+
+
+def test_status_marker_cp1252_fallback(monkeypatch) -> None:
+    """cp1252 terminals should get ASCII-safe fallback markers."""
+    monkeypatch.setattr("cja.utils.sys.stdout", SimpleNamespace(encoding="cp1252"))
+    assert status_marker(True) == "+"
+    assert status_marker(False) == "x"

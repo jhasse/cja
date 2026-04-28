@@ -13,6 +13,7 @@ from termcolor import colored
 from .build_context import BuildContext
 from .parser import Command
 from .targets import ImportedTarget
+from .utils import status_marker
 
 
 def _unique_existing_dirs(candidates: list[Path]) -> list[Path]:
@@ -58,7 +59,7 @@ def handle_builtin_find_package(
         ctx.variables["CMAKE_USE_PTHREADS_INIT"] = "TRUE"
         ctx.imported_targets["Threads::Threads"] = ImportedTarget(libs="-pthread")
         if not quiet:
-            print(f"{colored('✓', 'green')} {package_name}")
+            print(f"{colored(status_marker(True), 'green')} {package_name}")
         return True
 
     if package_name in ("Python", "Python3"):
@@ -130,9 +131,9 @@ def handle_builtin_find_package(
 
         if not quiet:
             if found:
-                print(f"{colored('✓', 'green')} {package_name}")
+                print(f"{colored(status_marker(True), 'green')} {package_name}")
             else:
-                print(f"{colored('✗', 'red')} {package_name}")
+                print(f"{colored(status_marker(False), 'red')} {package_name}")
         return True
 
     if package_name == "Fontconfig":
@@ -188,7 +189,7 @@ def handle_builtin_find_package(
 
         if found:
             if not quiet:
-                print(f"{colored('✓', 'green')} {package_name}")
+                print(f"{colored(status_marker(True), 'green')} {package_name}")
         else:
             ctx.variables["Fontconfig_FOUND"] = "FALSE"
             ctx.variables["FONTCONFIG_FOUND"] = "FALSE"
@@ -196,7 +197,7 @@ def handle_builtin_find_package(
                 ctx.print_error("could not find package: Fontconfig", cmd.line)
                 raise SystemExit(1)
             if not quiet:
-                print(f"{colored('✗', 'red')} {package_name}")
+                print(f"{colored(status_marker(False), 'red')} {package_name}")
         return True
 
     if package_name == "WebP":
@@ -255,7 +256,7 @@ def handle_builtin_find_package(
                 libs=webp_libs,
             )
             if not quiet:
-                print(f"{colored('✓', 'green')} {package_name}")
+                print(f"{colored(status_marker(True), 'green')} {package_name}")
         else:
             ctx.variables["WebP_FOUND"] = "FALSE"
             ctx.variables["WEBP_FOUND"] = "FALSE"
@@ -263,7 +264,7 @@ def handle_builtin_find_package(
                 ctx.print_error("could not find package: WebP", cmd.line)
                 raise SystemExit(1)
             if not quiet:
-                print(f"{colored('✗', 'red')} {package_name}")
+                print(f"{colored(status_marker(False), 'red')} {package_name}")
         return True
 
     if package_name == "Boost":
@@ -477,9 +478,9 @@ def handle_builtin_find_package(
             raise SystemExit(1)
         if not quiet:
             if found:
-                print(f"{colored('✓', 'green')} {package_name}")
+                print(f"{colored(status_marker(True), 'green')} {package_name}")
             else:
-                print(f"{colored('✗', 'red')} {package_name}")
+                print(f"{colored(status_marker(False), 'red')} {package_name}")
         return True
 
     if package_name == "PNG":
@@ -546,14 +547,14 @@ def handle_builtin_find_package(
                 libs=png_libs,
             )
             if not quiet:
-                print(f"{colored('✓', 'green')} {package_name}")
+                print(f"{colored(status_marker(True), 'green')} {package_name}")
         else:
             ctx.variables["PNG_FOUND"] = "FALSE"
             if required:
                 ctx.print_error("could not find package: PNG", cmd.line)
                 raise SystemExit(1)
             if not quiet:
-                print(f"{colored('✗', 'red')} {package_name}")
+                print(f"{colored(status_marker(False), 'red')} {package_name}")
         return True
 
     if package_name == "Qt5":
@@ -646,14 +647,14 @@ def handle_builtin_find_package(
 
         if found:
             if not quiet:
-                print(f"{colored('✓', 'green')} {package_name}")
+                print(f"{colored(status_marker(True), 'green')} {package_name}")
         else:
             ctx.variables["Qt5_FOUND"] = "FALSE"
             if required:
                 ctx.print_error("could not find package: Qt5", cmd.line)
                 raise SystemExit(1)
             if not quiet:
-                print(f"{colored('✗', 'red')} {package_name}")
+                print(f"{colored(status_marker(False), 'red')} {package_name}")
         return True
 
     return False

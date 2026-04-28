@@ -1,10 +1,28 @@
 from pathlib import Path
 import re
+import sys
 
 
 _DRIVE_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
 _UNC_PATH_RE = re.compile(r"^[\\/]{2}[^\\/]+[\\/][^\\/]+")
 UNDEFINED_VAR_SENTINEL = "__CJA_UNDEFINED_VAR__"
+
+
+def status_marker(success: bool | None) -> str:
+    """Return a terminal-safe status marker.
+
+    Uses Unicode symbols when supported by stdout encoding and falls back
+    to ASCII on narrow encodings like cp1252.
+    """
+    marker = "?" if success is None else ("✓" if success else "✗")
+    encoding = sys.stdout.encoding or "utf-8"
+    try:
+        marker.encode(encoding)
+    except UnicodeEncodeError:
+        if success is None:
+            return "?"
+        return "+" if success else "x"
+    return marker
 
 
 def cmake_regex_to_python(pattern: str) -> str:
