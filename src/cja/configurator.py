@@ -743,7 +743,22 @@ def process_commands(
                         saved_parent_scope_vars = ctx.parent_scope_vars
                         ctx.parent_scope_vars = {}
 
-                        sub_binary_dir = Path(saved_binary_dir) / sub_dir_name
+                        if len(args) >= 2:
+                            binary_arg = Path(args[1])
+                            if binary_arg.is_absolute():
+                                sub_binary_dir = binary_arg
+                            else:
+                                sub_binary_dir = Path(saved_binary_dir) / binary_arg
+                        else:
+                            # For absolute source paths, keep binary output rooted
+                            # under the current binary dir rather than collapsing to
+                            # the absolute source path.
+                            source_component = (
+                                Path(sub_dir_name).name
+                                if Path(sub_dir_name).is_absolute()
+                                else sub_dir_name
+                            )
+                            sub_binary_dir = Path(saved_binary_dir) / source_component
                         sub_binary_dir.mkdir(parents=True, exist_ok=True)
 
                         ctx.current_source_dir = sub_source_dir

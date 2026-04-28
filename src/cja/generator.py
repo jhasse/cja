@@ -356,6 +356,22 @@ def handle_add_subdirectory(
             saved_parent_scope_vars = ctx.parent_scope_vars
             ctx.parent_scope_vars = {}
 
+            saved_binary_dir = ctx.variables.get("CMAKE_CURRENT_BINARY_DIR", str(ctx.build_dir))
+            if len(args) >= 2:
+                binary_arg = Path(args[1])
+                if binary_arg.is_absolute():
+                    sub_binary_dir = binary_arg
+                else:
+                    sub_binary_dir = Path(saved_binary_dir) / binary_arg
+            else:
+                source_component = (
+                    Path(sub_dir_name).name
+                    if Path(sub_dir_name).is_absolute()
+                    else sub_dir_name
+                )
+                sub_binary_dir = Path(saved_binary_dir) / source_component
+            sub_binary_dir.mkdir(parents=True, exist_ok=True)
+
             # Update current_source_dir for the subdirectory
             ctx.current_source_dir = sub_source_dir
             ctx.current_list_file = sub_cmakelists
@@ -363,9 +379,7 @@ def handle_add_subdirectory(
             ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = str(sub_source_dir)
             ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(sub_cmakelists)
             ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(sub_cmakelists.parent)
-            # For now, CMAKE_CURRENT_BINARY_DIR is the same as CMAKE_BINARY_DIR
-            # since we don't support separate binary dirs for subdirectories yet
-            ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(ctx.build_dir)
+            ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(sub_binary_dir)
 
             try:
                 process_commands(sub_commands, ctx, trace, strict)
@@ -391,7 +405,7 @@ def handle_add_subdirectory(
                 ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
                     saved_current_list_file.parent
                 )
-                ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(ctx.build_dir)
+                ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = saved_binary_dir
         elif strict:
             ctx.print_error(
                 f'add_subdirectory given source "{sub_dir_name}" which does not exist.',

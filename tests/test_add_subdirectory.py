@@ -145,6 +145,32 @@ def test_add_subdirectory_two_levels(tmp_path: Path) -> None:
     assert ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] == str(source_dir)
 
 
+def test_add_subdirectory_explicit_binary_dir(tmp_path: Path) -> None:
+    """Second add_subdirectory argument should set subproject binary dir."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    sub_dir = source_dir / "dep"
+    sub_dir.mkdir()
+
+    expected_bin = tmp_path / "build" / "_deps" / "dep-build"
+    (sub_dir / "CMakeLists.txt").write_text(
+        "set(DEP_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR} PARENT_SCOPE)"
+    )
+
+    ctx = BuildContext(source_dir=source_dir, build_dir=tmp_path / "build")
+    ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(tmp_path / "build")
+    commands = [
+        Command(
+            name="add_subdirectory",
+            args=[str(sub_dir), str(expected_bin)],
+            line=1,
+        )
+    ]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["DEP_BINARY_DIR"] == str(expected_bin)
+
+
 def test_project_source_dir_is_global_across_subdirectory(tmp_path: Path) -> None:
     """project(name) in subdirectory should expose name_SOURCE_DIR globally."""
     source_dir = tmp_path / "src"
