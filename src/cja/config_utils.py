@@ -49,6 +49,9 @@ def select_if_block(
             and _is_empty_string_token(cmd.args[i + 2])
             and _is_exact_var_token(arg)
         )
+        # Match CMake condition behavior: undefined ${VAR} in if()/elseif()
+        # evaluates as empty, rather than producing a strict warning.
+        allow_undefined = allow_undefined or _is_exact_var_token(arg)
         if_args.append(
             ctx.expand_variables(
                 arg,
@@ -74,6 +77,7 @@ def select_if_block(
                     and _is_empty_string_token(block_args[i + 2])
                     and _is_exact_var_token(arg)
                 )
+                allow_undefined = allow_undefined or _is_exact_var_token(arg)
                 elseif_args.append(
                     ctx.expand_variables(
                         arg,

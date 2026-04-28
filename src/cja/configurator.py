@@ -464,26 +464,26 @@ def process_commands(
         for idx, arg in enumerate(cmd.args):
             allow_undefined = False
             allow_undefined_warning = "${${" in arg
+            is_exact_var = (
+                (arg.startswith("${") and arg.endswith("}"))
+                or (arg.startswith('"${') and arg.endswith('}"'))
+                or (arg.startswith("'${") and arg.endswith("}'"))
+            )
             if cmd.name in ("if", "elseif"):
                 allow_undefined = (
                     idx + 2 < len(cmd.args)
                     and cmd.args[idx + 1] == "STREQUAL"
                     and cmd.args[idx + 2] in ("", '""', "''")
-                    and (
-                        (arg.startswith("${") and arg.endswith("}"))
-                        or (arg.startswith('"${') and arg.endswith('}"'))
-                        or (arg.startswith("'${") and arg.endswith("}'"))
-                    )
+                    and is_exact_var
                 )
+                # In CMake conditions, unresolved ${VAR} tokens are treated
+                # as empty and should not raise undefined-variable warnings.
+                allow_undefined = allow_undefined or is_exact_var
             elif cmd.name == "option":
                 # Common CMake pattern:
                 #   option(FOO "help" ${SOME_DEFAULT})
                 # where SOME_DEFAULT can be undefined and should evaluate empty.
-                allow_undefined = idx == 2 and (
-                    (arg.startswith("${") and arg.endswith("}"))
-                    or (arg.startswith('"${') and arg.endswith('}"'))
-                    or (arg.startswith("'${") and arg.endswith("}'"))
-                )
+                allow_undefined = idx == 2 and is_exact_var
             expanded = ctx.expand_variables(
                 arg,
                 strict,
