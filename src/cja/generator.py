@@ -95,6 +95,35 @@ def _infer_compiler_version(compiler: str) -> str:
     return f"{major}.{minor}.{patch}"
 
 
+def _infer_msvc_version(compiler: str) -> str:
+    """Infer an MSVC-style version number (e.g. 1930, 1944)."""
+    vc_tools_version = os.environ.get("VCToolsVersion", "").strip()
+    if vc_tools_version:
+        match = re.match(r"^14\.(\d+)", vc_tools_version)
+        if match:
+            return f"19{match.group(1)}"
+
+    parts = shlex.split(compiler) if compiler else []
+    if not parts:
+        return ""
+    tool = parts[0]
+    if Path(tool).name.lower() in ("ccache", "sccache") and len(parts) > 1:
+        tool = parts[1]
+    try:
+        out = subprocess.check_output(
+            [tool] + parts[1:] + ["-v"],
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return ""
+
+    # LLVM clang on Windows prints "Target: ...-windows-msvc".
+    if "windows-msvc" in out.lower():
+        return "1930"
+    return ""
+
+
 def _detect_host_system_processor() -> str:
     """Detect host CPU architecture string for CMAKE_HOST_SYSTEM_PROCESSOR."""
     machine = platform.machine().strip()
@@ -1733,6 +1762,10 @@ def configure(
     ctx.variables["CMAKE_CXX_COMPILER_VERSION"] = _infer_compiler_version(
         ctx.cxx_compiler
     )
+    if host_system == "Windows" and "MSVC_VERSION" not in ctx.variables:
+        msvc_version = _infer_msvc_version(ctx.c_compiler)
+        if msvc_version:
+            ctx.variables["MSVC_VERSION"] = msvc_version
 
     process_commands(commands, ctx, trace, strict)
 
