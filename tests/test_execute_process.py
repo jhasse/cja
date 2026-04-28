@@ -197,6 +197,94 @@ def test_execute_process_command_not_found() -> None:
     assert ctx.variables["RES"] == "1"
 
 
+def test_execute_process_empty_argument_filtered() -> None:
+    """An empty argument (e.g. from an undefined variable expansion) must not
+    crash and should be filtered out, matching CMake's behavior where an
+    unquoted ``${UNDEFINED}`` produces no argument at all.
+    """
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(
+            name="execute_process",
+            args=[
+                "COMMAND",
+                "",  # simulates ${CMAKE_LINKER} expanding to empty
+                sys.executable,
+                "-c",
+                "print('ok')",
+                "OUTPUT_VARIABLE",
+                "OUT",
+                "OUTPUT_STRIP_TRAILING_WHITESPACE",
+                "RESULT_VARIABLE",
+                "RES",
+            ],
+            line=1,
+        )
+    ]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["RES"] == "0"
+    assert ctx.variables["OUT"] == "ok"
+
+
+def test_execute_process_all_empty_command() -> None:
+    """A command made entirely of empty arguments should not crash and should
+    set RESULT_VARIABLE to a non-zero value.
+    """
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(
+            name="execute_process",
+            args=[
+                "COMMAND",
+                "",
+                "RESULT_VARIABLE",
+                "RES",
+                "OUTPUT_VARIABLE",
+                "OUT",
+                "ERROR_VARIABLE",
+                "ERR",
+            ],
+            line=1,
+        )
+    ]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["RES"] == "1"
+    assert ctx.variables["OUT"] == ""
+    assert ctx.variables["ERR"] == ""
+
+
+def test_execute_process_oserror_does_not_crash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A generic OSError from ``subprocess.run`` (e.g. WinError 87 on Windows
+    when an invalid executable path is given) must be handled gracefully.
+    """
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+
+    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        raise OSError(87, "The parameter is incorrect")
+
+    monkeypatch.setattr("cja.generator.subprocess.run", fake_run)
+
+    commands = [
+        Command(
+            name="execute_process",
+            args=[
+                "COMMAND",
+                "some_command",
+                "RESULT_VARIABLE",
+                "RES",
+            ],
+            line=1,
+        )
+    ]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["RES"] == "1"
+
+
 def test_execute_process_command_error_is_fatal_any(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
