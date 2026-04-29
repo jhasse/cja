@@ -81,3 +81,29 @@ def test_return_exits_included_cmake_file(tmp_path: Path) -> None:
     assert ctx.variables["BEFORE"] == "yes"
     assert "AFTER" not in ctx.variables
     assert ctx.variables["OUTER"] == "yes"
+
+
+def test_return_in_include_inside_function_does_not_exit_function(
+    tmp_path: Path,
+) -> None:
+    """return() inside an included file that is inside a function should exit
+    only the include scope, not the enclosing function.  The commands after
+    the include() call in the function body must still execute."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    # The included file returns early, leaving AFTER_INCLUDE unset.
+    (source_dir / "early_return.cmake").write_text("return()\n")
+
+    ctx = BuildContext(source_dir=source_dir, build_dir=tmp_path / "build")
+    commands = [
+        # Define a function that includes early_return.cmake and then sets a variable.
+        Command(name="function", args=["my_func"], line=1),
+        Command(name="include", args=["early_return.cmake"], line=2),
+        Command(name="set", args=["AFTER_INCLUDE", "yes", "PARENT_SCOPE"], line=3),
+        Command(name="endfunction", args=[], line=4),
+        Command(name="my_func", args=[], line=5),
+    ]
+    process_commands(commands, ctx)
+
+    # AFTER_INCLUDE must be set because return() exited the include, not the function.
+    assert ctx.variables.get("AFTER_INCLUDE") == "yes"

@@ -553,31 +553,19 @@ def process_commands(
                 ctx.raise_syntax_error("Unexpected endmacro()", cmd.line)
 
             case "return":
-                func_index = next(
+                # Find the innermost function or include frame (highest index).
+                # return() exits the nearest enclosing scope — an include() scope
+                # takes precedence over an enclosing function if it is closer.
+                scope_index = next(
                     (
                         i
                         for i in range(len(stack) - 1, -1, -1)
-                        if stack[i].kind == "function"
+                        if stack[i].kind in ("function", "include")
                     ),
                     None,
                 )
-                if func_index is not None:
-                    while len(stack) > func_index:
-                        popped = stack.pop()
-                        if popped.on_exit:
-                            popped.on_exit()
-                    continue
-
-                include_index = next(
-                    (
-                        i
-                        for i in range(len(stack) - 1, -1, -1)
-                        if stack[i].kind == "include"
-                    ),
-                    None,
-                )
-                if include_index is not None:
-                    while len(stack) > include_index:
+                if scope_index is not None:
+                    while len(stack) > scope_index:
                         popped = stack.pop()
                         if popped.on_exit:
                             popped.on_exit()
