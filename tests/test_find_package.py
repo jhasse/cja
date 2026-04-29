@@ -518,6 +518,91 @@ def test_find_package_boost_component_library_fallback(
     assert ctx.imported_targets["Boost::thread"].libs == "-lboost_thread"
 
 
+def test_find_package_boost_header_only_component(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Test that a header-only Boost component (e.g. system since 1.69) is found
+    by detecting its include subdirectory when no library file exists."""
+    # Create a fake boost include tree: <tmp>/include/boost/system/
+    inc_dir = tmp_path / "include"
+    (inc_dir / "boost" / "system").mkdir(parents=True)
+
+    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        if cmd == ["pkg-config", "--exists", "boost"]:
+            return subprocess.CompletedProcess(cmd, 0)
+        if cmd == ["pkg-config", "--cflags", "boost"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout=f"-I{inc_dir}")
+        if cmd == ["pkg-config", "--libs", "boost"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="")
+        if cmd == ["pkg-config", "--modversion", "boost"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="1.84.0")
+        # component not found via pkg-config
+        return subprocess.CompletedProcess(cmd, 1)
+
+    monkeypatch.setattr("cja.generator.subprocess.run", fake_run)
+
+    # No library file exists for this component
+    original_exists = Path.exists
+
+    def fake_exists(self: Path) -> bool:
+        if self.name.startswith("libboost_") or self.name.startswith("boost_"):
+            return False
+        return original_exists(self)
+
+    monkeypatch.setattr(Path, "exists", fake_exists)
+
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    from cja.parser import Command
+
+    commands = [
+        Command(
+            name="find_package",
+            args=["Boost", "REQUIRED", "COMPONENTS", "system"],
+            line=1,
+        )
+    ]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["Boost_FOUND"] == "TRUE"
+    assert ctx.variables["Boost_system_FOUND"] == "TRUE"
+    # Header-only: no link flags
+    assert ctx.imported_targets["Boost::system"].libs == ""
+    # Boost::headers and Boost::boost must be available whenever headers are found
+    assert "Boost::headers" in ctx.imported_targets
+    assert "Boost::boost" in ctx.imported_targets
+
+
+def test_find_package_boost_targets_registered_without_components(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Boost::headers and Boost::boost should be registered even when no
+    COMPONENTS are requested (previously required found=True, but find_package
+    without components sets found based on whether any component was missing)."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+
+    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        if cmd == ["pkg-config", "--exists", "boost"]:
+            return subprocess.CompletedProcess(cmd, 0)
+        if cmd == ["pkg-config", "--cflags", "boost"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="-I/usr/include")
+        if cmd == ["pkg-config", "--libs", "boost"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="")
+        if cmd == ["pkg-config", "--modversion", "boost"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="1.84.0")
+        return subprocess.CompletedProcess(cmd, 1)
+
+    monkeypatch.setattr("cja.generator.subprocess.run", fake_run)
+
+    from cja.parser import Command
+
+    commands = [Command(name="find_package", args=["Boost", "CONFIG"], line=1)]
+    process_commands(commands, ctx)
+
+    assert "Boost::headers" in ctx.imported_targets
+    assert "Boost::boost" in ctx.imported_targets
+
+
 def test_find_package_png_found_via_pkg_config(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

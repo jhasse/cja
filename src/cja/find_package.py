@@ -433,6 +433,15 @@ def handle_builtin_find_package(
                     if component_found:
                         break
 
+                if not component_found and include_dirs:
+                    # Header-only component (e.g. Boost.System since 1.69)
+                    for inc_dir in include_dirs:
+                        if (Path(inc_dir) / "boost" / component.lower()).is_dir():
+                            component_found = True
+                            component_cflags = boost_cflags
+                            component_link_flags = ""
+                            break
+
             var_name = f"Boost_{component}_FOUND"
             upper_var_name = f"Boost_{component.upper()}_FOUND"
             if component_found:
@@ -469,7 +478,7 @@ def handle_builtin_find_package(
             ctx.variables["Boost_VERSION"] = boost_version
             ctx.variables["BOOST_VERSION"] = boost_version
 
-        if found:
+        if include_dirs:
             ctx.imported_targets["Boost::headers"] = ImportedTarget(cflags=boost_cflags)
             ctx.imported_targets["Boost::boost"] = ImportedTarget(cflags=boost_cflags)
 
