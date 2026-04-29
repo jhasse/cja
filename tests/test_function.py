@@ -6,6 +6,7 @@ import pytest
 
 from cja.generator import BuildContext, process_commands
 from cja.parser import Command
+from cja.syntax import evaluate_condition
 
 
 def test_function_basic() -> None:
@@ -292,7 +293,10 @@ def test_unset_parent_scope() -> None:
     ]
     process_commands(commands, ctx)
 
-    assert "OUTER" not in ctx.variables
+    # After unset(PARENT_SCOPE) the variable must appear undefined to CMake:
+    # DEFINED returns False and ${OUTER} expands to "".
+    assert not evaluate_condition(["DEFINED", "OUTER"], ctx.variables)
+    assert ctx.expand_variables("${OUTER}", strict=False, line=0) == ""
 
 
 def test_enable_language_objcxx_noop() -> None:

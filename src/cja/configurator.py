@@ -64,6 +64,7 @@ from .utils import (
     make_relative,
     status_marker,
     to_posix_path,
+    UNDEFINED_VAR_SENTINEL,
 )
 from .build_context import (
     CustomCommand,
@@ -432,7 +433,7 @@ def process_commands(
                             ctx.variables.update(cache_updates)
                             for var, val in parent_scope_updates.items():
                                 if val is None:
-                                    ctx.variables.pop(var, None)
+                                    ctx.variables[var] = UNDEFINED_VAR_SENTINEL
                                 else:
                                     ctx.variables[var] = val
                             ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = str(
@@ -818,7 +819,7 @@ def process_commands(
                             ctx.variables.update(cache_updates)
                             for var, val in parent_scope_updates.items():
                                 if val is None:
-                                    ctx.variables.pop(var, None)
+                                    ctx.variables[var] = UNDEFINED_VAR_SENTINEL
                                 else:
                                     ctx.variables[var] = val
                             ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = str(
@@ -2982,7 +2983,7 @@ int main() {{
                         }
                         for var_name, var_value in ctx.parent_scope_vars.items():
                             if var_value is None:
-                                saved_vars.pop(var_name, None)
+                                saved_vars[var_name] = UNDEFINED_VAR_SENTINEL
                             else:
                                 saved_vars[var_name] = var_value
                         ctx.parent_scope_vars = saved_parent_scope_vars
