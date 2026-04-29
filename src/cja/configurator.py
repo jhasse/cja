@@ -574,6 +574,41 @@ def process_commands(
                 raise ReturnFromFunction()
                 continue
 
+            case "break":
+                # Pop frames until the innermost foreach frame is removed.
+                loop_index = next(
+                    (
+                        i
+                        for i in range(len(stack) - 1, -1, -1)
+                        if stack[i].kind == "foreach"
+                    ),
+                    None,
+                )
+                if loop_index is not None:
+                    while len(stack) > loop_index:
+                        popped = stack.pop()
+                        if popped.on_exit:
+                            popped.on_exit()
+                continue
+
+            case "continue":
+                # Pop frames until (but not including) the innermost foreach frame,
+                # then let the foreach frame advance to its next iteration naturally.
+                loop_index = next(
+                    (
+                        i
+                        for i in range(len(stack) - 1, -1, -1)
+                        if stack[i].kind == "foreach"
+                    ),
+                    None,
+                )
+                if loop_index is not None:
+                    while len(stack) > loop_index + 1:
+                        popped = stack.pop()
+                        if popped.on_exit:
+                            popped.on_exit()
+                continue
+
             case "cmake_policy":
                 if args:
                     subcommand = args[0].upper()

@@ -98,7 +98,9 @@ def test_foreach_in_items(capsys: pytest.CaptureFixture[str]) -> None:
     """Test foreach IN ITEMS."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
     commands = [
-        Command(name="foreach", args=["item", "IN", "ITEMS", "one", "two", "three"], line=1),
+        Command(
+            name="foreach", args=["item", "IN", "ITEMS", "one", "two", "three"], line=1
+        ),
         Command(name="message", args=["STATUS", "${item}"], line=2),
         Command(name="endforeach", args=[], line=3),
     ]
@@ -141,3 +143,35 @@ def test_foreach_set_variable() -> None:
     process_commands(commands, ctx)
 
     assert ctx.variables["RESULT"] == "abc"
+
+
+def test_foreach_break() -> None:
+    """Test that break() exits the foreach loop early."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="set", args=["RESULT", ""], line=1),
+        Command(name="foreach", args=["i", "a", "b", "c"], line=2),
+        Command(name="if", args=["i", "STREQUAL", "b"], line=3),
+        Command(name="break", args=[], line=4),
+        Command(name="endif", args=[], line=5),
+        Command(name="set", args=["RESULT", "${RESULT}${i}"], line=6),
+        Command(name="endforeach", args=[], line=7),
+    ]
+    process_commands(commands, ctx)
+    assert ctx.variables["RESULT"] == "a"
+
+
+def test_foreach_continue() -> None:
+    """Test that continue() skips the rest of the current iteration."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="set", args=["RESULT", ""], line=1),
+        Command(name="foreach", args=["i", "a", "b", "c"], line=2),
+        Command(name="if", args=["i", "STREQUAL", "b"], line=3),
+        Command(name="continue", args=[], line=4),
+        Command(name="endif", args=[], line=5),
+        Command(name="set", args=["RESULT", "${RESULT}${i}"], line=6),
+        Command(name="endforeach", args=[], line=7),
+    ]
+    process_commands(commands, ctx)
+    assert ctx.variables["RESULT"] == "ac"
