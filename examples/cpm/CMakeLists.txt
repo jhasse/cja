@@ -1,3 +1,5 @@
+cmake_minimum_required(VERSION 3.31)
+
 include(cmake/CPM.cmake)
 CPMAddPackage(NAME libogg
     URL http://downloads.xiph.org/releases/ogg/libogg-1.3.5.tar.xz

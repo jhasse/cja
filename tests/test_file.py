@@ -126,3 +126,20 @@ def test_file_copy_to_current_binary_dir(tmp_path: Path) -> None:
 
     assert (build_dir / "sub" / "include" / "a.h").read_text() == "// a\n"
     assert (build_dir / "sub" / "include" / "b.h").read_text() == "// b\n"
+
+
+def test_file_touch_creates_parent_dirs(tmp_path: Path) -> None:
+    """file(TOUCH) should create missing parent directories."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    build_dir = tmp_path / "build"
+    build_dir.mkdir()
+    ctx = BuildContext(source_dir=source_dir, build_dir=build_dir)
+
+    target = build_dir / "deep" / "nested" / "dir" / "marker.hash"
+    commands = [
+        Command(name="file", args=["TOUCH", str(target)], line=1),
+    ]
+    process_commands(commands, ctx)
+
+    assert target.exists()

@@ -2223,7 +2223,9 @@ def handle_file(
             filename = ctx.expand_variables(arg, strict, cmd.line)
             if not Path(filename).is_absolute():
                 filename = str(ctx.current_source_dir / filename)
-            Path(filename).touch()
+            p = Path(filename)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.touch()
 
     elif subcommand == "LOCK":
         # file(LOCK <path> [DIRECTORY] [RELEASE] [GUARD <FUNCTION|FILE|PROCESS>] [RESULT_VARIABLE <variable>] [TIMEOUT <seconds>])
