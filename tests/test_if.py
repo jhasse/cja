@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from cja.build_context import BuildContext
-from cja.generator import process_commands
+from cja.generator import process_commands, configure
 from cja.syntax import evaluate_condition
 from cja.parser import Command
 
@@ -21,6 +21,14 @@ class TestEvaluateCondition:
         variables: dict[str, str] = {}
         assert evaluate_condition(["DEFINED", "MY_VAR"], variables) is False
 
+    def test_defined_env_true(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("MY_TEST_ENV_VAR", "hello")
+        assert evaluate_condition(["DEFINED", "ENV{MY_TEST_ENV_VAR}"], {}) is True
+
+    def test_defined_env_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("MY_TEST_ENV_VAR", raising=False)
+        assert evaluate_condition(["DEFINED", "ENV{MY_TEST_ENV_VAR}"], {}) is False
+
     def test_not_defined(self) -> None:
         variables: dict[str, str] = {}
         assert evaluate_condition(["NOT", "DEFINED", "MY_VAR"], variables) is True
@@ -29,7 +37,9 @@ class TestEvaluateCondition:
         variables: dict[str, str] = {}
         assert (
             evaluate_condition(
-                ["TARGET", "fmt::fmt"], variables, target_exists=lambda n: n == "fmt::fmt"
+                ["TARGET", "fmt::fmt"],
+                variables,
+                target_exists=lambda n: n == "fmt::fmt",
             )
             is True
         )
@@ -37,7 +47,9 @@ class TestEvaluateCondition:
     def test_target_operator_false(self) -> None:
         variables: dict[str, str] = {}
         assert (
-            evaluate_condition(["TARGET", "fmt::fmt"], variables, target_exists=lambda _: False)
+            evaluate_condition(
+                ["TARGET", "fmt::fmt"], variables, target_exists=lambda _: False
+            )
             is False
         )
 
@@ -170,7 +182,9 @@ class TestIfCommand:
         process_commands(commands, ctx)
         assert "has source" in capsys.readouterr().out
 
-    def test_cpm_nested_source_condition(self, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_cpm_nested_source_condition(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
         commands = [
             Command(name="set", args=["CPM_ARGS_NAME", "libogg"], line=1),
@@ -230,3 +244,49 @@ class TestIfCommand:
         ]
         process_commands(commands, ctx, strict=True)
         assert "BAD" not in ctx.variables
+
+
+class TestEnvVariable:
+    """Tests for $ENV{VAR} expansion and if(DEFINED ENV{VAR})."""
+
+    def test_env_expansion(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CJA_TEST_VAR", "world")
+        source_dir = tmp_path / "src"
+        source_dir.mkdir()
+        (source_dir / "CMakeLists.txt").write_text("set(VAL $ENV{CJA_TEST_VAR})\n")
+        ctx = configure(source_dir, "build", quiet=True)
+        assert ctx.variables["VAL"] == "world"
+
+    def test_if_defined_env_true(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CJA_TEST_VAR", "1")
+        source_dir = tmp_path / "src"
+        source_dir.mkdir()
+        (source_dir / "CMakeLists.txt").write_text(
+            "if(DEFINED ENV{CJA_TEST_VAR})\n"
+            '  set(RESULT "yes")\n'
+            "else()\n"
+            '  set(RESULT "no")\n'
+            "endif()\n"
+        )
+        ctx = configure(source_dir, "build", quiet=True)
+        assert ctx.variables["RESULT"] == "yes"
+
+    def test_if_defined_env_false(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("CJA_TEST_VAR", raising=False)
+        source_dir = tmp_path / "src"
+        source_dir.mkdir()
+        (source_dir / "CMakeLists.txt").write_text(
+            "if(DEFINED ENV{CJA_TEST_VAR})\n"
+            '  set(RESULT "yes")\n'
+            "else()\n"
+            '  set(RESULT "no")\n'
+            "endif()\n"
+        )
+        ctx = configure(source_dir, "build", quiet=True)
+        assert ctx.variables["RESULT"] == "no"

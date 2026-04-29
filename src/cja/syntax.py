@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+import os
 from pathlib import Path
 import re
 from typing import Callable
@@ -64,6 +65,12 @@ def evaluate_condition(
     i = 0
 
     def is_defined(name: str) -> bool:
+        m = re.fullmatch(r"ENV\{\s*(\w+)\s*\}", name)
+        if m:
+            return m.group(1) in os.environ
+        m = re.fullmatch(r"CACHE\{\s*(\w+)\s*\}", name)
+        if m:
+            return m.group(1) in variables and variables.get(m.group(1)) != UNDEFINED_VAR_SENTINEL
         return name in variables and variables.get(name) != UNDEFINED_VAR_SENTINEL
 
     def resolve(name: str) -> str:
