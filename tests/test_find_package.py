@@ -532,7 +532,7 @@ def test_find_package_boost_header_only_component(
         if cmd == ["pkg-config", "--exists", "boost"]:
             return subprocess.CompletedProcess(cmd, 0)
         if cmd == ["pkg-config", "--cflags", "boost"]:
-            return subprocess.CompletedProcess(cmd, 0, stdout=f"-I{inc_dir}")
+            return subprocess.CompletedProcess(cmd, 0, stdout=f"-I{inc_dir.as_posix()}")
         if cmd == ["pkg-config", "--libs", "boost"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="")
         if cmd == ["pkg-config", "--modversion", "boost"]:
