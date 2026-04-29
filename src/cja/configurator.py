@@ -962,27 +962,21 @@ def process_commands(
                         if install_prefix:
                             ctx.variables["CMAKE_INSTALL_PREFIX"] = install_prefix
 
-                        include_dir = ctx.variables.get("CMAKE_INSTALL_INCLUDEDIR", "")
-                        if include_dir:
-                            if Path(include_dir).is_absolute():
-                                full_include_dir = include_dir
-                            else:
-                                full_include_dir = str(
-                                    Path(install_prefix) / include_dir
+                        for _dir_key in (
+                            "BINDIR", "SBINDIR", "LIBEXECDIR", "SYSCONFDIR",
+                            "SHAREDSTATEDIR", "LOCALSTATEDIR", "LIBDIR",
+                            "INCLUDEDIR", "OLDINCLUDEDIR", "DATAROOTDIR",
+                            "DATADIR", "INFODIR", "LOCALEDIR", "MANDIR", "DOCDIR",
+                        ):
+                            rel = ctx.variables.get(f"CMAKE_INSTALL_{_dir_key}", "")
+                            if rel:
+                                if Path(rel).is_absolute():
+                                    full = rel
+                                else:
+                                    full = str(Path(install_prefix) / rel)
+                                ctx.variables[f"CMAKE_INSTALL_FULL_{_dir_key}"] = (
+                                    to_posix_path(full)
                                 )
-                            ctx.variables["CMAKE_INSTALL_FULL_INCLUDEDIR"] = (
-                                to_posix_path(full_include_dir)
-                            )
-
-                        lib_dir = ctx.variables.get("CMAKE_INSTALL_LIBDIR", "")
-                        if lib_dir:
-                            if Path(lib_dir).is_absolute():
-                                full_lib_dir = lib_dir
-                            else:
-                                full_lib_dir = str(Path(install_prefix) / lib_dir)
-                            ctx.variables["CMAKE_INSTALL_FULL_LIBDIR"] = to_posix_path(
-                                full_lib_dir
-                            )
                     elif (
                         module_name.endswith(".cmake")
                         or "/" in module_name
