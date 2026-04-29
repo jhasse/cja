@@ -921,6 +921,7 @@ def process_commands(
                         "CheckCCompilerFlag",
                         "CheckCXXSymbolExists",
                         "CheckSymbolExists",
+                        "CheckIncludeFiles",
                         "CMakeDependentOption",
                         "FetchContent",
                         "FindPackageHandleStandardArgs",
@@ -1395,6 +1396,57 @@ int main() {{
                         temp_out = temp_src.replace(".c", "")
                         result = subprocess.run(
                             [ctx.c_compiler, "-o", temp_out, temp_src],
+                            capture_output=True,
+                            text=True,
+                        )
+                        if result.returncode == 0:
+                            found = True
+                        Path(temp_out).unlink(missing_ok=True)
+                        Path(temp_src).unlink(missing_ok=True)
+                    except Exception:
+                        pass
+
+                    ctx.variables[variable] = "1" if found else ""
+
+            case "check_include_files":
+                # check_include_files(<includes> <variable> [LANGUAGE <language>])
+                # <includes> may be a single semicolon-separated string or multiple args.
+                if len(args) >= 2:
+                    # Determine language (default C)
+                    language = "C"
+                    trimmed_args = list(args)
+                    if "LANGUAGE" in trimmed_args:
+                        lang_idx = trimmed_args.index("LANGUAGE")
+                        if lang_idx + 1 < len(trimmed_args):
+                            language = trimmed_args[lang_idx + 1].upper()
+                        trimmed_args = trimmed_args[:lang_idx]
+
+                    variable = trimmed_args[-1]
+                    includes_args = trimmed_args[:-1]
+
+                    # Each element may itself be a semicolon-separated list
+                    files: list[str] = []
+                    for inc in includes_args:
+                        files.extend(inc.split(";"))
+                    files = [f for f in files if f]
+
+                    compiler = ctx.cxx_compiler if language == "CXX" else ctx.c_compiler
+                    suffix = ".cpp" if language == "CXX" else ".c"
+
+                    found = False
+                    try:
+                        import tempfile
+
+                        includes = "\n".join(f"#include <{f}>" for f in files)
+                        test_code = f"{includes}\nint main(void) {{ return 0; }}\n"
+                        with tempfile.NamedTemporaryFile(
+                            suffix=suffix, delete=False, mode="w"
+                        ) as tmp:
+                            tmp.write(test_code)
+                            temp_src = tmp.name
+                        temp_out = temp_src.replace(suffix, "")
+                        result = subprocess.run(
+                            [compiler, "-o", temp_out, temp_src],
                             capture_output=True,
                             text=True,
                         )
