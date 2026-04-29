@@ -922,6 +922,7 @@ def process_commands(
                         "CheckCXXSymbolExists",
                         "CheckSymbolExists",
                         "CheckIncludeFiles",
+                        "CheckTypeSize",
                         "CMakeDependentOption",
                         "FetchContent",
                         "FindPackageHandleStandardArgs",
