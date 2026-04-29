@@ -1421,6 +1421,11 @@ int main() {{
             case "get_property":
                 handle_get_property(ctx, cmd, args, strict)
 
+            case "define_property":
+                # define_property() only registers metadata (BRIEF_DOCS / FULL_DOCS)
+                # and has no effect on property values, so it is a no-op here.
+                pass
+
             case "get_directory_property":
                 handle_get_directory_property(ctx, cmd, args, strict)
 
