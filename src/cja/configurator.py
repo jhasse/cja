@@ -924,6 +924,7 @@ def process_commands(
                         "CheckIncludeFiles",
                         "CheckTypeSize",
                         "CMakeDependentOption",
+                        "CPack",
                         "FetchContent",
                         "FindPackageHandleStandardArgs",
                         "GNUInstallDirs",
