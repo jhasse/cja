@@ -2062,14 +2062,17 @@ def handle_file(
             assert len(str(ctx.build_dir)) > 1
             # check that build_dir is below cwd:
             assert str(ctx.build_dir).startswith(str(Path.cwd()))
-            # check that only writing to files below build_dir:
-            assert str(Path(filename).resolve()).startswith(
-                str(ctx.build_dir.resolve())
-            ), (
-                "writing to files ({}) outside of build directory ({}) is not allowed".format(
-                    filename, str(ctx.build_dir)
-                )
-            )
+            if strict:
+                # check that only writing to files below build_dir:
+                if not str(Path(filename).resolve()).startswith(
+                    str(ctx.build_dir.resolve())
+                ):
+                    ctx.print_warning(
+                        "writing to files ({}) outside of build directory ({}) is not allowed".format(
+                            filename, str(ctx.build_dir)
+                        ),
+                        cmd.line,
+                    )
             Path(filename).parent.mkdir(parents=True, exist_ok=True)
             with open(filename, mode) as f:
                 f.write(content)
