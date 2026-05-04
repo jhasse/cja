@@ -9,7 +9,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    container: fedora:43
+    container: fedora:44
     env:
       UV_LINK_MODE: copy
       FORCE_COLOR: "1"
@@ -18,7 +18,7 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Install uv
-      run: sudo dnf install -y uv python ninja gcc-c++ zlib-devel gtest-devel libwebp-devel libvorbis-devel ruff nodejs
+      run: sudo dnf install -y uv python ninja gcc-c++ zlib-devel gtest-devel libwebp-devel libvorbis-devel ruff nodejs git
 
     - name: Lint code
       run: |
