@@ -749,8 +749,6 @@ def process_commands(
                 if args:
                     sub_dir_name = args[0]
                     sub_source_dir = ctx.current_source_dir / sub_dir_name
-                    if not sub_source_dir.exists():
-                        pass
 
                     sub_cmakelists = sub_source_dir / "CMakeLists.txt"
                     if sub_cmakelists.exists():
@@ -840,9 +838,9 @@ def process_commands(
                                 commands=sub_commands, on_exit=on_exit_add_subdirectory
                             )
                         )
-                    elif strict:
+                    else:
                         ctx.print_error(
-                            f'add_subdirectory given source "{sub_dir_name}" which does not exist.',
+                            f"file not found: {make_relative(str(sub_cmakelists), ctx.source_dir)}",
                             cmd.line,
                         )
                         sys.exit(1)

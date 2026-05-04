@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import platform
+import pytest
 from cja.generator import BuildContext, process_commands
 from cja.parser import Command
 
@@ -118,6 +119,19 @@ def test_add_subdirectory_restores_current_source_dir(tmp_path: Path) -> None:
     process_commands(commands, ctx)
 
     assert ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] == str(source_dir)
+
+
+def test_add_subdirectory_non_existing(tmp_path: Path) -> None:
+    """Test that add_subdirectory with a non-existing directory raises an error."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+
+    ctx = BuildContext(source_dir=source_dir, build_dir=tmp_path / "build")
+    commands = [Command(name="add_subdirectory", args=["non_existing"], line=1)]
+
+    with pytest.raises(SystemExit) as exc_info:
+        process_commands(commands, ctx)
+    assert exc_info.value.code == 1
 
 
 def test_add_subdirectory_two_levels(tmp_path: Path) -> None:
