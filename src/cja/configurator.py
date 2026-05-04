@@ -324,11 +324,13 @@ def process_commands(
                         frame.fetchcontent_cmd.line if frame.fetchcontent_cmd else 0
                     )
                     try:
-                        clone_cmd = ["git", "clone"]
-                        if git_tag:
-                            clone_cmd.extend(["--branch", git_tag])
-                        clone_cmd.extend([git_repo, str(src_dir)])
+                        clone_cmd = ["git", "clone", git_repo, str(src_dir)]
                         subprocess.run(clone_cmd, check=True)
+                        if git_tag:
+                            subprocess.run(
+                                ["git", "-C", str(src_dir), "checkout", git_tag],
+                                check=True,
+                            )
                     except FileNotFoundError:
                         if strict:
                             ctx.print_error(

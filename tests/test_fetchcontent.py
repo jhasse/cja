@@ -110,3 +110,62 @@ def test_fetchcontent_wrong_hash(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError, match="Hash mismatch"):
         process_commands(commands, ctx)
+
+
+def test_fetchcontent_git_commit_hash(tmp_path: Path) -> None:
+    """Test FetchContent_Declare with GIT_TAG set to a commit hash (not a branch/tag name)."""
+    import subprocess
+
+    # Create a local bare-ish git repo to act as the remote
+    remote_dir = tmp_path / "remote"
+    remote_dir.mkdir()
+    subprocess.run(["git", "init", str(remote_dir)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(remote_dir), "config", "user.email", "test@test.com"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(remote_dir), "config", "user.name", "Test"],
+        check=True,
+        capture_output=True,
+    )
+    (remote_dir / "CMakeLists.txt").write_text("add_library(mylib STATIC mylib.c)")
+    (remote_dir / "mylib.c").write_text("int mylib_func() { return 0; }")
+    subprocess.run(
+        ["git", "-C", str(remote_dir), "add", "."], check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "-C", str(remote_dir), "commit", "-m", "init"],
+        check=True,
+        capture_output=True,
+    )
+
+    # Get the commit hash
+    result = subprocess.run(
+        ["git", "-C", str(remote_dir), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    commit_hash = result.stdout.strip()
+
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    ctx = BuildContext(source_dir=source_dir, build_dir=tmp_path / "build")
+    commands = [
+        Command(name="include", args=["FetchContent"], line=1),
+        Command(
+            name="fetchcontent_declare",
+            args=["mylib", "GIT_REPOSITORY", str(remote_dir), "GIT_TAG", commit_hash],
+            line=2,
+        ),
+        Command(name="fetchcontent_makeavailable", args=["mylib"], line=3),
+    ]
+
+    process_commands(commands, ctx)
+
+    assert ctx.variables["mylib_POPULATED"] == "TRUE"
+    src_dir = ctx.variables["mylib_SOURCE_DIR"]
+    assert (Path(src_dir) / "CMakeLists.txt").exists()
+    assert any(lib.name == "mylib" for lib in ctx.libraries)
