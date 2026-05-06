@@ -566,6 +566,107 @@ def handle_builtin_find_package(
                 print(f"{colored(status_marker(False), 'red')} {package_name}")
         return True
 
+    if package_name == "OpenAL":
+        found = False
+        pkg_name = None
+        openal_cflags = ""
+        openal_libs = ""
+        openal_version = ""
+        include_dirs: list[str] = []
+
+        try:
+            for candidate in ("openal", "openal-soft"):
+                result = subprocess.run(
+                    ["pkg-config", "--exists", candidate],
+                    capture_output=True,
+                )
+                if result.returncode == 0:
+                    pkg_name = candidate
+                    found = True
+                    break
+        except FileNotFoundError:
+            found = False
+
+        if found and pkg_name:
+            cflags_result = subprocess.run(
+                ["pkg-config", "--cflags", pkg_name],
+                capture_output=True,
+                text=True,
+            )
+            libs_result = subprocess.run(
+                ["pkg-config", "--libs", pkg_name],
+                capture_output=True,
+                text=True,
+            )
+            version_result = subprocess.run(
+                ["pkg-config", "--modversion", pkg_name],
+                capture_output=True,
+                text=True,
+            )
+
+            openal_cflags = cflags_result.stdout.strip()
+            openal_libs = libs_result.stdout.strip()
+            openal_version = version_result.stdout.strip()
+
+            for entry in shlex.split(openal_cflags):
+                if entry.startswith("-I"):
+                    include_dirs.append(entry[2:])
+
+        if not found:
+            for include_root in (
+                "/usr/include",
+                "/usr/local/include",
+                "/opt/homebrew/include",
+            ):
+                header = Path(include_root) / "AL/al.h"
+                if header.exists():
+                    include_dirs = [include_root]
+                    openal_cflags = f"-I{include_root}"
+                    lib_search_dirs = _unique_existing_dirs(
+                        [
+                            Path("/usr/lib"),
+                            Path("/usr/lib64"),
+                            Path("/usr/local/lib"),
+                            Path("/opt/homebrew/lib"),
+                        ]
+                    )
+                    if platform.system() == "Darwin":
+                        lib_names = ["libopenal.dylib", "libopenal.a"]
+                    else:
+                        lib_names = ["libopenal.so", "libopenal.a"]
+                    openal_libs = _find_first_library(lib_search_dirs, lib_names)
+                    if openal_libs:
+                        found = True
+                    break
+
+        unique_include_dirs = list(dict.fromkeys(include_dirs))
+
+        if found:
+            ctx.variables["OPENAL_FOUND"] = "TRUE"
+            ctx.variables["OpenAL_FOUND"] = "TRUE"
+            if unique_include_dirs:
+                ctx.variables["OPENAL_INCLUDE_DIR"] = unique_include_dirs[0]
+            ctx.variables["OPENAL_LIBRARY"] = openal_libs
+            ctx.variables["OPENAL_LIBRARIES"] = openal_libs
+            if openal_version:
+                ctx.variables["OPENAL_VERSION_STRING"] = openal_version
+
+            ctx.imported_targets["OpenAL::OpenAL"] = ImportedTarget(
+                cflags=openal_cflags,
+                libs=openal_libs,
+            )
+            if not quiet:
+                print(f"{colored(status_marker(True), 'green')} {package_name}")
+        else:
+            ctx.variables["OPENAL_FOUND"] = "FALSE"
+            ctx.variables["OpenAL_FOUND"] = "FALSE"
+            if required:
+                ctx.print_error("could not find package: OpenAL", cmd.line)
+                raise SystemExit(1)
+            if not quiet:
+                print(f"{colored(status_marker(False), 'red')} {package_name}")
+        return True
+
     if package_name == "Qt5":
         keywords = {
             "REQUIRED",
