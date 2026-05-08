@@ -667,6 +667,81 @@ def handle_builtin_find_package(
                 print(f"{colored(status_marker(False), 'red')} {package_name}")
         return True
 
+    if package_name == "Freetype":
+        found = False
+        pkg_name = None
+        freetype_cflags = ""
+        freetype_libs = ""
+        freetype_version = ""
+        include_dirs: list[str] = []
+
+        try:
+            for candidate in ("freetype2", "freetype"):
+                result = subprocess.run(
+                    ["pkg-config", "--exists", candidate],
+                    capture_output=True,
+                )
+                if result.returncode == 0:
+                    pkg_name = candidate
+                    found = True
+                    break
+        except FileNotFoundError:
+            found = False
+
+        if found and pkg_name:
+            cflags_result = subprocess.run(
+                ["pkg-config", "--cflags", pkg_name],
+                capture_output=True,
+                text=True,
+            )
+            libs_result = subprocess.run(
+                ["pkg-config", "--libs", pkg_name],
+                capture_output=True,
+                text=True,
+            )
+            version_result = subprocess.run(
+                ["pkg-config", "--modversion", pkg_name],
+                capture_output=True,
+                text=True,
+            )
+
+            freetype_cflags = cflags_result.stdout.strip()
+            freetype_libs = libs_result.stdout.strip()
+            freetype_version = version_result.stdout.strip()
+
+            for entry in shlex.split(freetype_cflags):
+                if entry.startswith("-I"):
+                    include_dirs.append(entry[2:])
+
+            unique_include_dirs = list(dict.fromkeys(include_dirs))
+
+            ctx.variables["Freetype_FOUND"] = "TRUE"
+            ctx.variables["FREETYPE_FOUND"] = "TRUE"
+            ctx.variables["FREETYPE_LIBRARIES"] = freetype_libs
+            ctx.variables["FREETYPE_LIBRARY"] = freetype_libs
+            ctx.variables["FREETYPE_INCLUDE_DIRS"] = ";".join(unique_include_dirs)
+            if unique_include_dirs:
+                ctx.variables["FREETYPE_INCLUDE_DIR_ft2build"] = unique_include_dirs[0]
+                ctx.variables["FREETYPE_INCLUDE_DIR_freetype2"] = unique_include_dirs[0]
+            if freetype_version:
+                ctx.variables["FREETYPE_VERSION_STRING"] = freetype_version
+
+            ctx.imported_targets["Freetype::Freetype"] = ImportedTarget(
+                cflags=freetype_cflags,
+                libs=freetype_libs,
+            )
+            if not quiet:
+                print(f"{colored(status_marker(True), 'green')} {package_name}")
+        else:
+            ctx.variables["Freetype_FOUND"] = "FALSE"
+            ctx.variables["FREETYPE_FOUND"] = "FALSE"
+            if required:
+                ctx.print_error("could not find package: Freetype", cmd.line)
+                raise SystemExit(1)
+            if not quiet:
+                print(f"{colored(status_marker(False), 'red')} {package_name}")
+        return True
+
     if package_name == "Qt5":
         keywords = {
             "REQUIRED",
