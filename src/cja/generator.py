@@ -1628,7 +1628,7 @@ def generate_ninja(
 
             install_files: list[str] = []
             for install in ctx.install_targets:
-                destination = install.destination
+                destination = strip_generator_expressions(install.destination)
                 try:
                     source_dir = ctx.source_dir.resolve()
                     destination_path = Path(destination).resolve()

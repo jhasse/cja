@@ -133,4 +133,5 @@ def test_install_targets_ignores_file_set_names(tmp_path: Path) -> None:
 
     ninja_content = ninja_path.read_text()
     # Only one install edge should be emitted for libfmt (FILE_SET "fmt" must not be treated as a target).
-    assert ninja_content.count(f"build include/fmt/libfmt{LIB_EXT}: install_file") == 1
+    # ARCHIVE DESTINATION takes precedence over FILE_SET DESTINATION for static libraries.
+    assert ninja_content.count(f"build lib/libfmt{LIB_EXT}: install_file") == 1

@@ -2445,16 +2445,37 @@ int main() {{
                         targets.append(token)
                         i += 1
 
-                    # Keep current simplified behavior: use the last DESTINATION seen.
+                    # Collect per-section destinations; skip INCLUDES DESTINATION
+                    # (which is for interface headers, not file installation).
+                    # Prefer ARCHIVE > RUNTIME > LIBRARY for the final destination.
+                    _section_kws = {
+                        "ARCHIVE", "LIBRARY", "RUNTIME", "OBJECTS", "FRAMEWORK",
+                        "BUNDLE", "PUBLIC_HEADER", "PRIVATE_HEADER", "RESOURCE",
+                        "FILE_SET", "INCLUDES",
+                    }
+                    _current_section: str | None = None
+                    _destinations: dict[str | None, str] = {}
                     i = 1
                     while i < len(args):
-                        if args[i] == "DESTINATION" and i + 1 < len(args):
-                            destination = ctx.expand_variables(
+                        token = args[i]
+                        if token in _section_kws:
+                            _current_section = token
+                            i += 1
+                        elif token == "DESTINATION" and i + 1 < len(args) and _current_section != "INCLUDES":
+                            _destinations[_current_section] = ctx.expand_variables(
                                 args[i + 1], strict, cmd.line
                             )
                             i += 2
                         else:
                             i += 1
+
+                    for _preferred in ("ARCHIVE", "RUNTIME", "LIBRARY"):
+                        if _preferred in _destinations:
+                            destination = _destinations[_preferred]
+                            break
+                    else:
+                        if _destinations:
+                            destination = next(iter(_destinations.values()))
 
                     ctx.install_targets.append(
                         InstallTarget(targets=targets, destination=destination)
