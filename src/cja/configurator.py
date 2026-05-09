@@ -95,8 +95,6 @@ def process_commands(
     strict: bool = False,
 ) -> None:
     """Process CMake commands and populate the build context."""
-    # Ensure CMAKE_COMMAND is always set
-    ctx.variables["CMAKE_COMMAND"] = "cja"
     ctx.variables["CMAKE_VERSION"] = "3.28.0"
     stack: list[Frame] = [Frame(commands=commands, pc=0, kind="commands")]
 

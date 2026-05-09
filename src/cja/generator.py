@@ -124,6 +124,19 @@ def _infer_msvc_version(compiler: str) -> str:
     return ""
 
 
+def _resolve_cja_cmd() -> list[str]:
+    """Resolve the command needed to invoke cja, handling venv and missing PATH."""
+    cmd = ["cja"]
+    absolute = shutil.which(cmd[0])
+    if absolute is None:
+        cmd = [sys.executable, "-m", "cja"]
+    elif os.getenv("VIRTUAL_ENV") is not None:
+        cmd = [absolute]
+    if platform.system() == "Windows":
+        cmd[0] = to_posix_path(cmd[0])
+    return cmd
+
+
 def _detect_host_system_processor() -> str:
     """Detect host CPU architecture string for CMAKE_HOST_SYSTEM_PROCESSOR."""
     machine = platform.machine().strip()
@@ -517,16 +530,7 @@ def generate_ninja(
                     return f"-D{name}="
                 return f"-D{name}={value}"
 
-            cja_cmd = ["cja"]
-            absolute_cja_cmd = shutil.which(cja_cmd[0])
-            if absolute_cja_cmd is None:
-                # If cja is not in PATH, use the current Python executable to run it as a module
-                cja_cmd = [sys.executable, "-m", "cja"]
-            elif os.getenv("VIRTUAL_ENV") is not None:
-                # The venv might not be active when the user runs ninja (e.g. the IDE runs it)
-                cja_cmd = [absolute_cja_cmd]
-            if platform.system() == "Windows":
-                cja_cmd[0] = to_posix_path(cja_cmd[0])
+            cja_cmd = shlex.split(ctx.variables.get("CMAKE_COMMAND") or " ".join(_resolve_cja_cmd()))
             reconfigure_cmd_parts = cja_cmd + ["--regenerate-during-build"]
             if builddir != "build":
                 reconfigure_cmd_parts += ["-B", "$builddir"]
@@ -1508,7 +1512,7 @@ def generate_ninja(
                 stamp_rel = f"CMakeFiles/{exe.name}.post_build"
                 stamp = f"$builddir/{stamp_rel}"
                 stamp_path = str(ctx.build_dir / stamp_rel)
-                cmake_cmd = ctx.variables.get("CMAKE_COMMAND", sys.argv[0])
+                cmake_cmd = ctx.variables["CMAKE_COMMAND"]
                 pb_cmd_parts: list[str] = []
                 for pb_cmd in exe.post_build_commands:
                     expanded_parts = [_expand_genex(a) for a in pb_cmd]
@@ -1786,6 +1790,7 @@ def configure(
         ctx.c_compiler = ctx.variables["CMAKE_C_COMPILER"]
     if "CMAKE_CXX_COMPILER" in ctx.variables:
         ctx.cxx_compiler = ctx.variables["CMAKE_CXX_COMPILER"]
+    ctx.variables["CMAKE_COMMAND"] = " ".join(_resolve_cja_cmd())
     ctx.variables["CMAKE_C_COMPILER"] = ctx.c_compiler
     ctx.variables["CMAKE_CXX_COMPILER"] = ctx.cxx_compiler
     ctx.variables["CMAKE_C_COMPILER_ID"] = _infer_compiler_id(ctx.c_compiler)
