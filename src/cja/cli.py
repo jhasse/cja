@@ -3,6 +3,7 @@
 import argparse
 import importlib.metadata
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -155,6 +156,30 @@ def cmd_command_mode(args: list[str]) -> int:
     if cmd == "make_directory":
         for directory in cmd_args:
             Path(directory).mkdir(parents=True, exist_ok=True)
+        return 0
+    elif cmd == "touch":
+        for f in cmd_args:
+            p = Path(f)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.touch()
+        return 0
+    elif cmd in ("copy", "copy_if_different"):
+        if len(cmd_args) < 2:
+            error_label = colored("error:", "red", attrs=["bold"])
+            print(f"{error_label} -E {cmd} requires at least 2 arguments", file=sys.stderr)
+            return 1
+        *sources, dest = cmd_args
+        dest_path = Path(dest)
+        for src in sources:
+            src_path = Path(src)
+            if dest_path.is_dir():
+                target = dest_path / src_path.name
+            else:
+                target = dest_path
+            if cmd == "copy_if_different":
+                if target.exists() and target.read_bytes() == src_path.read_bytes():
+                    continue
+            shutil.copy2(str(src_path), str(target))
         return 0
     else:
         error_label = colored("error:", "red", attrs=["bold"])
