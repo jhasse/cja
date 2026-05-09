@@ -1728,68 +1728,97 @@ int main() {{
                         )
 
             case "add_custom_command":
-                # Minimal support: add_custom_command(OUTPUT ... COMMAND ... DEPENDS ... MAIN_DEPENDENCY ... WORKING_DIRECTORY ... VERBATIM)
-                outputs: list[str] = []
-                command_list: list[list[str]] = []
-                depends: list[str] = []
-                main_dependency: str | None = None
-                working_directory: str | None = None
-                verbatim = False
-                arg_idx = 0
-                current_section = None
-                while arg_idx < len(args):
-                    arg = args[arg_idx]
-                    if arg in (
-                        "OUTPUT",
-                        "COMMAND",
-                        "DEPENDS",
-                        "MAIN_DEPENDENCY",
-                        "WORKING_DIRECTORY",
-                    ):
-                        current_section = arg
-                        if arg == "COMMAND":
-                            command_list.append([])
-                    elif arg == "VERBATIM":
-                        verbatim = True
-                    else:
-                        arg = ctx.expand_variables(arg, strict, cmd.line)
-                        if current_section == "OUTPUT":
-                            # Make relative to build_dir or source_dir
-                            rel = make_relative(arg, ctx.build_dir)
-                            if rel == arg:
-                                rel = ctx.resolve_path(arg)
-                            outputs.append(rel)
-                        elif current_section == "COMMAND":
-                            command_list[-1].append(arg)
-                        elif current_section == "DEPENDS":
-                            # Make relative to build_dir or source_dir
-                            rel = make_relative(arg, ctx.build_dir)
-                            if rel == arg:
-                                rel = ctx.resolve_path(arg)
-                            depends.append(rel)
-                        elif current_section == "MAIN_DEPENDENCY":
-                            # Make relative to build_dir or source_dir
-                            rel = make_relative(arg, ctx.build_dir)
-                            if rel == arg:
-                                rel = ctx.resolve_path(arg)
-                            main_dependency = rel
-                        elif current_section == "WORKING_DIRECTORY":
-                            working_directory = arg
-                    arg_idx += 1
+                # Support TARGET form: add_custom_command(TARGET <name> POST_BUILD|PRE_BUILD|PRE_LINK COMMAND ...)
+                if args and args[0] == "TARGET":
+                    if len(args) >= 3:
+                        acc_target_name = ctx.expand_variables(args[1], strict, cmd.line)
+                        acc_when = args[2]  # POST_BUILD, PRE_BUILD, or PRE_LINK
+                        acc_commands: list[list[str]] = []
+                        acc_section: str | None = None
+                        for acc_arg in args[3:]:
+                            if acc_arg in ("COMMAND",):
+                                acc_section = acc_arg
+                                acc_commands.append([])
+                            elif acc_arg in ("VERBATIM", "COMMENT", "USES_TERMINAL", "COMMAND_EXPAND_LISTS"):
+                                acc_section = None
+                            else:
+                                expanded_acc = ctx.expand_variables(acc_arg, strict, cmd.line)
+                                if acc_section == "COMMAND" and acc_commands:
+                                    acc_commands[-1].append(expanded_acc)
+                        if acc_commands:
+                            acc_target_exe = ctx.get_executable(acc_target_name)
+                            acc_target_lib = ctx.get_library(acc_target_name)
+                            acc_target_obj = acc_target_exe or acc_target_lib
+                            if acc_target_obj is not None:
+                                if acc_when == "POST_BUILD":
+                                    acc_target_obj.post_build_commands.extend(acc_commands)
+                                elif acc_when == "PRE_BUILD":
+                                    acc_target_obj.pre_build_commands.extend(acc_commands)
+                                elif acc_when == "PRE_LINK":
+                                    acc_target_obj.pre_link_commands.extend(acc_commands)
+                else:
+                    # Minimal support: add_custom_command(OUTPUT ... COMMAND ... DEPENDS ... MAIN_DEPENDENCY ... WORKING_DIRECTORY ... VERBATIM)
+                    outputs: list[str] = []
+                    command_list: list[list[str]] = []
+                    depends: list[str] = []
+                    main_dependency: str | None = None
+                    working_directory: str | None = None
+                    verbatim = False
+                    arg_idx = 0
+                    current_section = None
+                    while arg_idx < len(args):
+                        arg = args[arg_idx]
+                        if arg in (
+                            "OUTPUT",
+                            "COMMAND",
+                            "DEPENDS",
+                            "MAIN_DEPENDENCY",
+                            "WORKING_DIRECTORY",
+                        ):
+                            current_section = arg
+                            if arg == "COMMAND":
+                                command_list.append([])
+                        elif arg == "VERBATIM":
+                            verbatim = True
+                        else:
+                            arg = ctx.expand_variables(arg, strict, cmd.line)
+                            if current_section == "OUTPUT":
+                                # Make relative to build_dir or source_dir
+                                rel = make_relative(arg, ctx.build_dir)
+                                if rel == arg:
+                                    rel = ctx.resolve_path(arg)
+                                outputs.append(rel)
+                            elif current_section == "COMMAND":
+                                command_list[-1].append(arg)
+                            elif current_section == "DEPENDS":
+                                # Make relative to build_dir or source_dir
+                                rel = make_relative(arg, ctx.build_dir)
+                                if rel == arg:
+                                    rel = ctx.resolve_path(arg)
+                                depends.append(rel)
+                            elif current_section == "MAIN_DEPENDENCY":
+                                # Make relative to build_dir or source_dir
+                                rel = make_relative(arg, ctx.build_dir)
+                                if rel == arg:
+                                    rel = ctx.resolve_path(arg)
+                                main_dependency = rel
+                            elif current_section == "WORKING_DIRECTORY":
+                                working_directory = arg
+                        arg_idx += 1
 
-                if outputs and command_list:
-                    ctx.custom_commands.append(
-                        CustomCommand(
-                            outputs=outputs,
-                            commands=command_list,
-                            depends=depends,
-                            main_dependency=main_dependency,
-                            working_directory=working_directory,
-                            verbatim=verbatim,
-                            defined_file=ctx.current_list_file,
-                            defined_line=cmd.line,
+                    if outputs and command_list:
+                        ctx.custom_commands.append(
+                            CustomCommand(
+                                outputs=outputs,
+                                commands=command_list,
+                                depends=depends,
+                                main_dependency=main_dependency,
+                                working_directory=working_directory,
+                                verbatim=verbatim,
+                                defined_file=ctx.current_list_file,
+                                defined_line=cmd.line,
+                            )
                         )
-                    )
 
             case "add_custom_target":
                 # Support: add_custom_target(<name> [ALL] [COMMAND cmd ...] [DEPENDS ...] [WORKING_DIRECTORY ...] [VERBATIM] [COMMENT ...])

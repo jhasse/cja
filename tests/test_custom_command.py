@@ -305,3 +305,64 @@ add_custom_command(
 
     assert "$builddir/myapp" in ninja_content
     assert "TARGET_FILE" not in ninja_content
+
+
+def test_add_custom_command_target_post_build(tmp_path: Path) -> None:
+    """Test add_custom_command(TARGET ... POST_BUILD COMMAND ...) support."""
+    from cja.generator import configure
+
+    source_dir = tmp_path
+    cmake_content = """\
+cmake_minimum_required(VERSION 3.10)
+project(PostBuildTest)
+
+add_executable(videoplayer main.c)
+
+add_custom_command(TARGET videoplayer POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy ${PROJECT_SOURCE_DIR}/data/verysmall.ogv
+            $<TARGET_FILE_DIR:videoplayer>
+)
+"""
+    (source_dir / "CMakeLists.txt").write_text(cmake_content)
+    (source_dir / "main.c").write_text("int main() { return 0; }\n")
+    (source_dir / "data").mkdir()
+    (source_dir / "data" / "verysmall.ogv").write_text("")
+
+    configure(source_dir, "build")
+
+    ninja_file = source_dir / "build.ninja"
+    assert ninja_file.exists()
+    ninja_content = ninja_file.read_text()
+
+    # A stamp file for post_build should be generated
+    assert "videoplayer.post_build" in ninja_content
+    # The copy command should appear
+    assert "-E" in ninja_content
+    assert "copy" in ninja_content
+    assert "verysmall.ogv" in ninja_content
+
+
+def test_add_custom_command_target_post_build_depends_on_exe(tmp_path: Path) -> None:
+    """Post_build stamp should depend on the executable."""
+    from cja.generator import configure
+
+    source_dir = tmp_path
+    cmake_content = """\
+cmake_minimum_required(VERSION 3.10)
+project(PostBuildDepTest)
+
+add_executable(myapp main.c)
+
+add_custom_command(TARGET myapp POST_BUILD COMMAND echo done)
+"""
+    (source_dir / "CMakeLists.txt").write_text(cmake_content)
+    (source_dir / "main.c").write_text("int main() { return 0; }\n")
+
+    configure(source_dir, "build")
+
+    ninja_content = (source_dir / "build.ninja").read_text()
+
+    # Stamp depends on the executable
+    assert "myapp.post_build" in ninja_content
+    # The executable itself should appear as a dependency of the stamp
+    assert "$builddir/myapp" in ninja_content

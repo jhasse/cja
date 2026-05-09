@@ -36,6 +36,9 @@ class Library:
     is_alias: bool = False
     alias_for: str | None = None
     dependencies: list[str] = field(default_factory=list)
+    post_build_commands: list[list[str]] = field(default_factory=list)
+    pre_build_commands: list[list[str]] = field(default_factory=list)
+    pre_link_commands: list[list[str]] = field(default_factory=list)
 
 
 @dataclass
@@ -55,6 +58,9 @@ class Executable:
     link_directories: list[str] = field(default_factory=list)
     properties: dict[str, str] = field(default_factory=dict)
     dependencies: list[str] = field(default_factory=list)
+    post_build_commands: list[list[str]] = field(default_factory=list)
+    pre_build_commands: list[list[str]] = field(default_factory=list)
+    pre_link_commands: list[list[str]] = field(default_factory=list)
 
 
 @dataclass
