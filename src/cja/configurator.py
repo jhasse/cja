@@ -24,6 +24,7 @@ from .config_utils import (
 from .frame import Frame
 from .build_context import (
     BuildContext,
+    TrackedDict,
 )
 from .parser import Command
 from .commands import (
@@ -414,7 +415,7 @@ def process_commands(
                             saved_current_list_file: Path = saved_current_list_file,
                             saved_parent_directory: str = saved_parent_directory,
                             saved_binary_dir: str = saved_binary_dir,
-                            saved_vars: dict[str, str] = saved_vars,
+                            saved_vars: TrackedDict = saved_vars,
                             saved_parent_scope_vars: dict[
                                 str, str | None
                             ] = saved_parent_scope_vars,
@@ -798,7 +799,7 @@ def process_commands(
                             saved_current_list_file: Path = saved_current_list_file,
                             saved_parent_directory: str = saved_parent_directory,
                             saved_binary_dir: str = saved_binary_dir,
-                            saved_vars: dict[str, str] = saved_vars,
+                            saved_vars: TrackedDict = saved_vars,
                             saved_parent_scope_vars: dict[
                                 str, str | None
                             ] = saved_parent_scope_vars,
@@ -3063,7 +3064,7 @@ int main() {{
                     )
 
                     def on_exit_function(
-                        saved_vars: dict[str, str] = saved_vars,
+                        saved_vars: TrackedDict = saved_vars,
                         saved_current_source_dir: Path = saved_current_source_dir,
                         saved_current_list_file: Path = saved_current_list_file,
                         saved_parent_directory: str = saved_parent_directory,
