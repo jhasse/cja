@@ -248,6 +248,63 @@ def test_cli_make_directory(tmp_path: Path) -> None:
     assert dir_path.is_dir()
 
 
+def test_unused_d_variable_warning(tmp_path: Path) -> None:
+    """Unused -D variables should produce a warning at the end of configure."""
+    source_dir = tmp_path / "hello"
+    copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
+
+    result = subprocess.run(
+        ["uv", "run", "cja", "-DUNUSED_FOO=1", "-DUNUSED_BAR=2"],
+        capture_output=True,
+        text=True,
+        cwd=source_dir,
+    )
+    assert result.returncode == 0
+    assert "Manually-specified variables were not used by the project" in result.stderr
+    assert "UNUSED_FOO" in result.stderr
+    assert "UNUSED_BAR" in result.stderr
+
+
+def test_used_d_variable_no_warning(tmp_path: Path) -> None:
+    """A -D variable referenced by the project must not produce a warning."""
+    source_dir = tmp_path
+    (source_dir / "main.c").write_text("int main() { return 0; }\n")
+    (source_dir / "CMakeLists.txt").write_text(
+        """
+cmake_minimum_required(VERSION 3.10)
+project(used_d)
+if(MY_FLAG)
+    add_definitions(-DMY_FLAG_SET)
+endif()
+add_executable(used_d main.c)
+"""
+    )
+
+    result = subprocess.run(
+        ["uv", "run", "cja", "-DMY_FLAG=ON"],
+        capture_output=True,
+        text=True,
+        cwd=source_dir,
+    )
+    assert result.returncode == 0
+    assert "Manually-specified variables were not used" not in result.stderr
+
+
+def test_unused_d_variable_warning_suppressed_by_quiet(tmp_path: Path) -> None:
+    """--quiet should suppress the unused variable warning."""
+    source_dir = tmp_path / "hello"
+    copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
+
+    result = subprocess.run(
+        ["uv", "run", "cja", "--quiet", "-DUNUSED_FOO=1"],
+        capture_output=True,
+        text=True,
+        cwd=source_dir,
+    )
+    assert result.returncode == 0
+    assert result.stderr == ""
+
+
 def test_quiet_flag_suppresses_output(tmp_path: Path) -> None:
     """Test that --quiet suppresses warnings and status output."""
     source_dir = tmp_path / "hello"

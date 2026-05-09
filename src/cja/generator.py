@@ -1840,6 +1840,21 @@ def configure(
                     f"{colored('warning:', 'magenta', attrs=['bold'])} `{' '.join(restat_cmd)}` failed with exit code {e.returncode}:\n{e.output.decode().rstrip()}"
                 )
 
+    if not quiet and ctx.cli_variables:
+        unused = sorted(
+            name
+            for name in ctx.cli_variables
+            if name not in ctx.variables._tracker
+        )
+        if unused:
+            warning_label = colored("warning:", "magenta", attrs=["bold"])
+            print(
+                f"{warning_label} Manually-specified variables were not used by the project:",
+                file=sys.stderr,
+            )
+            for name in unused:
+                print(f"    {name}", file=sys.stderr)
+
     if not quiet:
         print(f"{colored('Configured', 'green', attrs=['bold'])} {build_dir}.ninja")
     return ctx

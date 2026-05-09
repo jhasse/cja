@@ -4,6 +4,7 @@ from pathlib import Path
 import platform
 import re
 import sys
+from typing import Any
 
 from termcolor import colored
 
@@ -11,6 +12,47 @@ from .parser import Command
 from .syntax import FetchContentInfo, FunctionDef, MacroDef, SourceFileProperties, Test
 from .utils import UNDEFINED_VAR_SENTINEL, make_relative, resolve_cmake_path
 from .targets import Executable, ImportedTarget, InstallTarget, Library
+
+
+class TrackedDict(dict[str, str]):
+    """Dict subclass that records which keys are read.
+
+    Used so we can warn at the end of configure about -D variables that the
+    project never accessed (mirrors CMake's "Manually-specified variables were
+    not used by the project" warning).
+    """
+
+    def __init__(
+        self,
+        *args: Any,
+        _tracker: set[str] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self._tracker: set[str] = _tracker if _tracker is not None else set()
+
+    def __getitem__(self, key: str) -> str:
+        self._tracker.add(key)
+        return super().__getitem__(key)
+
+    def __contains__(self, key: object) -> bool:
+        if isinstance(key, str):
+            self._tracker.add(key)
+        return super().__contains__(key)
+
+    def get(self, key: str, default: Any = None) -> Any:  # type: ignore[override]
+        self._tracker.add(key)
+        return super().get(key, default)
+
+    def setdefault(self, key: str, default: Any = "") -> Any:  # type: ignore[override]
+        self._tracker.add(key)
+        return super().setdefault(key, default)
+
+    def copy(self) -> "TrackedDict":
+        new = TrackedDict(_tracker=self._tracker)
+        for k, v in dict.items(self):
+            dict.__setitem__(new, k, v)
+        return new
 
 
 def _default_c_compiler() -> str:
@@ -72,7 +114,7 @@ class BuildContext:
     current_source_dir: Path = field(init=False)
     current_list_file: Path = field(init=False)
     project_name: str = ""
-    variables: dict[str, str] = field(default_factory=dict)
+    variables: TrackedDict = field(default_factory=TrackedDict)
     cache_variables: set[str] = field(default_factory=set)  # Variables from -D flags
     cli_variables: dict[str, str] = field(
         default_factory=dict
