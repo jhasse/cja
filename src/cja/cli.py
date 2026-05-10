@@ -133,6 +133,8 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     # Build just the executable
     ninja_cmd = ["ninja", "-f", str(ninja_file), exe_path]
+    sys.stdout.flush()
+    sys.stderr.flush()
     result = subprocess.run(ninja_cmd)
     if result.returncode != 0:
         return result.returncode
@@ -141,6 +143,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     exe_cmd = [str(Path(exe_path))]
     if hasattr(args, "ninja_args"):
         exe_cmd.extend(args.ninja_args)
+    sys.stdout.flush()
+    sys.stderr.flush()
     result = subprocess.run(exe_cmd)
     return result.returncode
 
@@ -231,6 +235,8 @@ def _run_ninja(args: argparse.Namespace, target: str | None) -> int:
         ninja_cmd.append(target)
     if hasattr(args, "ninja_args"):
         ninja_cmd.extend(args.ninja_args)
+    sys.stdout.flush()
+    sys.stderr.flush()
     result = subprocess.run(ninja_cmd)
     return result.returncode
 
