@@ -342,6 +342,46 @@ add_custom_command(TARGET videoplayer POST_BUILD
     assert "verysmall.ogv" in ninja_content
 
 
+def test_add_custom_command_target_post_build_cmake_command_with_spaces(
+    tmp_path: Path,
+) -> None:
+    """CMAKE_COMMAND containing spaces (e.g. 'python3 -m cja') must not be quoted
+    as a single shell token in POST_BUILD commands."""
+    from unittest.mock import patch
+
+    import cja.generator
+    from cja.generator import configure
+
+    source_dir = tmp_path
+    cmake_content = """\
+cmake_minimum_required(VERSION 3.10)
+project(PostBuildSpacesTest)
+
+add_executable(audioplayer main.c)
+
+add_custom_command(TARGET audioplayer POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy ${PROJECT_SOURCE_DIR}/data/test.ogg build
+)
+"""
+    (source_dir / "CMakeLists.txt").write_text(cmake_content)
+    (source_dir / "main.c").write_text("int main() { return 0; }\n")
+    (source_dir / "data").mkdir()
+    (source_dir / "data" / "test.ogg").write_text("")
+
+    # Patch _resolve_cja_cmd to return a multi-word command (simulating a venv
+    # where cja is not on PATH and must be invoked as "python3 -m cja").
+    with patch.object(cja.generator, "_resolve_cja_cmd", return_value=["/fake/python3", "-m", "cja"]):
+        configure(source_dir, "build")
+
+    ninja_content = (source_dir / "build.ninja").read_text()
+
+    # The multi-word command must be split into individually-quoted tokens, not
+    # wrapped as one quoted string that the shell cannot find as a file.
+    assert "'/fake/python3 -m cja'" not in ninja_content
+    assert "/fake/python3" in ninja_content
+    assert "-m" in ninja_content
+
+
 def test_add_custom_command_target_post_build_depends_on_exe(tmp_path: Path) -> None:
     """Post_build stamp should depend on the executable."""
     from cja.generator import configure

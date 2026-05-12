@@ -1513,12 +1513,22 @@ def generate_ninja(
                 stamp = f"$builddir/{stamp_rel}"
                 stamp_path = str(ctx.build_dir / stamp_rel)
                 cmake_cmd = ctx.variables["CMAKE_COMMAND"]
+                cmake_cmd_parts = shlex.split(cmake_cmd)
                 pb_cmd_parts: list[str] = []
                 for pb_cmd in exe.post_build_commands:
-                    expanded_parts = [_expand_genex(a) for a in pb_cmd]
+                    expanded_parts: list[str] = []
+                    for a in pb_cmd:
+                        expanded = _expand_genex(a)
+                        if expanded == cmake_cmd and len(cmake_cmd_parts) > 1:
+                            # CMAKE_COMMAND may be a multi-word command like
+                            # "python3 -m cja"; expand it into separate tokens
+                            expanded_parts.extend(cmake_cmd_parts)
+                        else:
+                            expanded_parts.append(expanded)
                     pb_cmd_parts.append(" ".join(shlex.quote(p) for p in expanded_parts))
                 # Touch the stamp so ninja skips this step when nothing has changed
-                pb_cmd_parts.append(f"{shlex.quote(cmake_cmd)} -E touch {shlex.quote(stamp_path)}")
+                cmake_cmd_quoted = " ".join(shlex.quote(p) for p in cmake_cmd_parts)
+                pb_cmd_parts.append(f"{cmake_cmd_quoted} -E touch {shlex.quote(stamp_path)}")
                 pb_cmd_str = " && ".join(pb_cmd_parts)
                 n.build([stamp], "custom_command", [exe_name], variables={"cmd": pb_cmd_str})
                 n.newline()
