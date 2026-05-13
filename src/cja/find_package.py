@@ -842,6 +842,43 @@ def handle_builtin_find_package(
                 print(f"{colored(status_marker(False), 'red')} {package_name}")
         return True
 
+    if package_name == "BISON":
+        bison_executable = shutil.which("bison")
+        bison_version = ""
+
+        if bison_executable:
+            try:
+                version_result = subprocess.run(
+                    [bison_executable, "--version"],
+                    capture_output=True,
+                    text=True,
+                )
+                version_match = re.search(
+                    r"(\d+\.\d+(?:\.\d+)?)", version_result.stdout
+                )
+                if version_match:
+                    bison_version = version_match.group(1)
+            except (OSError, subprocess.SubprocessError):
+                pass
+
+        found = bool(bison_executable)
+
+        if found:
+            ctx.variables["BISON_FOUND"] = "TRUE"
+            ctx.variables["BISON_EXECUTABLE"] = bison_executable or ""
+            if bison_version:
+                ctx.variables["BISON_VERSION"] = bison_version
+            if not quiet:
+                print(f"{colored(status_marker(True), 'green')} {package_name}")
+        else:
+            ctx.variables["BISON_FOUND"] = "FALSE"
+            if required:
+                ctx.print_error("could not find package: BISON", cmd.line)
+                raise SystemExit(1)
+            if not quiet:
+                print(f"{colored(status_marker(False), 'red')} {package_name}")
+        return True
+
     if package_name == "FLEX":
         flex_executable = shutil.which("flex")
         flex_version = ""

@@ -2764,6 +2764,122 @@ int main() {{
                 if header_rel:
                     ctx.variables[f"FLEX_{flex_name}_OUTPUT_HEADER"] = header_rel
 
+            case "bison_target":
+                # BISON_TARGET(<Name> <BisonInput> <BisonOutput>
+                #              [COMPILE_FLAGS <flags>]
+                #              [DEFINES_FILE <file>]
+                #              [REPORT_FILE <file>]
+                #              [VERBOSE] [REPORT])
+                if len(args) < 3:
+                    if strict:
+                        ctx.print_error(
+                            "BISON_TARGET requires Name, BisonInput, and BisonOutput",
+                            cmd.line,
+                        )
+                        sys.exit(1)
+                    frame.pc += 1
+                    continue
+
+                bison_name = args[0]
+                bison_input = args[1]
+                bison_output = args[2]
+                bison_compile_flags: list[str] = []
+                bison_defines_file: str | None = None
+                bison_report_file: str | None = None
+
+                arg_idx = 3
+                while arg_idx < len(args):
+                    token = args[arg_idx]
+                    if token == "COMPILE_FLAGS" and arg_idx + 1 < len(args):
+                        bison_compile_flags = shlex.split(args[arg_idx + 1])
+                        arg_idx += 2
+                    elif token == "DEFINES_FILE" and arg_idx + 1 < len(args):
+                        bison_defines_file = args[arg_idx + 1]
+                        arg_idx += 2
+                    elif token == "REPORT_FILE" and arg_idx + 1 < len(args):
+                        bison_report_file = args[arg_idx + 1]
+                        arg_idx += 2
+                    elif token in ("VERBOSE", "REPORT"):
+                        arg_idx += 1
+                    else:
+                        arg_idx += 1
+
+                bison_exe = ctx.variables.get("BISON_EXECUTABLE", "") or "bison"
+
+                def _bison_absolute(path_str: str) -> str:
+                    p = Path(path_str)
+                    if p.is_absolute():
+                        return str(p)
+                    return str((ctx.current_source_dir / p).resolve())
+
+                def _bison_relative(path_str: str) -> str:
+                    rel = make_relative(path_str, ctx.build_dir)
+                    if rel == path_str:
+                        rel = ctx.resolve_path(path_str)
+                    return rel
+
+                input_rel = _bison_relative(bison_input)
+                input_abs = _bison_absolute(bison_input)
+                output_rel = _bison_relative(bison_output)
+                output_abs = _bison_absolute(bison_output)
+
+                # Default header: replace source extension with .h/.hpp counterpart.
+                output_path = Path(bison_output)
+                header_default_ext = ".h"
+                if output_path.suffix in (".cpp", ".cxx", ".cc", ".C"):
+                    suffix_map = {
+                        ".cpp": ".hpp",
+                        ".cxx": ".hxx",
+                        ".cc": ".hh",
+                        ".C": ".H",
+                    }
+                    header_default_ext = suffix_map[output_path.suffix]
+                default_header = str(output_path.with_suffix(header_default_ext))
+                header_source = bison_defines_file or default_header
+
+                header_rel = _bison_relative(header_source)
+                header_abs = _bison_absolute(header_source)
+
+                bison_outputs = [output_rel, header_rel]
+
+                report_rel: str | None = None
+                report_abs: str | None = None
+                if bison_report_file:
+                    report_rel = _bison_relative(bison_report_file)
+                    report_abs = _bison_absolute(bison_report_file)
+                    bison_outputs.append(report_rel)
+
+                bison_cmd = [bison_exe]
+                bison_cmd.append(f"--defines={header_abs}")
+                if report_abs:
+                    bison_cmd.append(f"--report-file={report_abs}")
+                bison_cmd.extend(bison_compile_flags)
+                bison_cmd.extend(["-o", output_abs, input_abs])
+
+                ctx.custom_commands.append(
+                    CustomCommand(
+                        outputs=bison_outputs,
+                        commands=[bison_cmd],
+                        depends=[input_rel],
+                        main_dependency=input_rel,
+                        working_directory=None,
+                        verbatim=False,
+                        defined_file=ctx.current_list_file,
+                        defined_line=cmd.line,
+                    )
+                )
+
+                ctx.variables[f"BISON_{bison_name}_DEFINED"] = "TRUE"
+                ctx.variables[f"BISON_{bison_name}_INPUT"] = input_rel
+                ctx.variables[f"BISON_{bison_name}_OUTPUT_SOURCE"] = output_rel
+                ctx.variables[f"BISON_{bison_name}_OUTPUT_HEADER"] = header_rel
+                ctx.variables[f"BISON_{bison_name}_OUTPUTS"] = ";".join(bison_outputs)
+                ctx.variables[f"BISON_{bison_name}_COMPILE_FLAGS"] = " ".join(
+                    bison_compile_flags
+                )
+                if report_rel:
+                    ctx.variables[f"BISON_{bison_name}_REPORT_FILE"] = report_rel
+
             case "pkg_check_modules":
                 if args:
                     prefix = args[0]
