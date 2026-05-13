@@ -2677,6 +2677,93 @@ int main() {{
                                     f"{colored(status_marker(False), 'red')} {package_name}"
                                 )
 
+            case "flex_target":
+                # FLEX_TARGET(<Name> <FlexInput> <FlexOutput>
+                #             [COMPILE_FLAGS <flags>] [DEFINES_FILE <file>])
+                if len(args) < 3:
+                    if strict:
+                        ctx.print_error(
+                            "FLEX_TARGET requires Name, FlexInput, and FlexOutput",
+                            cmd.line,
+                        )
+                        sys.exit(1)
+                    frame.pc += 1
+                    continue
+
+                flex_name = args[0]
+                flex_input = args[1]
+                flex_output = args[2]
+                flex_compile_flags: list[str] = []
+                flex_defines_file: str | None = None
+
+                arg_idx = 3
+                while arg_idx < len(args):
+                    token = args[arg_idx]
+                    if token == "COMPILE_FLAGS" and arg_idx + 1 < len(args):
+                        flex_compile_flags = shlex.split(args[arg_idx + 1])
+                        arg_idx += 2
+                    elif token == "DEFINES_FILE" and arg_idx + 1 < len(args):
+                        flex_defines_file = args[arg_idx + 1]
+                        arg_idx += 2
+                    else:
+                        arg_idx += 1
+
+                flex_exe = ctx.variables.get("FLEX_EXECUTABLE", "") or "flex"
+
+                def _absolute_anchored(path_str: str) -> str:
+                    p = Path(path_str)
+                    if p.is_absolute():
+                        return str(p)
+                    return str((ctx.current_source_dir / p).resolve())
+
+                input_rel = make_relative(flex_input, ctx.build_dir)
+                if input_rel == flex_input:
+                    input_rel = ctx.resolve_path(flex_input)
+                input_abs = _absolute_anchored(flex_input)
+
+                output_rel = make_relative(flex_output, ctx.build_dir)
+                if output_rel == flex_output:
+                    output_rel = ctx.resolve_path(flex_output)
+                output_abs = _absolute_anchored(flex_output)
+
+                flex_outputs = [output_rel]
+                header_rel: str | None = None
+                header_abs: str | None = None
+                if flex_defines_file:
+                    header_rel = make_relative(flex_defines_file, ctx.build_dir)
+                    if header_rel == flex_defines_file:
+                        header_rel = ctx.resolve_path(flex_defines_file)
+                    header_abs = _absolute_anchored(flex_defines_file)
+                    flex_outputs.append(header_rel)
+
+                flex_cmd = [flex_exe]
+                if header_abs:
+                    flex_cmd.append(f"--header-file={header_abs}")
+                flex_cmd.extend(flex_compile_flags)
+                flex_cmd.extend(["-o", output_abs, input_abs])
+
+                ctx.custom_commands.append(
+                    CustomCommand(
+                        outputs=flex_outputs,
+                        commands=[flex_cmd],
+                        depends=[input_rel],
+                        main_dependency=input_rel,
+                        working_directory=None,
+                        verbatim=False,
+                        defined_file=ctx.current_list_file,
+                        defined_line=cmd.line,
+                    )
+                )
+
+                ctx.variables[f"FLEX_{flex_name}_DEFINED"] = "TRUE"
+                ctx.variables[f"FLEX_{flex_name}_OUTPUTS"] = ";".join(flex_outputs)
+                ctx.variables[f"FLEX_{flex_name}_INPUT"] = input_rel
+                ctx.variables[f"FLEX_{flex_name}_COMPILE_FLAGS"] = " ".join(
+                    flex_compile_flags
+                )
+                if header_rel:
+                    ctx.variables[f"FLEX_{flex_name}_OUTPUT_HEADER"] = header_rel
+
             case "pkg_check_modules":
                 if args:
                     prefix = args[0]

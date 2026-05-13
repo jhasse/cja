@@ -842,4 +842,77 @@ def handle_builtin_find_package(
                 print(f"{colored(status_marker(False), 'red')} {package_name}")
         return True
 
+    if package_name == "FLEX":
+        flex_executable = shutil.which("flex")
+        flex_version = ""
+        include_dir = ""
+        flex_library = ""
+
+        if flex_executable:
+            try:
+                version_result = subprocess.run(
+                    [flex_executable, "--version"],
+                    capture_output=True,
+                    text=True,
+                )
+                version_match = re.search(
+                    r"(\d+\.\d+(?:\.\d+)?)", version_result.stdout
+                )
+                if version_match:
+                    flex_version = version_match.group(1)
+            except (OSError, subprocess.SubprocessError):
+                pass
+
+        header_search_dirs = _unique_existing_dirs(
+            [
+                Path("/usr/include"),
+                Path("/usr/local/include"),
+                Path("/opt/homebrew/include"),
+            ]
+        )
+        for inc_dir in header_search_dirs:
+            if (inc_dir / "FlexLexer.h").exists():
+                include_dir = str(inc_dir)
+                break
+
+        lib_search_dirs = _unique_existing_dirs(
+            [
+                Path("/usr/lib"),
+                Path("/usr/lib64"),
+                Path("/usr/lib/x86_64-linux-gnu"),
+                Path("/usr/lib/aarch64-linux-gnu"),
+                Path("/usr/local/lib"),
+                Path("/opt/homebrew/lib"),
+            ]
+        )
+        if platform.system() == "Darwin":
+            lib_names = ["libfl.dylib", "libfl.a"]
+        elif platform.system() == "Windows":
+            lib_names = ["fl.lib", "libfl.lib"]
+        else:
+            lib_names = ["libfl.so", "libfl.a"]
+        flex_library = _find_first_library(lib_search_dirs, lib_names)
+
+        found = bool(flex_executable)
+
+        if found:
+            ctx.variables["FLEX_FOUND"] = "TRUE"
+            ctx.variables["FLEX_EXECUTABLE"] = flex_executable or ""
+            if flex_version:
+                ctx.variables["FLEX_VERSION"] = flex_version
+            if include_dir:
+                ctx.variables["FLEX_INCLUDE_DIRS"] = include_dir
+            if flex_library:
+                ctx.variables["FLEX_LIBRARIES"] = flex_library
+            if not quiet:
+                print(f"{colored(status_marker(True), 'green')} {package_name}")
+        else:
+            ctx.variables["FLEX_FOUND"] = "FALSE"
+            if required:
+                ctx.print_error("could not find package: FLEX", cmd.line)
+                raise SystemExit(1)
+            if not quiet:
+                print(f"{colored(status_marker(False), 'red')} {package_name}")
+        return True
+
     return False
