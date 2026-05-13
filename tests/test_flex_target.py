@@ -33,9 +33,9 @@ def test_flex_target_creates_custom_command() -> None:
     flex_argv = custom.commands[0]
     assert "-o" in flex_argv
     output_index = flex_argv.index("-o") + 1
-    assert flex_argv[output_index].endswith("/scanner.c")
+    assert Path(flex_argv[output_index]).name == "scanner.c"
     assert Path(flex_argv[output_index]).is_absolute()
-    assert flex_argv[-1].endswith("/scanner.l")
+    assert Path(flex_argv[-1]).name == "scanner.l"
     assert custom.depends == ["scanner.l"]
     assert custom.main_dependency == "scanner.l"
 
@@ -66,7 +66,8 @@ def test_flex_target_with_defines_file() -> None:
     assert ctx.variables["FLEX_MyScanner_OUTPUT_HEADER"] == "scanner.h"
     assert "scanner.h" in ctx.custom_commands[0].outputs
     assert any(
-        arg.startswith("--header-file=") and arg.endswith("/scanner.h")
+        arg.startswith("--header-file=")
+        and Path(arg.split("=", 1)[1]).name == "scanner.h"
         for arg in ctx.custom_commands[0].commands[0]
     )
 

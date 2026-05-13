@@ -34,8 +34,8 @@ def test_bison_target_creates_custom_command() -> None:
     assert any(arg.startswith("--defines=") for arg in bison_argv)
     assert "-o" in bison_argv
     output_index = bison_argv.index("-o") + 1
-    assert bison_argv[output_index].endswith("/parser.c")
-    assert bison_argv[-1].endswith("/parser.y")
+    assert Path(bison_argv[output_index]).name == "parser.c"
+    assert Path(bison_argv[-1]).name == "parser.y"
     assert custom.depends == ["parser.y"]
 
     assert ctx.variables["BISON_MyParser_DEFINED"] == "TRUE"
@@ -83,7 +83,8 @@ def test_bison_target_defines_file_override() -> None:
     assert ctx.variables["BISON_MyParser_OUTPUT_HEADER"] == "tokens.h"
     assert "tokens.h" in ctx.custom_commands[0].outputs
     assert any(
-        arg.startswith("--defines=") and arg.endswith("/tokens.h")
+        arg.startswith("--defines=")
+        and Path(arg.split("=", 1)[1]).name == "tokens.h"
         for arg in ctx.custom_commands[0].commands[0]
     )
 
@@ -110,7 +111,8 @@ def test_bison_target_report_file() -> None:
     assert ctx.variables["BISON_MyParser_REPORT_FILE"] == "parser.output"
     assert "parser.output" in ctx.custom_commands[0].outputs
     assert any(
-        arg.startswith("--report-file=") and arg.endswith("/parser.output")
+        arg.startswith("--report-file=")
+        and Path(arg.split("=", 1)[1]).name == "parser.output"
         for arg in ctx.custom_commands[0].commands[0]
     )
 
