@@ -3075,6 +3075,13 @@ int main() {{
             case "mark_as_advanced":
                 pass  # not needed because we don't have a GUI (yet?)
 
+            case "block" | "endblock":
+                # Stubbed: cja treats all policies as NEW and does not model
+                # CMake's per-block scopes, so block(SCOPE_FOR POLICIES) is a
+                # no-op. SCOPE_FOR VARIABLES would technically leak — accepted
+                # as a practical compromise until a real scope frame is needed.
+                pass
+
             case "execute_process":
                 # Parse execute_process arguments
                 commands_list: list[list[str]] = []
