@@ -159,6 +159,22 @@ def test_gtest_imported_target_fallback_link_flags(tmp_path: Path) -> None:
     assert "/opt/lib/libgtest.a" in ninja_content
 
 
+def test_find_package_gtest_bundled_module_loads_googletest() -> None:
+    """Bundled FindGTest.cmake includes GoogleTest.cmake without errors.
+
+    FindGTest.cmake ends with `include(${CMAKE_CURRENT_LIST_DIR}/GoogleTest.cmake)`;
+    both files must ship together so strict-mode configures don't trip the
+    `include() could not find file` error.
+    """
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [Command(name="find_package", args=["GTest"], line=1)]
+
+    process_commands(commands, ctx, strict=True)
+
+    bundled_dir = Path(__file__).parent.parent / "src" / "cja" / "cmake" / "Modules"
+    assert (bundled_dir / "GoogleTest.cmake").exists()
+
+
 def test_find_package_gtest_with_if() -> None:
     """Test find_package(GTest) used in if condition."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
