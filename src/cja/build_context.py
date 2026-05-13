@@ -159,6 +159,7 @@ class BuildContext:
     )  # Properties for directories
     parent_directory: str = ""  # Path to parent directory (if in subdirectory)
     cmake_files: set[Path] = field(default_factory=set)
+    include_guarded_files: set[Path] = field(default_factory=set)
     c_compiler: str = field(default_factory=_default_c_compiler)
     cxx_compiler: str = field(default_factory=_default_cxx_compiler)
     quiet: bool = False

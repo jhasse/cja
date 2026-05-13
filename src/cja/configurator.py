@@ -1076,6 +1076,38 @@ def process_commands(
                             ctx.print_error(f"unknown module: {module_name}", cmd.line)
                             sys.exit(1)
 
+            case "include_guard":
+                scope = args[0].upper() if args else "DIRECTORY"
+                if scope not in ("DIRECTORY", "GLOBAL"):
+                    if strict:
+                        ctx.print_error(
+                            f"include_guard given unknown scope: {scope}", cmd.line
+                        )
+                        sys.exit(1)
+                    scope = "DIRECTORY"
+
+                guarded_file = ctx.current_list_file.resolve()
+                if guarded_file in ctx.include_guarded_files:
+                    scope_index = next(
+                        (
+                            i
+                            for i in range(len(stack) - 1, -1, -1)
+                            if stack[i].kind == "include"
+                        ),
+                        None,
+                    )
+                    if scope_index is not None:
+                        while len(stack) > scope_index:
+                            popped = stack.pop()
+                            if popped.on_exit:
+                                popped.on_exit()
+                        continue
+                    frame.pc = len(current_commands)
+                    continue
+                ctx.include_guarded_files.add(guarded_file)
+                frame.pc += 1
+                continue
+
             case "check_ipo_supported":
                 # check_ipo_supported(RESULT <var> [OUTPUT <var>] [LANGUAGES <lang>...])
                 result_var = None
