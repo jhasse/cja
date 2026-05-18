@@ -40,8 +40,10 @@ def test_bison_target_creates_custom_command() -> None:
 
     assert ctx.variables["BISON_MyParser_DEFINED"] == "TRUE"
     assert ctx.variables["BISON_MyParser_INPUT"] == "parser.y"
-    assert ctx.variables["BISON_MyParser_OUTPUT_SOURCE"] == "parser.c"
-    assert ctx.variables["BISON_MyParser_OUTPUT_HEADER"] == "parser.h"
+    # BISON_<Name>_OUTPUT_{SOURCE,HEADER} are anchored to CMAKE_CURRENT_BINARY_DIR
+    # per CMake's FindBISON, expressed relative to the source dir.
+    assert ctx.variables["BISON_MyParser_OUTPUT_SOURCE"] == "build/parser.c"
+    assert ctx.variables["BISON_MyParser_OUTPUT_HEADER"] == "build/parser.h"
 
 
 def test_bison_target_cpp_default_header() -> None:
@@ -57,7 +59,7 @@ def test_bison_target_cpp_default_header() -> None:
     ]
     process_commands(commands, ctx)
 
-    assert ctx.variables["BISON_MyParser_OUTPUT_HEADER"] == "parser.hpp"
+    assert ctx.variables["BISON_MyParser_OUTPUT_HEADER"] == "build/parser.hpp"
     assert "parser.hpp" in ctx.custom_commands[0].outputs
 
 
@@ -80,7 +82,7 @@ def test_bison_target_defines_file_override() -> None:
     ]
     process_commands(commands, ctx)
 
-    assert ctx.variables["BISON_MyParser_OUTPUT_HEADER"] == "tokens.h"
+    assert ctx.variables["BISON_MyParser_OUTPUT_HEADER"] == "build/tokens.h"
     assert "tokens.h" in ctx.custom_commands[0].outputs
     assert any(
         arg.startswith("--defines=")
@@ -108,7 +110,7 @@ def test_bison_target_report_file() -> None:
     ]
     process_commands(commands, ctx)
 
-    assert ctx.variables["BISON_MyParser_REPORT_FILE"] == "parser.output"
+    assert ctx.variables["BISON_MyParser_REPORT_FILE"] == "build/parser.output"
     assert "parser.output" in ctx.custom_commands[0].outputs
     assert any(
         arg.startswith("--report-file=")

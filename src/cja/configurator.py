@@ -2709,32 +2709,50 @@ int main() {{
                         arg_idx += 1
 
                 flex_exe = ctx.variables.get("FLEX_EXECUTABLE", "") or "flex"
+                current_binary_dir = Path(
+                    ctx.variables.get(
+                        "CMAKE_CURRENT_BINARY_DIR", str(ctx.build_dir)
+                    )
+                )
 
-                def _absolute_anchored(path_str: str) -> str:
+                def _absolute_against(path_str: str, base: Path) -> str:
                     p = Path(path_str)
                     if p.is_absolute():
                         return str(p)
-                    return str((ctx.current_source_dir / p).resolve())
+                    return str((base / p).resolve())
 
-                input_rel = make_relative(flex_input, ctx.build_dir)
-                if input_rel == flex_input:
-                    input_rel = ctx.resolve_path(flex_input)
-                input_abs = _absolute_anchored(flex_input)
+                def _build_relative_or_source_relative(abs_path: str) -> str:
+                    """Return path for custom_command.outputs: relative to build_dir
+                    when under it (so the generator adds `$builddir/`), else relative
+                    to source_dir."""
+                    rel = make_relative(abs_path, ctx.build_dir)
+                    if rel != abs_path:
+                        return rel
+                    return make_relative(abs_path, ctx.source_dir)
 
-                output_rel = make_relative(flex_output, ctx.build_dir)
-                if output_rel == flex_output:
-                    output_rel = ctx.resolve_path(flex_output)
-                output_abs = _absolute_anchored(flex_output)
+                input_abs = _absolute_against(flex_input, ctx.current_source_dir)
+                input_rel = make_relative(input_abs, ctx.source_dir)
 
-                flex_outputs = [output_rel]
-                header_rel: str | None = None
+                # Per CMake's FindFLEX: a relative FlexOutput is anchored to
+                # CMAKE_CURRENT_BINARY_DIR, and FLEX_<Name>_OUTPUTS is set to that
+                # full path. We store it relative to source_dir so it composes with
+                # the rest of cja's path conventions.
+                output_abs = _absolute_against(flex_output, current_binary_dir)
+                output_var = make_relative(output_abs, ctx.source_dir)
+                output_cc = _build_relative_or_source_relative(output_abs)
+
+                flex_outputs_var = [output_var]
+                flex_outputs_cc = [output_cc]
+                header_var: str | None = None
                 header_abs: str | None = None
                 if flex_defines_file:
-                    header_rel = make_relative(flex_defines_file, ctx.build_dir)
-                    if header_rel == flex_defines_file:
-                        header_rel = ctx.resolve_path(flex_defines_file)
-                    header_abs = _absolute_anchored(flex_defines_file)
-                    flex_outputs.append(header_rel)
+                    header_abs = _absolute_against(
+                        flex_defines_file, current_binary_dir
+                    )
+                    header_var = make_relative(header_abs, ctx.source_dir)
+                    header_cc = _build_relative_or_source_relative(header_abs)
+                    flex_outputs_var.append(header_var)
+                    flex_outputs_cc.append(header_cc)
 
                 flex_cmd = [flex_exe]
                 if header_abs:
@@ -2744,7 +2762,7 @@ int main() {{
 
                 ctx.custom_commands.append(
                     CustomCommand(
-                        outputs=flex_outputs,
+                        outputs=flex_outputs_cc,
                         commands=[flex_cmd],
                         depends=[input_rel],
                         main_dependency=input_rel,
@@ -2756,13 +2774,15 @@ int main() {{
                 )
 
                 ctx.variables[f"FLEX_{flex_name}_DEFINED"] = "TRUE"
-                ctx.variables[f"FLEX_{flex_name}_OUTPUTS"] = ";".join(flex_outputs)
+                ctx.variables[f"FLEX_{flex_name}_OUTPUTS"] = ";".join(
+                    flex_outputs_var
+                )
                 ctx.variables[f"FLEX_{flex_name}_INPUT"] = input_rel
                 ctx.variables[f"FLEX_{flex_name}_COMPILE_FLAGS"] = " ".join(
                     flex_compile_flags
                 )
-                if header_rel:
-                    ctx.variables[f"FLEX_{flex_name}_OUTPUT_HEADER"] = header_rel
+                if header_var:
+                    ctx.variables[f"FLEX_{flex_name}_OUTPUT_HEADER"] = header_var
 
             case "bison_target":
                 # BISON_TARGET(<Name> <BisonInput> <BisonOutput>
@@ -2805,23 +2825,42 @@ int main() {{
                         arg_idx += 1
 
                 bison_exe = ctx.variables.get("BISON_EXECUTABLE", "") or "bison"
+                bison_current_binary_dir = Path(
+                    ctx.variables.get(
+                        "CMAKE_CURRENT_BINARY_DIR", str(ctx.build_dir)
+                    )
+                )
 
-                def _bison_absolute(path_str: str) -> str:
+                def _bison_input_absolute(path_str: str) -> str:
                     p = Path(path_str)
                     if p.is_absolute():
                         return str(p)
                     return str((ctx.current_source_dir / p).resolve())
 
-                def _bison_relative(path_str: str) -> str:
-                    rel = make_relative(path_str, ctx.build_dir)
-                    if rel == path_str:
-                        rel = ctx.resolve_path(path_str)
-                    return rel
+                def _bison_output_absolute(path_str: str) -> str:
+                    p = Path(path_str)
+                    if p.is_absolute():
+                        return str(p)
+                    return str((bison_current_binary_dir / p).resolve())
 
-                input_rel = _bison_relative(bison_input)
-                input_abs = _bison_absolute(bison_input)
-                output_rel = _bison_relative(bison_output)
-                output_abs = _bison_absolute(bison_output)
+                def _bison_output_cc(abs_path: str) -> str:
+                    """Path for custom_command.outputs: relative to build_dir when
+                    under it (so the generator adds `$builddir/`), else relative to
+                    source_dir."""
+                    rel = make_relative(abs_path, ctx.build_dir)
+                    if rel != abs_path:
+                        return rel
+                    return make_relative(abs_path, ctx.source_dir)
+
+                # Per CMake's FindBISON: a relative BisonOutput is anchored to
+                # CMAKE_CURRENT_BINARY_DIR, and BISON_<Name>_OUTPUT_SOURCE /
+                # _OUTPUT_HEADER / _OUTPUTS reflect that full path.
+                input_abs = _bison_input_absolute(bison_input)
+                input_rel = make_relative(input_abs, ctx.source_dir)
+
+                output_abs = _bison_output_absolute(bison_output)
+                output_var = make_relative(output_abs, ctx.source_dir)
+                output_cc = _bison_output_cc(output_abs)
 
                 # Default header: replace source extension with .h/.hpp counterpart.
                 output_path = Path(bison_output)
@@ -2837,17 +2876,21 @@ int main() {{
                 default_header = str(output_path.with_suffix(header_default_ext))
                 header_source = bison_defines_file or default_header
 
-                header_rel = _bison_relative(header_source)
-                header_abs = _bison_absolute(header_source)
+                header_abs = _bison_output_absolute(header_source)
+                header_var = make_relative(header_abs, ctx.source_dir)
+                header_cc = _bison_output_cc(header_abs)
 
-                bison_outputs = [output_rel, header_rel]
+                bison_outputs_var = [output_var, header_var]
+                bison_outputs_cc = [output_cc, header_cc]
 
-                report_rel: str | None = None
+                report_var: str | None = None
                 report_abs: str | None = None
                 if bison_report_file:
-                    report_rel = _bison_relative(bison_report_file)
-                    report_abs = _bison_absolute(bison_report_file)
-                    bison_outputs.append(report_rel)
+                    report_abs = _bison_output_absolute(bison_report_file)
+                    report_var = make_relative(report_abs, ctx.source_dir)
+                    report_cc = _bison_output_cc(report_abs)
+                    bison_outputs_var.append(report_var)
+                    bison_outputs_cc.append(report_cc)
 
                 bison_cmd = [bison_exe]
                 bison_cmd.append(f"--defines={header_abs}")
@@ -2858,7 +2901,7 @@ int main() {{
 
                 ctx.custom_commands.append(
                     CustomCommand(
-                        outputs=bison_outputs,
+                        outputs=bison_outputs_cc,
                         commands=[bison_cmd],
                         depends=[input_rel],
                         main_dependency=input_rel,
@@ -2871,14 +2914,16 @@ int main() {{
 
                 ctx.variables[f"BISON_{bison_name}_DEFINED"] = "TRUE"
                 ctx.variables[f"BISON_{bison_name}_INPUT"] = input_rel
-                ctx.variables[f"BISON_{bison_name}_OUTPUT_SOURCE"] = output_rel
-                ctx.variables[f"BISON_{bison_name}_OUTPUT_HEADER"] = header_rel
-                ctx.variables[f"BISON_{bison_name}_OUTPUTS"] = ";".join(bison_outputs)
+                ctx.variables[f"BISON_{bison_name}_OUTPUT_SOURCE"] = output_var
+                ctx.variables[f"BISON_{bison_name}_OUTPUT_HEADER"] = header_var
+                ctx.variables[f"BISON_{bison_name}_OUTPUTS"] = ";".join(
+                    bison_outputs_var
+                )
                 ctx.variables[f"BISON_{bison_name}_COMPILE_FLAGS"] = " ".join(
                     bison_compile_flags
                 )
-                if report_rel:
-                    ctx.variables[f"BISON_{bison_name}_REPORT_FILE"] = report_rel
+                if report_var:
+                    ctx.variables[f"BISON_{bison_name}_REPORT_FILE"] = report_var
 
             case "pkg_check_modules":
                 if args:

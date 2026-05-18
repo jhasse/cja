@@ -33,15 +33,20 @@ def test_flex_target_creates_custom_command() -> None:
     flex_argv = custom.commands[0]
     assert "-o" in flex_argv
     output_index = flex_argv.index("-o") + 1
-    assert Path(flex_argv[output_index]).name == "scanner.c"
-    assert Path(flex_argv[output_index]).is_absolute()
+    output_arg = Path(flex_argv[output_index])
+    assert output_arg.name == "scanner.c"
+    assert output_arg.is_absolute()
+    # Relative FlexOutput must be anchored to the build dir, not the source dir.
+    assert output_arg.parent == Path("build").resolve()
     assert Path(flex_argv[-1]).name == "scanner.l"
     assert custom.depends == ["scanner.l"]
     assert custom.main_dependency == "scanner.l"
 
     assert ctx.variables["FLEX_MyScanner_DEFINED"] == "TRUE"
     assert ctx.variables["FLEX_MyScanner_INPUT"] == "scanner.l"
-    assert ctx.variables["FLEX_MyScanner_OUTPUTS"] == "scanner.c"
+    # FLEX_<Name>_OUTPUTS is anchored to CMAKE_CURRENT_BINARY_DIR per CMake's
+    # FindFLEX, expressed relative to the source dir.
+    assert ctx.variables["FLEX_MyScanner_OUTPUTS"] == "build/scanner.c"
 
 
 def test_flex_target_with_defines_file() -> None:
@@ -63,7 +68,7 @@ def test_flex_target_with_defines_file() -> None:
     ]
     process_commands(commands, ctx)
 
-    assert ctx.variables["FLEX_MyScanner_OUTPUT_HEADER"] == "scanner.h"
+    assert ctx.variables["FLEX_MyScanner_OUTPUT_HEADER"] == "build/scanner.h"
     assert "scanner.h" in ctx.custom_commands[0].outputs
     assert any(
         arg.startswith("--header-file=")
