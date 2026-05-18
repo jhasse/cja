@@ -945,6 +945,32 @@ def generate_ninja(
                     values.extend([p for p in raw.split(";") if p])
             return values
 
+        # Source-dir-relative prefix of the build dir (e.g. "build"), used to
+        # recognize sources written as "<build_rel>/<name>" (e.g. as emitted by
+        # FLEX_<Name>_OUTPUTS) that actually refer to a custom-command output.
+        try:
+            _build_rel_path = ctx.build_dir.relative_to(ctx.source_dir)
+            _build_rel: str | None = to_posix_path(str(_build_rel_path))
+            if _build_rel == ".":
+                _build_rel = None
+        except ValueError:
+            _build_rel = None
+
+        def _resolve_source(source: str) -> tuple[str, str]:
+            """Return (compile_input, obj_key) for a target source.
+
+            compile_input is the path used as the compile-rule input.
+            obj_key is the path used to derive the obj subdir and basename so a
+            source like "build/scanner.c" doesn't get an extra "build/" parent.
+            """
+            if source in custom_command_outputs:
+                return f"$builddir/{source}", source
+            if _build_rel is not None and source.startswith(f"{_build_rel}/"):
+                stripped = source[len(_build_rel) + 1 :]
+                if stripped in custom_command_outputs:
+                    return f"$builddir/{stripped}", stripped
+            return source, source
+
         # Generate build statements for libraries
         for lib in ctx.libraries:
             if lib.is_alias:
@@ -1030,11 +1056,9 @@ def generate_ninja(
             lib_dep_order_only = _target_order_only(lib.dependencies)
 
             for source in compileable_sources:
-                actual_source = source
-                if source in custom_command_outputs:
-                    actual_source = f"$builddir/{source}"
+                actual_source, obj_source = _resolve_source(source)
 
-                source_rel = Path(source)
+                source_rel = Path(obj_source)
                 obj_subdir = source_rel.parent.as_posix()
                 obj_basename = f"{lib.name}_{source_rel.stem}.o"
                 if obj_subdir and obj_subdir != ".":
@@ -1279,11 +1303,9 @@ def generate_ninja(
             exe_dep_order_only = _target_order_only(exe.dependencies)
 
             for source in compileable_sources:
-                actual_source = source
-                if source in custom_command_outputs:
-                    actual_source = f"$builddir/{source}"
+                actual_source, obj_source = _resolve_source(source)
 
-                source_rel = Path(source)
+                source_rel = Path(obj_source)
                 obj_subdir = source_rel.parent.as_posix()
                 obj_basename = f"{exe.name}_{source_rel.stem}.o"
                 if obj_subdir and obj_subdir != ".":

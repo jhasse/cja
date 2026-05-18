@@ -121,13 +121,21 @@ def test_flex_target_end_to_end(tmp_path: Path) -> None:
         "cmake_minimum_required(VERSION 3.10)\n"
         "project(flex_demo C)\n"
         "find_package(FLEX REQUIRED)\n"
-        "FLEX_TARGET(MyScanner scanner.l ${CMAKE_CURRENT_BINARY_DIR}/scanner.c)\n"
+        "FLEX_TARGET(MyScanner scanner.l scanner.c)\n"
         "add_executable(demo ${FLEX_MyScanner_OUTPUTS})\n"
     )
 
     configure(source_dir, "build")
     ninja_manifest = source_dir / "build.ninja"
     assert ninja_manifest.exists()
+
+    # Sources written as "<build_rel>/<name>" (the form FLEX_<Name>_OUTPUTS
+    # takes for a relative FlexOutput) should be normalized back to a
+    # custom-command output, so the obj lands at $builddir/<target>_<stem>.o
+    # rather than $builddir/<build_rel>/<target>_<stem>.o.
+    manifest_text = ninja_manifest.read_text()
+    assert "$builddir/demo_scanner.o: cc $builddir/scanner.c" in manifest_text
+    assert "$builddir/build/demo_scanner.o" not in manifest_text
 
     ninja = shutil.which("ninja")
     if ninja is None:
