@@ -2755,10 +2755,10 @@ int main() {{
                     flex_outputs_cc.append(header_cc)
 
                 flex_cmd = [flex_exe]
-                if header_abs:
-                    flex_cmd.append(f"--header-file={header_abs}")
+                if header_var:
+                    flex_cmd.append(f"--header-file={header_var}")
                 flex_cmd.extend(flex_compile_flags)
-                flex_cmd.extend(["-o", output_abs, input_abs])
+                flex_cmd.extend(["-o", output_var, input_rel])
 
                 ctx.custom_commands.append(
                     CustomCommand(
@@ -2893,11 +2893,11 @@ int main() {{
                     bison_outputs_cc.append(report_cc)
 
                 bison_cmd = [bison_exe]
-                bison_cmd.append(f"--defines={header_abs}")
-                if report_abs:
-                    bison_cmd.append(f"--report-file={report_abs}")
+                bison_cmd.append(f"--defines={header_var}")
+                if report_var:
+                    bison_cmd.append(f"--report-file={report_var}")
                 bison_cmd.extend(bison_compile_flags)
-                bison_cmd.extend(["-o", output_abs, input_abs])
+                bison_cmd.extend(["-o", output_var, input_rel])
 
                 ctx.custom_commands.append(
                     CustomCommand(

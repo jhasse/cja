@@ -33,12 +33,10 @@ def test_flex_target_creates_custom_command() -> None:
     flex_argv = custom.commands[0]
     assert "-o" in flex_argv
     output_index = flex_argv.index("-o") + 1
-    output_arg = Path(flex_argv[output_index])
-    assert output_arg.name == "scanner.c"
-    assert output_arg.is_absolute()
-    # Relative FlexOutput must be anchored to the build dir, not the source dir.
-    assert output_arg.parent == Path("build").resolve()
-    assert Path(flex_argv[-1]).name == "scanner.l"
+    # Paths in the flex command are source-dir-relative; the FlexOutput is
+    # anchored to the build dir (CMAKE_CURRENT_BINARY_DIR), not the source dir.
+    assert flex_argv[output_index] == "build/scanner.c"
+    assert flex_argv[-1] == "scanner.l"
     assert custom.depends == ["scanner.l"]
     assert custom.main_dependency == "scanner.l"
 
