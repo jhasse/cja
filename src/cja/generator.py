@@ -1884,7 +1884,7 @@ def configure(
         # Ignore errors if ninja is not found or fails
         pass
 
-    # Don't cause unnecessary rebuilds when we the users runs cja explicitly:
+    # Don't cause unnecessary regenerates on the next ninja invocation when the user runs cja explicitly:
     if not regenerate_during_build and manifest_existed:
         restat_cmd = [
             "ninja",
@@ -1903,9 +1903,7 @@ def configure(
 
     if not quiet and ctx.cli_variables:
         unused = sorted(
-            name
-            for name in ctx.cli_variables
-            if name not in ctx.variables._tracker
+            name for name in ctx.cli_variables if name not in ctx.variables._tracker
         )
         if unused:
             warning_label = colored("warning:", "magenta", attrs=["bold"])
