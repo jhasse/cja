@@ -4,6 +4,7 @@ import platform
 from pathlib import Path
 
 import pytest
+import termcolor
 
 from cja.configurator import process_commands
 from cja.generator import BuildContext
@@ -54,8 +55,12 @@ def test_check_symbol_exists_multiple_headers():
 
 def test_check_symbol_exists_x86_64_macro(
     capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Test check_symbol_exists for the compiler macro __x86_64__."""
+    monkeypatch.delenv("FORCE_COLOR", raising=False)
+    termcolor.can_colorize.cache_clear()
+
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
     commands = [
         Command(
@@ -91,8 +96,12 @@ def test_check_symbol_exists_semicolon_list():
 
 def test_check_symbol_exists_prints_status_output(
     capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Test check_symbol_exists prints a single status line per check."""
+    monkeypatch.delenv("FORCE_COLOR", raising=False)
+    termcolor.can_colorize.cache_clear()
+
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
     commands = [
         Command(
