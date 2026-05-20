@@ -67,9 +67,7 @@ def test_return_exits_included_cmake_file(tmp_path: Path) -> None:
     """return() in include() should stop processing included file only."""
     source_dir = tmp_path / "src"
     source_dir.mkdir()
-    (source_dir / "inc.cmake").write_text(
-        "set(BEFORE yes)\nreturn()\nset(AFTER yes)\n"
-    )
+    (source_dir / "inc.cmake").write_text("set(BEFORE yes)\nreturn()\nset(AFTER yes)\n")
 
     ctx = BuildContext(source_dir=source_dir, build_dir=tmp_path / "build")
     commands = [
@@ -107,3 +105,24 @@ def test_return_in_include_inside_function_does_not_exit_function(
 
     # AFTER_INCLUDE must be set because return() exited the include, not the function.
     assert ctx.variables.get("AFTER_INCLUDE") == "yes"
+
+
+def test_return_exits_subdirectory(tmp_path: Path) -> None:
+    """return() in a subdirectory CMakeLists.txt should stop that file only."""
+    source_dir = tmp_path / "src"
+    sub_dir = source_dir / "sub"
+    sub_dir.mkdir(parents=True)
+    (source_dir / "CMakeLists.txt").write_text(
+        "project(test_return_subdir)\nadd_subdirectory(sub)\nset(PARENT yes)\n"
+    )
+    (sub_dir / "CMakeLists.txt").write_text(
+        "set(BEFORE yes PARENT_SCOPE)\nreturn()\nset(AFTER yes PARENT_SCOPE)\n"
+    )
+
+    from cja.generator import configure
+
+    ctx = configure(source_dir, str(tmp_path / "build"), quiet=True)
+
+    assert ctx.variables.get("BEFORE") == "yes"
+    assert "AFTER" not in ctx.variables
+    assert ctx.variables.get("PARENT") == "yes"

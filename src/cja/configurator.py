@@ -574,7 +574,19 @@ def process_commands(
                             popped.on_exit()
                     continue
 
-                raise ReturnFromFunction()
+                # Directory-level return(): stop the current list file. For
+                # add_subdirectory(), pop back to the parent; for the top-level
+                # file, drain the remaining commands in the current frame.
+                exited_subdirectory = False
+                while len(stack) > 1:
+                    popped = stack.pop()
+                    if popped.on_exit:
+                        popped.on_exit()
+                    if popped.on_exit is not None:
+                        exited_subdirectory = True
+                        break
+                if not exited_subdirectory and stack and stack[-1].commands is not None:
+                    stack[-1].pc = len(stack[-1].commands)
                 continue
 
             case "break":
