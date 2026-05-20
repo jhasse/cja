@@ -62,6 +62,7 @@ from .syntax import (
     Test,
 )
 from .utils import (
+    is_truthy,
     make_relative,
     status_marker,
     to_posix_path,
@@ -1403,6 +1404,11 @@ int main() {{
                     files = args[1:-1]
                     if len(files) == 1 and ";" in files[0]:
                         files = files[0].split(";")
+                    files = [f for f in files if f]
+
+                    check_quiet = ctx.quiet or is_truthy(
+                        ctx.variables.get("CMAKE_REQUIRED_QUIET", "")
+                    )
 
                     found = False
                     try:
@@ -1434,6 +1440,11 @@ int main() {{
                         pass
 
                     ctx.variables[variable] = "1" if found else ""
+                    if not check_quiet:
+                        color = "green" if found else "red"
+                        print(
+                            f"{colored(status_marker(found), color)} {symbol}"
+                        )
 
             case "check_include_files":
                 # check_include_files(<includes> <variable> [LANGUAGE <language>])
