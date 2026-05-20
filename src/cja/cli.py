@@ -11,7 +11,7 @@ from pathlib import Path
 from termcolor import colored
 
 from . import __version__
-from .generator import configure
+from .generator import configure, run_script
 
 
 def _get_version() -> str:
@@ -147,6 +147,47 @@ def cmd_run(args: argparse.Namespace) -> int:
     sys.stderr.flush()
     result = subprocess.run(exe_cmd)
     return result.returncode
+
+
+def cmd_script(
+    script_path: str,
+    script_args: list[str],
+    defines: list[str],
+    trace: bool,
+    strict: bool,
+) -> int:
+    """Run a CMake script file (cmake -P mode)."""
+    variables: dict[str, str] = {}
+    for define in defines:
+        name, value = parse_define(define)
+        variables[name] = value
+
+    try:
+        run_script(
+            Path(script_path),
+            variables=variables if variables else None,
+            script_args=script_args,
+            trace=trace,
+            strict=strict,
+        )
+        return 0
+    except FileNotFoundError as e:
+        error_label = colored("error:", "red", attrs=["bold"])
+        print(f"{error_label} {e}", file=sys.stderr)
+        return 1
+    except SyntaxError as e:
+        error_label = colored("error:", "red", attrs=["bold"])
+        if e.filename and e.lineno:
+            print(f"{e.filename}:{e.lineno}: {error_label} {e.msg}", file=sys.stderr)
+        else:
+            print(f"{error_label} Parse error: {e}", file=sys.stderr)
+        return 1
+    except RuntimeError as e:
+        error_label = colored("error:", "red", attrs=["bold"])
+        print(f"{error_label} {e}", file=sys.stderr)
+        return 1
+    except SystemExit as e:
+        return int(e.code) if isinstance(e.code, int) else 1
 
 
 def cmd_command_mode(args: list[str]) -> int:
@@ -296,6 +337,16 @@ def main() -> int:
         help="CMake-like command mode (e.g., -E make_directory dir...)",
     )
 
+    # Registered only so it appears in --help; the actual value is extracted
+    # from sys.argv before argparse runs so that trailing script arguments are
+    # not interpreted as subcommands or options.
+    parser.add_argument(
+        "-P",
+        dest="_script",
+        metavar="SCRIPT [ARG...]",
+        help="Run a CMake script file (script mode)",
+    )
+
     parser.add_argument(
         "--regenerate-during-build",
         action="store_true",
@@ -330,18 +381,37 @@ def main() -> int:
         help="Run in release mode (CMAKE_BUILD_TYPE=Release)",
     )
 
-    args, ninja_args = parser.parse_known_args()
+    # Extract -P SCRIPT [ARGS...] before argparse so trailing positional script
+    # arguments are not parsed as subcommands.
+    argv = sys.argv[1:]
+    script_path: str | None = None
+    script_args: list[str] = []
+    if "-P" in argv:
+        p_idx = argv.index("-P")
+        if p_idx + 1 >= len(argv):
+            error_label = colored("error:", "red", attrs=["bold"])
+            print(f"{error_label} -P requires a script path", file=sys.stderr)
+            return 1
+        script_path = argv[p_idx + 1]
+        script_args = argv[p_idx + 2 :]
+        argv = argv[:p_idx]
+
+    args, ninja_args = parser.parse_known_args(argv)
     if hasattr(args, "command") and args.command in ("build", "test", "run"):
         args.ninja_args = ninja_args
-    elif ninja_args:
-        # If not a subcommand, argparse shouldn't have unknown args unless it's an error
-        # But we want to be strict here or handle it.
-        # Actually, if it's the default (configure), we don't expect ninja_args.
-        pass
 
     try:
         if args.E:
             return cmd_command_mode(args.E)
+
+        if script_path is not None:
+            return cmd_script(
+                script_path,
+                script_args,
+                args.defines,
+                args.trace,
+                args.strict,
+            )
 
         if args.command == "build":
             return cmd_build(args)

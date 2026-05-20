@@ -338,6 +338,74 @@ def test_quiet_flag_via_api(tmp_path: Path) -> None:
     assert stderr.getvalue() == ""
 
 
+def test_script_mode_basic(tmp_path: Path) -> None:
+    """cja -P runs a script file and stops after processing it."""
+    script = tmp_path / "hello.cmake"
+    script.write_text('message("hello-from-cja")\n')
+
+    result = subprocess.run(
+        ["uv", "run", "cja", "-P", str(script)],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+    )
+    assert result.returncode == 0
+    assert "hello-from-cja" in result.stdout
+    assert not (tmp_path / "build.ninja").exists()
+
+
+def test_script_mode_define_variable(tmp_path: Path) -> None:
+    """-D variables passed before -P are visible in the script."""
+    script = tmp_path / "show.cmake"
+    script.write_text('message("FOO=${FOO}")\n')
+
+    result = subprocess.run(
+        ["uv", "run", "cja", "-DFOO=bar", "-P", str(script)],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+    )
+    assert result.returncode == 0
+    assert "FOO=bar" in result.stdout
+
+
+def test_script_mode_argv_and_script_mode_file(tmp_path: Path) -> None:
+    """Script-mode variables CMAKE_ARGC/ARGV and CMAKE_SCRIPT_MODE_FILE are set."""
+    script = tmp_path / "argv.cmake"
+    script.write_text(
+        'message("ARGC=${CMAKE_ARGC}")\n'
+        'message("ARG2=${CMAKE_ARGV2}")\n'
+        'message("ARG3=${CMAKE_ARGV3}")\n'
+        'message("ARG4=${CMAKE_ARGV4}")\n'
+        'message("SCRIPT=${CMAKE_SCRIPT_MODE_FILE}")\n'
+    )
+
+    result = subprocess.run(
+        ["uv", "run", "cja", "-P", str(script), "alpha", "beta"],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+    )
+    assert result.returncode == 0
+    assert "ARGC=5" in result.stdout
+    assert f"ARG2={script}" in result.stdout
+    assert "ARG3=alpha" in result.stdout
+    assert "ARG4=beta" in result.stdout
+    assert f"SCRIPT={script}" in result.stdout
+
+
+def test_script_mode_missing_script(tmp_path: Path) -> None:
+    """cja -P without a script argument fails cleanly."""
+    result = subprocess.run(
+        ["uv", "run", "cja", "-P"],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+    )
+    assert result.returncode != 0
+    assert "-P requires a script" in result.stderr
+
+
 def test_run_subcommand(tmp_path: Path) -> None:
     """Test cja run subcommand."""
     source_dir = tmp_path

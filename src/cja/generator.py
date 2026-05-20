@@ -1774,6 +1774,75 @@ def generate_ninja(
             n.default(["all"])
 
 
+def run_script(
+    script_path: Path,
+    variables: dict[str, str] | None = None,
+    script_args: list[str] | None = None,
+    trace: bool = False,
+    strict: bool = False,
+) -> BuildContext:
+    """Run a CMake script file in ``cmake -P`` style script mode.
+
+    Args:
+        script_path: Path to the .cmake script file to execute.
+        variables: Optional dict of variables from ``-D`` flags.
+        script_args: Extra command-line arguments after the script path.
+            They become available as ``CMAKE_ARGV<n>``.
+        trace: If True, print each command as it's processed.
+        strict: If True, error on unsupported commands.
+    """
+    script_path = script_path.resolve()
+    if not script_path.exists():
+        raise FileNotFoundError(f"script not found: {script_path}")
+
+    from .parser import parse_file
+
+    cwd = Path.cwd()
+    ctx = BuildContext(source_dir=cwd, build_dir=cwd)
+    ctx.current_list_file = script_path
+    ctx.record_cmake_file(script_path)
+
+    if variables:
+        ctx.variables.update(variables)
+        ctx.cache_variables.update(variables.keys())
+        ctx.cli_variables = dict(variables)
+
+    ctx.variables["CMAKE_SOURCE_DIR"] = str(cwd)
+    ctx.variables["CMAKE_BINARY_DIR"] = str(cwd)
+    ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = str(cwd)
+    ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(cwd)
+    ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(script_path)
+    ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(script_path.parent)
+    ctx.variables["CMAKE_MODULE_PATH"] = ""
+    ctx.variables["CMAKE_SCRIPT_MODE_FILE"] = str(script_path)
+    ctx.variables["CMAKE_HOST_SYSTEM_PROCESSOR"] = _detect_host_system_processor()
+
+    host_system = platform.system()
+    ctx.variables["CMAKE_HOST_WIN32"] = "TRUE" if host_system == "Windows" else "FALSE"
+    if host_system == "Darwin":
+        ctx.variables["CMAKE_SYSTEM_NAME"] = "Darwin"
+        ctx.variables["UNIX"] = "TRUE"
+        ctx.variables["APPLE"] = "TRUE"
+    elif host_system == "Windows":
+        ctx.variables["CMAKE_SYSTEM_NAME"] = "Windows"
+        ctx.variables["WIN32"] = "TRUE"
+    else:
+        ctx.variables["CMAKE_SYSTEM_NAME"] = "Linux"
+        ctx.variables["UNIX"] = "TRUE"
+
+    cja_cmd = _resolve_cja_cmd()
+    ctx.variables["CMAKE_COMMAND"] = " ".join(cja_cmd)
+
+    argv = [cja_cmd[0], "-P", str(script_path), *(script_args or [])]
+    ctx.variables["CMAKE_ARGC"] = str(len(argv))
+    for i, value in enumerate(argv):
+        ctx.variables[f"CMAKE_ARGV{i}"] = value
+
+    commands = parse_file(script_path)
+    process_commands(commands, ctx, trace, strict)
+    return ctx
+
+
 def configure(
     source_dir: Path,
     build_dir: str,
