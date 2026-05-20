@@ -501,12 +501,9 @@ def handle_target_compile_options(
                 pass
             else:
                 expanded = ctx.expand_variables(arg, strict, cmd.line)
-                expanded = strip_generator_expressions(expanded, ctx.variables)
-                if "$<" in expanded:
-                    ctx.print_warning(
-                        f"generator expressions in target_compile_options are not yet supported: {arg}",
-                        cmd.line,
-                    )
+                # Keep generator expressions intact: $<COMPILE_LANGUAGE:...>
+                # and similar predicates are evaluated per-source at ninja
+                # generation time.
                 if not expanded:
                     continue
                 if visibility == "PUBLIC":

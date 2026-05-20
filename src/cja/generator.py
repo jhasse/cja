@@ -996,6 +996,10 @@ def generate_ninja(
                 lib_compile_flags.append(_format_compile_definition_flag(definition))
             for definition in lib.compile_definitions:
                 lib_compile_flags.append(_format_compile_definition_flag(definition))
+            # Raw compile_options are kept for per-source evaluation so that
+            # $<COMPILE_LANGUAGE:...> can be evaluated against each source's
+            # language.  The target-level strip drops language-gated options.
+            lib_compile_options_raw: list[str] = list(lib.compile_options)
             for option in lib.compile_options:
                 opt = strip_generator_expressions(option)
                 if opt:
@@ -1030,6 +1034,7 @@ def generate_ninja(
                         if def_flag not in lib_compile_flags:
                             lib_compile_flags.append(def_flag)
                     for option in dep_lib.public_compile_options:
+                        lib_compile_options_raw.append(option)
                         opt = strip_generator_expressions(option)
                         if opt and opt not in lib_compile_flags:
                             lib_compile_flags.append(opt)
@@ -1070,17 +1075,32 @@ def generate_ninja(
 
                 # Determine if C or C++
                 is_cxx = source.endswith((".cpp", ".cxx", ".cc", ".C", ".mm", ".MM"))
+                is_asm = source.endswith((".s", ".S"))
                 if is_cxx:
                     rule = "cxx"
                     uses_cxx = True
                 else:
                     rule = "cc"
+                if is_asm:
+                    source_language = "ASM"
+                elif is_cxx:
+                    source_language = "CXX"
+                else:
+                    source_language = "C"
 
                 # Check for source file properties
                 abs_source = str(ctx.source_dir / source)
                 file_props = ctx.source_file_properties.get(abs_source)
 
                 source_compile_flags = list(lib_compile_flags)
+                for option in lib_compile_options_raw:
+                    opt = strip_generator_expressions(
+                        option,
+                        ctx.variables,
+                        compile_language=source_language,
+                    )
+                    if opt and opt not in source_compile_flags:
+                        source_compile_flags.append(opt)
                 source_depends = []
 
                 if file_props:
@@ -1233,6 +1253,9 @@ def generate_ninja(
                 compile_flags.append(_format_compile_definition_flag(definition))
             for definition in exe.compile_definitions:
                 compile_flags.append(_format_compile_definition_flag(definition))
+            # Keep raw compile_options so $<COMPILE_LANGUAGE:...> can be
+            # evaluated per source.  The target-level strip drops them.
+            exe_compile_options_raw: list[str] = list(exe.compile_options)
             for option in exe.compile_options:
                 opt = strip_generator_expressions(option)
                 if opt:
@@ -1266,6 +1289,7 @@ def generate_ninja(
                         if def_flag not in compile_flags:
                             compile_flags.append(def_flag)
                     for option in linked_lib.public_compile_options:
+                        exe_compile_options_raw.append(option)
                         opt = strip_generator_expressions(option)
                         if opt and opt not in compile_flags:
                             compile_flags.append(opt)
@@ -1317,17 +1341,32 @@ def generate_ninja(
 
                 # Determine if C or C++
                 is_cxx = source.endswith((".cpp", ".cxx", ".cc", ".C", ".mm", ".MM"))
+                is_asm = source.endswith((".s", ".S"))
                 if is_cxx:
                     rule = "cxx"
                     uses_cxx = True
                 else:
                     rule = "cc"
+                if is_asm:
+                    source_language = "ASM"
+                elif is_cxx:
+                    source_language = "CXX"
+                else:
+                    source_language = "C"
 
                 # Check for source file properties
                 abs_source = str(ctx.source_dir / source)
                 file_props = ctx.source_file_properties.get(abs_source)
 
                 source_compile_flags = list(compile_flags)
+                for option in exe_compile_options_raw:
+                    opt = strip_generator_expressions(
+                        option,
+                        ctx.variables,
+                        compile_language=source_language,
+                    )
+                    if opt and opt not in source_compile_flags:
+                        source_compile_flags.append(opt)
                 source_depends = []
 
                 if file_props:

@@ -157,8 +157,16 @@ def strip_generator_expressions(
     variables: dict[str, str] | None = None,
     target_file_dirs: dict[str, str] | None = None,
     target_files: dict[str, str] | None = None,
+    compile_language: str | None = None,
 ) -> str:
-    """Strip or evaluate common CMake generator expressions."""
+    """Strip or evaluate common CMake generator expressions.
+
+    ``compile_language`` is the language being compiled (e.g. ``"C"``,
+    ``"CXX"``, ``"ASM"``).  When provided, ``$<COMPILE_LANGUAGE:LANG[,...]>``
+    is evaluated against it.  When ``None`` (target-level evaluation without
+    a specific source), language-gated expressions evaluate to false so they
+    do not leak into all sources.
+    """
     variables = variables or {}
 
     def split_top_level(text: str, sep: str, maxsplit: int = -1) -> list[str]:
@@ -270,6 +278,16 @@ def strip_generator_expressions(
         if content.startswith("TARGET_PROPERTY:"):
             # No property lookup support in generator expressions yet.
             return ""
+        if content == "COMPILE_LANGUAGE":
+            return compile_language or ""
+        if content.startswith("COMPILE_LANGUAGE:"):
+            if compile_language is None:
+                return "0"
+            langs = [
+                expand_text(a)
+                for a in split_top_level(content[len("COMPILE_LANGUAGE:") :], ",")
+            ]
+            return "1" if compile_language in langs else "0"
 
         # Generic conditional form: $<condition:string>
         cond_parts = split_top_level(content, ":", maxsplit=1)
