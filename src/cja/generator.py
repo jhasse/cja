@@ -675,7 +675,7 @@ def generate_ninja(
             src_prefix = str(ctx.source_dir.resolve()) + "/"
             n.rule(
                 "clang_tidy",
-                command=f"$clang_tidy_cmd $in -- $cflags 2>/dev/null >$out.log; rv=$$?; sed 's|{src_prefix}||g' $out.log; rm -f $out.log; [ $$rv -eq 0 ] && touch $out || exit $$rv",
+                command=f"$clang_tidy_cmd $in -- $cflags >$out.log 2>&1; rv=$$?; sed 's|{src_prefix}||g' $out.log; rm -f $out.log; [ $$rv -eq 0 ] && touch $out || exit $$rv",
                 description="\x1b[35mAnalyzing $in\x1b[0m",
             )
             n.newline()
