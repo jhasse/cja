@@ -1099,8 +1099,10 @@ def generate_ninja(
                         ctx.variables,
                         compile_language=source_language,
                     )
-                    if opt and opt not in source_compile_flags:
-                        source_compile_flags.append(opt)
+                    for sub_opt in opt.split(";"):
+                        sub_opt = sub_opt.strip()
+                        if sub_opt and sub_opt not in source_compile_flags:
+                            source_compile_flags.append(sub_opt)
                 source_depends = []
 
                 if file_props:
@@ -1365,8 +1367,10 @@ def generate_ninja(
                         ctx.variables,
                         compile_language=source_language,
                     )
-                    if opt and opt not in source_compile_flags:
-                        source_compile_flags.append(opt)
+                    for sub_opt in opt.split(";"):
+                        sub_opt = sub_opt.strip()
+                        if sub_opt and sub_opt not in source_compile_flags:
+                            source_compile_flags.append(sub_opt)
                 source_depends = []
 
                 if file_props:

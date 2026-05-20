@@ -317,5 +317,8 @@ def strip_generator_expressions(
 
     result = expand_text(value)
     if "\n" in result:
-        result = " ".join(result.split())
+        # Multi-line generator-expression output represents a CMake list;
+        # convert internal whitespace to ';' so callers can split it like
+        # any other list value.
+        result = ";".join(result.split())
     return result

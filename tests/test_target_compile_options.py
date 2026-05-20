@@ -123,6 +123,62 @@ def test_target_compile_options_compile_language(tmp_path: Path) -> None:
     assert "-fno-strict-aliasing" not in asm_block
 
 
+def test_target_compile_options_multiline_genex(tmp_path: Path) -> None:
+    """Multi-line genex flag blocks expand to space-separated flags per source."""
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    ctx.variables["CMAKE_CXX_COMPILER_ID"] = "GNU"
+    (tmp_path / "main.cpp").write_text("int main() { return 0; }\n")
+    commands = [
+        Command(name="add_library", args=["mylib", "main.cpp"], line=1),
+        Command(
+            name="target_compile_options",
+            args=[
+                "mylib",
+                "PRIVATE",
+                "$<$<CXX_COMPILER_ID:GNU>:\n"
+                "  -Wall -Wextra -Wno-unused-parameter -Wno-unused-variable>",
+            ],
+            line=2,
+        ),
+    ]
+    process_commands(commands, ctx)
+
+    ninja_path = tmp_path / "build.ninja"
+    generate_ninja(ctx, ninja_path, "build")
+    content = ninja_path.read_text()
+    assert "-Wall -Wextra -Wno-unused-parameter -Wno-unused-variable" in content
+    assert "-Wall;-Wextra" not in content
+
+
+def test_add_library_multiline_genex_source_list(tmp_path: Path) -> None:
+    """Multi-line genex source blocks expand into separate sources."""
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    for name in ("a.c", "b.c", "c.c"):
+        (src_dir / name).write_text("int x;\n")
+
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    ctx.variables["FEATURE"] = "ON"
+    commands = [
+        Command(
+            name="add_library",
+            args=[
+                "mylib",
+                "src/a.c",
+                "$<$<BOOL:${FEATURE}>:\n  src/b.c\n  src/c.c\n>",
+            ],
+            line=1,
+        ),
+    ]
+    process_commands(commands, ctx)
+
+    lib = ctx.get_library("mylib")
+    assert lib is not None
+    assert "src/a.c" in lib.sources
+    assert "src/b.c" in lib.sources
+    assert "src/c.c" in lib.sources
+
+
 def test_windows_clang_upgrades_cxx11_in_target_compile_options(
     tmp_path: Path,
     monkeypatch,
