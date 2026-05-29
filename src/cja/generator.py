@@ -8,7 +8,7 @@ import shlex
 import shutil
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import cast
 
 from .utils import is_truthy, make_relative, strip_generator_expressions, to_posix_path
@@ -180,6 +180,25 @@ def is_compilable_source(filename: str) -> bool:
         ".S",
     )
     return filename.endswith(source_extensions)
+
+
+def _obj_subdir(source_rel: PurePath) -> str:
+    """Return a $builddir-relative subdir for a source's object file.
+
+    Sources outside the project tree (absolute paths, e.g. dependencies
+    fetched onto another drive such as ``D:/cpm/...`` on Windows) must not be
+    joined verbatim under ``$builddir``: ``build/D:/cpm/...`` is not a valid
+    path and makes ninja fail. Strip any filesystem anchor (drive or root) and
+    neutralize ``..`` components so the result always stays relative to and
+    contained within ``$builddir``.
+    """
+    parent = source_rel.parent
+    parts = parent.parts
+    if parts and (parent.is_absolute() or parent.drive):
+        # parts[0] is the anchor, e.g. 'D:\\' or '/'.
+        parts = parts[1:]
+    cleaned = ["__up__" if part == ".." else part for part in parts]
+    return "/".join(cleaned)
 
 
 def _rc_manifest_deps(ctx: BuildContext, rc_path: str) -> list[str]:
@@ -1064,9 +1083,9 @@ def generate_ninja(
                 actual_source, obj_source = _resolve_source(source)
 
                 source_rel = Path(obj_source)
-                obj_subdir = source_rel.parent.as_posix()
+                obj_subdir = _obj_subdir(source_rel)
                 obj_basename = f"{lib.name}_{source_rel.stem}.o"
-                if obj_subdir and obj_subdir != ".":
+                if obj_subdir:
                     obj_name = f"$builddir/{obj_subdir}/{obj_basename}"
                 else:
                     obj_name = f"$builddir/{obj_basename}"
@@ -1332,9 +1351,9 @@ def generate_ninja(
                 actual_source, obj_source = _resolve_source(source)
 
                 source_rel = Path(obj_source)
-                obj_subdir = source_rel.parent.as_posix()
+                obj_subdir = _obj_subdir(source_rel)
                 obj_basename = f"{exe.name}_{source_rel.stem}.o"
-                if obj_subdir and obj_subdir != ".":
+                if obj_subdir:
                     obj_name = f"$builddir/{obj_subdir}/{obj_basename}"
                 else:
                     obj_name = f"$builddir/{obj_basename}"
