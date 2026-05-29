@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 import glob as py_glob
 import hashlib
 import os
@@ -2031,6 +2032,66 @@ def handle_string(
             if result and result[0].isdigit():
                 result = "_" + result
             ctx.variables[out_var] = result
+
+    elif subcommand == "TIMESTAMP":
+        # string(TIMESTAMP <out_var> [<format string>] [UTC])
+        if len(args) >= 2:
+            out_var = args[1]
+            rest = args[2:]
+            use_utc = bool(rest) and rest[-1] == "UTC"
+            if use_utc:
+                rest = rest[:-1]
+            fmt = rest[0] if rest else None
+
+            # Honor SOURCE_DATE_EPOCH for reproducible builds, like CMake does.
+            source_date_epoch = os.environ.get("SOURCE_DATE_EPOCH")
+            if source_date_epoch is not None:
+                try:
+                    now = datetime.fromtimestamp(
+                        int(source_date_epoch), tz=timezone.utc
+                    )
+                    use_utc = True
+                except ValueError:
+                    now = datetime.now(timezone.utc if use_utc else None)
+            else:
+                now = datetime.now(timezone.utc if use_utc else None)
+
+            ctx.variables[out_var] = _cmake_timestamp_format(now, fmt, use_utc)
+
+    else:
+        if strict:
+            ctx.print_error(f"string() unknown subcommand: {subcommand}", cmd.line)
+            sys.exit(1)
+        else:
+            ctx.print_warning(
+                f"string() unknown subcommand: {subcommand}", cmd.line
+            )
+
+
+def _cmake_timestamp_format(
+    now: datetime, fmt: "str | None", use_utc: bool
+) -> str:
+    """Format a datetime using CMake's string(TIMESTAMP) format specifiers."""
+    if fmt is None:
+        fmt = "%Y-%m-%dT%H:%M:%SZ" if use_utc else "%Y-%m-%dT%H:%M:%S"
+
+    # %s (seconds since the UNIX epoch) is not portable via strftime, so handle
+    # it explicitly. Everything else CMake supports maps onto strftime.
+    result: list[str] = []
+    i = 0
+    while i < len(fmt):
+        ch = fmt[i]
+        if ch == "%" and i + 1 < len(fmt):
+            spec = fmt[i + 1]
+            if spec == "s":
+                result.append(str(int(now.timestamp())))
+            else:
+                result.append(now.strftime("%" + spec))
+            i += 2
+        else:
+            result.append(ch)
+            i += 1
+    return "".join(result)
 
 
 def handle_file(

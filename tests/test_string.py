@@ -1,6 +1,7 @@
 """Tests for string() command."""
 
 from pathlib import Path
+import re
 
 from cja.generator import BuildContext, process_commands
 from cja.parser import Command
@@ -100,3 +101,66 @@ def test_string_find_reverse_returns_last_match() -> None:
     ]
     process_commands(commands, ctx, strict=True)
     assert ctx.variables["offset"] == "7"
+
+
+def test_string_timestamp_sets_variable() -> None:
+    """string(TIMESTAMP) should set the output variable to a formatted time."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="string", args=["TIMESTAMP", "VERSION", "%Y-%m"], line=1),
+    ]
+    process_commands(commands, ctx, strict=True)
+    assert "VERSION" in ctx.variables
+    assert re.fullmatch(r"\d{4}-\d{2}", ctx.variables["VERSION"])
+
+
+def test_string_timestamp_honors_source_date_epoch(monkeypatch) -> None:
+    """SOURCE_DATE_EPOCH should make string(TIMESTAMP) reproducible."""
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", "1234567890")
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(
+            name="string",
+            args=["TIMESTAMP", "TS", "%Y-%m-%dT%H:%M:%S", "UTC"],
+            line=1,
+        ),
+    ]
+    process_commands(commands, ctx, strict=True)
+    assert ctx.variables["TS"] == "2009-02-13T23:31:30"
+
+
+def test_string_timestamp_default_format(monkeypatch) -> None:
+    """string(TIMESTAMP) without a format uses CMake's default."""
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", "1234567890")
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="string", args=["TIMESTAMP", "TS"], line=1),
+    ]
+    process_commands(commands, ctx, strict=True)
+    # SOURCE_DATE_EPOCH forces UTC, which appends the trailing Z.
+    assert ctx.variables["TS"] == "2009-02-13T23:31:30Z"
+
+
+def test_string_timestamp_unix_seconds(monkeypatch) -> None:
+    """The %s specifier should yield UNIX seconds even though strftime can't."""
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", "1234567890")
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="string", args=["TIMESTAMP", "TS", "%s"], line=1),
+    ]
+    process_commands(commands, ctx, strict=True)
+    assert ctx.variables["TS"] == "1234567890"
+
+
+def test_string_unknown_subcommand_errors_in_strict_mode(capsys) -> None:
+    """An unknown string() subcommand should be reported instead of silently ignored."""
+    import pytest
+
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="string", args=["BOGUS", "x", "out"], line=1),
+    ]
+    with pytest.raises(SystemExit):
+        process_commands(commands, ctx, strict=True)
+    captured = capsys.readouterr()
+    assert "unknown subcommand: BOGUS" in captured.err
