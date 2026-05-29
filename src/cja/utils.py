@@ -266,18 +266,30 @@ def strip_generator_expressions(
             current = variables.get("CMAKE_C_COMPILER_ID", "")
             return "1" if current and current in args else "0"
         if content.startswith("TARGET_FILE_DIR:"):
-            target_name = expand_text(content[len("TARGET_FILE_DIR:"):])
+            target_name = expand_text(content[len("TARGET_FILE_DIR:") :])
             if target_file_dirs and target_name in target_file_dirs:
                 return target_file_dirs[target_name]
             return ""
         if content.startswith("TARGET_FILE:"):
-            target_name = expand_text(content[len("TARGET_FILE:"):])
+            target_name = expand_text(content[len("TARGET_FILE:") :])
             if target_files and target_name in target_files:
                 return target_files[target_name]
             return ""
         if content.startswith("TARGET_PROPERTY:"):
             # No property lookup support in generator expressions yet.
             return ""
+        if content == "CONFIG":
+            return variables.get("CMAKE_BUILD_TYPE", "")
+        if content.startswith("CONFIG:"):
+            current = variables.get("CMAKE_BUILD_TYPE", "")
+            cfgs = [
+                expand_text(a) for a in split_top_level(content[len("CONFIG:") :], ",")
+            ]
+            return "1" if any(c and current.lower() == c.lower() for c in cfgs) else "0"
+        if content.startswith("LOWER_CASE:"):
+            return expand_text(content[len("LOWER_CASE:") :]).lower()
+        if content.startswith("UPPER_CASE:"):
+            return expand_text(content[len("UPPER_CASE:") :]).upper()
         if content == "COMPILE_LANGUAGE":
             return compile_language or ""
         if content.startswith("COMPILE_LANGUAGE:"):

@@ -2290,6 +2290,80 @@ def handle_file(
         # Stub for now, just succeeds
         pass
 
+    elif subcommand == "GENERATE":
+        # file(GENERATE OUTPUT <output> [INPUT <input> | CONTENT <content>]
+        #   [CONDITION <expr>] [TARGET <target>] [NEWLINE_STYLE ...] ...)
+        # CMake defers this to generation time, but cja evaluates commands
+        # sequentially so by the time we get here any INPUT produced by an
+        # earlier configure_file() already exists on disk.
+        output_path: str | None = None
+        input_path: str | None = None
+        content_val: str | None = None
+        condition_val: str | None = None
+        i = 1
+        while i < len(args):
+            token = args[i].upper()
+            if token == "OUTPUT" and i + 1 < len(args):
+                output_path = args[i + 1]
+                i += 2
+            elif token == "INPUT" and i + 1 < len(args):
+                input_path = args[i + 1]
+                i += 2
+            elif token == "CONTENT" and i + 1 < len(args):
+                content_val = args[i + 1]
+                i += 2
+            elif token == "CONDITION" and i + 1 < len(args):
+                condition_val = args[i + 1]
+                i += 2
+            else:
+                i += 1
+
+        if output_path is None:
+            if strict:
+                ctx.print_error("file(GENERATE) requires OUTPUT", cmd.line)
+                sys.exit(1)
+            return
+
+        if condition_val is not None:
+            condition_val = strip_generator_expressions(condition_val, ctx.variables)
+            if not is_truthy(condition_val):
+                return
+
+        # Generator expressions in the OUTPUT path (e.g. $<CONFIG>,
+        # $<LOWER_CASE:$<CONFIG>>) must resolve identically to how they are
+        # resolved in include directories so the generated header is found.
+        output_path = strip_generator_expressions(output_path, ctx.variables)
+        if not Path(output_path).is_absolute():
+            current_binary_dir = Path(
+                ctx.variables.get("CMAKE_CURRENT_BINARY_DIR", str(ctx.build_dir))
+            )
+            output_path = str(current_binary_dir / output_path)
+
+        if content_val is not None:
+            generated = strip_generator_expressions(content_val, ctx.variables)
+        elif input_path is not None:
+            input_path = strip_generator_expressions(input_path, ctx.variables)
+            src = Path(input_path)
+            if not src.is_absolute():
+                src = ctx.current_source_dir / src
+            if not src.exists():
+                if strict:
+                    ctx.print_error(
+                        f"file(GENERATE) input does not exist: {src}", cmd.line
+                    )
+                    sys.exit(1)
+                return
+            generated = src.read_text()
+        else:
+            if strict:
+                ctx.print_error("file(GENERATE) requires INPUT or CONTENT", cmd.line)
+                sys.exit(1)
+            return
+
+        dst = Path(output_path)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(generated)
+
 
 def handle_configure_file(
     ctx: BuildContext,

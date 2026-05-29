@@ -143,3 +143,64 @@ def test_file_touch_creates_parent_dirs(tmp_path: Path) -> None:
     process_commands(commands, ctx)
 
     assert target.exists()
+
+
+def test_file_generate_with_config_genex(tmp_path: Path) -> None:
+    """file(GENERATE) resolves $<LOWER_CASE:$<CONFIG>> and copies INPUT to OUTPUT.
+
+    Reproduces SDL's two-step SDL_build_config.h generation, where the output
+    lives in a build-type-dependent folder that must match the include path.
+    """
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    build_dir = tmp_path / "build"
+    build_dir.mkdir()
+    intermediate = build_dir / "SDL_build_config.h.intermediate"
+    intermediate.write_text("#define SDL_CONFIG 1\n")
+
+    ctx = BuildContext(source_dir=source_dir, build_dir=build_dir)
+    ctx.variables["CMAKE_BUILD_TYPE"] = "Debug"
+    ctx.variables["SDL3_BINARY_DIR"] = str(build_dir)
+
+    commands = [
+        Command(
+            name="file",
+            args=[
+                "GENERATE",
+                "OUTPUT",
+                "${SDL3_BINARY_DIR}/include-config-$<LOWER_CASE:$<CONFIG>>"
+                "/build_config/SDL_build_config.h",
+                "INPUT",
+                str(intermediate),
+            ],
+            line=1,
+        ),
+    ]
+    process_commands(commands, ctx)
+
+    generated = (
+        build_dir / "include-config-debug" / "build_config" / "SDL_build_config.h"
+    )
+    assert generated.read_text() == "#define SDL_CONFIG 1\n"
+
+
+def test_file_generate_content(tmp_path: Path) -> None:
+    """file(GENERATE ... CONTENT ...) writes inline content to the output."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    build_dir = tmp_path / "build"
+    build_dir.mkdir()
+
+    ctx = BuildContext(source_dir=source_dir, build_dir=build_dir)
+    ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(build_dir)
+
+    commands = [
+        Command(
+            name="file",
+            args=["GENERATE", "OUTPUT", "gen/out.txt", "CONTENT", "hello world"],
+            line=1,
+        ),
+    ]
+    process_commands(commands, ctx)
+
+    assert (build_dir / "gen" / "out.txt").read_text() == "hello world"
