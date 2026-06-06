@@ -424,6 +424,51 @@ def test_find_package_boost_found_via_pkg_config(
     assert "Boost::boost" in ctx.imported_targets
 
 
+def test_find_package_boost_component_library_variable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """find_package(Boost COMPONENTS ...) should set Boost_<COMPONENT>_LIBRARY,
+    matching CMake's FindBoost (e.g. Boost_UNIT_TEST_FRAMEWORK_LIBRARY)."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+
+    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        if cmd == ["pkg-config", "--exists", "boost"]:
+            return subprocess.CompletedProcess(cmd, 0)
+        if cmd == ["pkg-config", "--cflags", "boost"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="-I/usr/include")
+        if cmd == ["pkg-config", "--libs", "boost"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="")
+        if cmd == ["pkg-config", "--modversion", "boost"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="1.84.0")
+        if cmd == ["pkg-config", "--exists", "boost_unit_test_framework"]:
+            return subprocess.CompletedProcess(cmd, 0)
+        if cmd == ["pkg-config", "--cflags", "boost_unit_test_framework"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="")
+        if cmd == ["pkg-config", "--libs", "boost_unit_test_framework"]:
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout="-lboost_unit_test_framework"
+            )
+        return subprocess.CompletedProcess(cmd, 1)
+
+    monkeypatch.setattr("cja.generator.subprocess.run", fake_run)
+
+    commands = [
+        Command(
+            name="find_package",
+            args=["Boost", "REQUIRED", "COMPONENTS", "unit_test_framework"],
+            line=1,
+        )
+    ]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["Boost_FOUND"] == "TRUE"
+    assert ctx.variables["Boost_unit_test_framework_FOUND"] == "TRUE"
+    assert (
+        ctx.variables["Boost_UNIT_TEST_FRAMEWORK_LIBRARY"]
+        == "-lboost_unit_test_framework"
+    )
+
+
 def test_find_package_boost_required_component_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

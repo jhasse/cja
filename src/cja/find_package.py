@@ -453,6 +453,14 @@ def handle_builtin_find_package(
                 )
                 ctx.variables[var_name] = "TRUE"
                 ctx.variables[upper_var_name] = "TRUE"
+                # CMake's FindBoost exposes the per-component library via
+                # Boost_<UPPERCASE_COMPONENT>_LIBRARY (e.g.
+                # Boost_UNIT_TEST_FRAMEWORK_LIBRARY). Header-only components
+                # leave it empty, matching CMake.
+                lib_var = f"Boost_{component.upper()}_LIBRARY"
+                ctx.variables[lib_var] = component_link_flags
+                ctx.variables[f"{lib_var}_RELEASE"] = component_link_flags
+                ctx.variables[f"{lib_var}_DEBUG"] = component_link_flags
             else:
                 ctx.variables[var_name] = "FALSE"
                 ctx.variables[upper_var_name] = "FALSE"
