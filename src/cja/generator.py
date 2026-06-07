@@ -787,10 +787,31 @@ def generate_ninja(
                 arg, ctx.variables, target_file_dirs, target_files
             )
 
+        def _resolve_dependency(dep: str) -> str:
+            """Resolve a custom command/target dependency path for ninja.
+
+            ninja runs from the source root, so a relative dependency is the
+            source file when one exists there; otherwise, if it matches a build
+            artifact produced by another command, prefix it with $builddir.
+            Resolving the source case first avoids self-dependency cycles when a
+            copy command's source and output share the same relative path.
+            """
+            d = _expand_genex(dep)
+            if not d or Path(d).is_absolute():
+                return d
+            if (ctx.source_dir / d).exists():
+                return d
+            if d in custom_command_outputs:
+                return f"$builddir/{d}"
+            return d
+
         # Generate custom commands
         for custom_cmd in ctx.custom_commands:
             outputs = []
             for o in custom_cmd.outputs:
+                # Evaluate generator expressions (e.g. $<$<BOOL:..>:/$<CONFIG>>)
+                # so they don't leak into build.ninja output paths.
+                o = _expand_genex(o)
                 if not Path(o).is_absolute():
                     prefixed_o = f"$builddir/{o}"
                     outputs.append(prefixed_o)
@@ -817,20 +838,10 @@ def generate_ninja(
 
             cmd_str = " && ".join(cmd_parts)
 
-            depends = [
-                f"$builddir/{d}"
-                if d in custom_command_outputs and not Path(d).is_absolute()
-                else d
-                for d in custom_cmd.depends
-            ]
+            depends = [_resolve_dependency(dep) for dep in custom_cmd.depends]
             main_dep = custom_cmd.main_dependency
             if main_dep:
-                if (
-                    main_dep in custom_command_outputs
-                    and not Path(main_dep).is_absolute()
-                ):
-                    main_dep = f"$builddir/{main_dep}"
-                depends.insert(0, main_dep)
+                depends.insert(0, _resolve_dependency(main_dep))
 
             working_dir = custom_cmd.working_directory
             if working_dir:
@@ -850,12 +861,21 @@ def generate_ninja(
         # Generate custom targets (phony targets)
         custom_target_all: list[str] = []
         for ct in ctx.custom_targets:
-            ct_depends = [
-                f"$builddir/{d}"
-                if d in custom_command_outputs and not Path(d).is_absolute()
-                else d
-                for d in ct.depends
-            ]
+            ct_depends = []
+            for raw in ct.depends:
+                # DEPENDS may carry generator expressions and arrive as a single
+                # ";"-joined list element (e.g. ${RESOURCE_FILES_BINDIR}).
+                for d in _expand_genex(raw).split(";"):
+                    if not d:
+                        continue
+                    if Path(d).is_absolute():
+                        rel = make_relative(d, ctx.build_dir)
+                        if rel != d:
+                            ct_depends.append(f"$builddir/{rel}")
+                        else:
+                            ct_depends.append(d)
+                    else:
+                        ct_depends.append(_resolve_dependency(d))
 
             ct_dep_order_only = _target_order_only(ct.dependencies)
 

@@ -342,6 +342,63 @@ add_custom_command(TARGET videoplayer POST_BUILD
     assert "verysmall.ogv" in ninja_content
 
 
+def test_add_custom_command_output_strips_generator_expressions(
+    tmp_path: Path,
+) -> None:
+    """Generator expressions in OUTPUT must be evaluated rather than emitted
+    verbatim, which would produce an invalid $-escape in build.ninja."""
+    from cja.generator import configure
+
+    source_dir = tmp_path
+    cmake_content = """\
+cmake_minimum_required(VERSION 3.10)
+project(GenexOutputTest)
+
+add_custom_command(
+    OUTPUT out$<$<BOOL:0>:_dbg>.txt
+    COMMAND echo hi
+)
+add_custom_target(gen ALL DEPENDS out$<$<BOOL:0>:_dbg>.txt)
+"""
+    (source_dir / "CMakeLists.txt").write_text(cmake_content)
+
+    configure(source_dir, "build")
+
+    ninja_content = (source_dir / "build.ninja").read_text()
+    assert "build $builddir/out.txt: custom_command" in ninja_content
+    assert "$<" not in ninja_content
+
+
+def test_add_custom_command_source_dependency_no_cycle(tmp_path: Path) -> None:
+    """A relative DEPENDS that names an existing source file must resolve to the
+    source (no $builddir prefix), even when an output shares that name, so we
+    don't create a self-dependency cycle."""
+    from cja.generator import configure
+
+    source_dir = tmp_path
+    cmake_content = """\
+cmake_minimum_required(VERSION 3.10)
+project(CopyCycleTest)
+
+add_custom_command(
+    OUTPUT data.bin
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/data.bin data.bin
+    DEPENDS data.bin
+)
+add_custom_target(copydata ALL DEPENDS data.bin)
+"""
+    (source_dir / "CMakeLists.txt").write_text(cmake_content)
+    (source_dir / "data.bin").write_text("payload")
+
+    configure(source_dir, "build")
+
+    ninja_content = (source_dir / "build.ninja").read_text()
+    # Output is in $builddir, but the source dependency stays unprefixed so the
+    # build edge does not depend on itself.
+    assert "build $builddir/data.bin: custom_command data.bin" in ninja_content
+    assert "custom_command $builddir/data.bin" not in ninja_content
+
+
 def test_add_custom_command_target_post_build_depends_on_exe(tmp_path: Path) -> None:
     """Post_build stamp should depend on the executable."""
     from cja.generator import configure
