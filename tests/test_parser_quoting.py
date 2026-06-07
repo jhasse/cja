@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from cja.generator import BuildContext, process_commands
 from cja.parser import parse
 from cja.parser import parse_file
 
@@ -81,3 +82,35 @@ def test_bracket_argument_no_equals() -> None:
     commands = parse(content)
     assert len(commands) == 1
     assert commands[0].args == ["FOO", "bar"]
+
+
+def test_bracket_argument_sets_is_bracket_flag() -> None:
+    content = "set(FOO [[bar]])"
+    commands = parse(content)
+    assert commands[0].is_bracket == [False, True]
+
+
+def test_bracket_argument_with_semicolons_is_single_argument() -> None:
+    # A bracket argument containing ';' must stay a single literal argument.
+    content = "set(FOO [=[a;b;c]=])"
+    commands = parse(content)
+    assert commands[0].args == ["FOO", "a;b;c"]
+    assert commands[0].is_bracket == [False, True]
+
+
+def test_bracket_argument_not_split_or_expanded_when_processed() -> None:
+    # Mirrors SDL's check_x86_source_compiles: a multi-line bracket body with
+    # ';' and '${...}' must reach a function as a single, literal argument
+    # (no list splitting, no variable expansion).
+    content = (
+        "function(capture BODY VAR)\n"
+        "  if(ARGN)\n"
+        '    message(FATAL_ERROR "Unknown arguments: ${ARGN}")\n'
+        "  endif()\n"
+        '  set(${VAR} "${BODY}" PARENT_SCOPE)\n'
+        "endfunction()\n"
+        "capture([==[for (; i < n; i++, j++) { a; b; ${NOPE} }]==] RESULT)\n"
+    )
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    process_commands(parse(content), ctx, strict=True)
+    assert ctx.variables["RESULT"] == "for (; i < n; i++, j++) { a; b; ${NOPE} }"

@@ -465,6 +465,12 @@ def process_commands(
         ctx.variables["CMAKE_CURRENT_LIST_LINE"] = str(cmd.line)
         expanded_args: list[str] = []
         for idx, arg in enumerate(cmd.args):
+            is_bracket = cmd.is_bracket[idx] if idx < len(cmd.is_bracket) else False
+            if is_bracket:
+                # Bracket arguments ([[...]] / [==[...]==]) are literal: no
+                # variable expansion and no list splitting.
+                expanded_args.append(arg)
+                continue
             allow_undefined = False
             allow_undefined_warning = "${${" in arg
             is_exact_var = (

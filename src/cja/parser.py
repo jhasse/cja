@@ -12,16 +12,21 @@ class Command:
     args: list[str]
     is_quoted: list[bool] = field(default_factory=list)
     line: int = 0
+    is_bracket: list[bool] = field(default_factory=list)
 
 
-def tokenize(content: str) -> list[tuple[str, int]]:
-    """Tokenize CMake content into tokens with line numbers."""
+def tokenize(content: str) -> list[tuple[str, int, bool]]:
+    """Tokenize CMake content into (text, line, is_bracket) tuples.
+
+    is_bracket marks bracket arguments ([[...]] / [==[...]==]), whose contents
+    are literal: no variable expansion and no list splitting.
+    """
     # UTF-8 BOM appears in some upstream CMakeLists.txt files (e.g. Box2D).
     # Treat it as a file marker, not part of the first command token.
     if content.startswith("\ufeff"):
         content = content[1:]
 
-    tokens: list[tuple[str, int]] = []
+    tokens: list[tuple[str, int, bool]] = []
     i = 0
     line = 1
 
@@ -73,7 +78,7 @@ def tokenize(content: str) -> list[tuple[str, int]]:
 
         # Parentheses
         if content[i] in "()":
-            tokens.append((content[i], line))
+            tokens.append((content[i], line, False))
             i += 1
             continue
 
@@ -119,7 +124,7 @@ def tokenize(content: str) -> list[tuple[str, int]]:
                 else:
                     val += raw_val[j]
                     j += 1
-            tokens.append(('"' + val + '"', line))
+            tokens.append(('"' + val + '"', line, False))
             continue
 
         # Unquoted token (identifier or value)
@@ -138,7 +143,7 @@ def tokenize(content: str) -> list[tuple[str, int]]:
                 if closing_idx != -1:
                     val = content[j:closing_idx]
                     line += val.count("\n")
-                    tokens.append((val, line))
+                    tokens.append((val, line, True))
                     i = closing_idx + len(closing)
                     continue
                 # Unterminated bracket argument - fall through to unquoted
@@ -162,7 +167,7 @@ def tokenize(content: str) -> list[tuple[str, int]]:
             else:
                 i += 1
         if i > start:
-            tokens.append((content[start:i], line))
+            tokens.append((content[start:i], line, False))
 
     return tokens
 
@@ -180,7 +185,7 @@ def parse(content: str, filename: str = "CMakeLists.txt") -> list[Command]:
         if i >= len(tokens):
             break
 
-        name, line = tokens[i]
+        name, line, _ = tokens[i]
         i += 1
 
         # Expect opening paren
@@ -194,24 +199,26 @@ def parse(content: str, filename: str = "CMakeLists.txt") -> list[Command]:
         # Collect arguments until the matching closing paren
         args: list[str] = []
         is_quoted: list[bool] = []
+        is_bracket: list[bool] = []
         depth = 1
         while i < len(tokens):
-            token, token_line = tokens[i]
-            if token == "(":
+            token, token_line, token_bracket = tokens[i]
+            if not token_bracket and token == "(":
                 depth += 1
-            elif token == ")":
+            elif not token_bracket and token == ")":
                 depth -= 1
                 if depth == 0:
                     break
 
             arg = token
             quoted = False
-            # Strip quotes from quoted strings
-            if arg.startswith('"') and arg.endswith('"'):
+            # Strip quotes from quoted strings (bracket args are already literal)
+            if not token_bracket and arg.startswith('"') and arg.endswith('"'):
                 arg = arg[1:-1]
                 quoted = True
             args.append(arg)
             is_quoted.append(quoted)
+            is_bracket.append(token_bracket)
             i += 1
 
         if i >= len(tokens) or tokens[i][0] != ")":
@@ -222,7 +229,13 @@ def parse(content: str, filename: str = "CMakeLists.txt") -> list[Command]:
         i += 1  # Skip closing paren
 
         commands.append(
-            Command(name=name.lower(), args=args, is_quoted=is_quoted, line=line)
+            Command(
+                name=name.lower(),
+                args=args,
+                is_quoted=is_quoted,
+                line=line,
+                is_bracket=is_bracket,
+            )
         )
 
     return commands
