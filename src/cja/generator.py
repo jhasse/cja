@@ -1006,9 +1006,14 @@ def generate_ninja(
                 if lib.defined_file is not None
                 else ctx.source_dir
             )
-            lib_compile_flags: list[str] = _collect_directory_property_chain(
+            dir_compile_options = _collect_directory_property_chain(
                 target_dir, "COMPILE_OPTIONS"
             )
+            lib_compile_flags: list[str] = []
+            for option in dir_compile_options:
+                opt = strip_generator_expressions(option)
+                if opt:
+                    lib_compile_flags.append(opt)
             for definition in _collect_directory_property_chain(
                 target_dir, "COMPILE_DEFINITIONS"
             ):
@@ -1018,7 +1023,9 @@ def generate_ninja(
             # Raw compile_options are kept for per-source evaluation so that
             # $<COMPILE_LANGUAGE:...> can be evaluated against each source's
             # language.  The target-level strip drops language-gated options.
-            lib_compile_options_raw: list[str] = list(lib.compile_options)
+            lib_compile_options_raw: list[str] = list(dir_compile_options) + list(
+                lib.compile_options
+            )
             for option in lib.compile_options:
                 opt = strip_generator_expressions(option)
                 if opt:
@@ -1265,9 +1272,14 @@ def generate_ninja(
                 if exe.defined_file is not None
                 else ctx.source_dir
             )
-            compile_flags: list[str] = _collect_directory_property_chain(
+            dir_compile_options = _collect_directory_property_chain(
                 target_dir, "COMPILE_OPTIONS"
             )
+            compile_flags: list[str] = []
+            for option in dir_compile_options:
+                opt = strip_generator_expressions(option)
+                if opt:
+                    compile_flags.append(opt)
             for definition in _collect_directory_property_chain(
                 target_dir, "COMPILE_DEFINITIONS"
             ):
@@ -1276,7 +1288,9 @@ def generate_ninja(
                 compile_flags.append(_format_compile_definition_flag(definition))
             # Keep raw compile_options so $<COMPILE_LANGUAGE:...> can be
             # evaluated per source.  The target-level strip drops them.
-            exe_compile_options_raw: list[str] = list(exe.compile_options)
+            exe_compile_options_raw: list[str] = list(dir_compile_options) + list(
+                exe.compile_options
+            )
             for option in exe.compile_options:
                 opt = strip_generator_expressions(option)
                 if opt:
