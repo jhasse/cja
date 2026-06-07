@@ -141,10 +141,11 @@ def build_foreach_info(
         mode = remaining[1] if len(remaining) > 1 else ""
         values = remaining[2:]
         if mode == "LISTS":
+            # CMake lists are ";"-separated, so split on ";" (not whitespace).
             for list_name in values:
                 list_val = ctx.variables.get(list_name, "")
                 if list_val:
-                    items.extend(list_val.split())
+                    items.extend(list_val.split(";"))
         elif mode == "ITEMS":
             items = values
     else:
