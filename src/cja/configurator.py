@@ -200,6 +200,19 @@ def process_commands(
     ctx.variables["CMAKE_VERSION"] = "3.28.0"
     stack: list[Frame] = [Frame(commands=commands, pc=0, kind="commands")]
 
+    # State saved/restored by cmake_push_check_state()/cmake_pop_check_state().
+    check_state_vars = (
+        "CMAKE_REQUIRED_FLAGS",
+        "CMAKE_REQUIRED_DEFINITIONS",
+        "CMAKE_REQUIRED_LINK_OPTIONS",
+        "CMAKE_REQUIRED_LIBRARIES",
+        "CMAKE_REQUIRED_INCLUDES",
+        "CMAKE_REQUIRED_LINK_DIRECTORIES",
+        "CMAKE_REQUIRED_QUIET",
+        "CMAKE_EXTRA_INCLUDE_FILES",
+    )
+    check_state_stack: list[dict[str, str]] = []
+
     def split_unquoted_list_args(value: str) -> list[str]:
         """Split list arguments on semicolons outside generator expressions."""
         if ";" not in value:
@@ -1361,6 +1374,28 @@ def process_commands(
                         pass
 
                     ctx.variables[result_var] = "1" if supported else ""
+
+            case "cmake_push_check_state":
+                # cmake_push_check_state([RESET]) - save CMAKE_REQUIRED_* state.
+                snapshot = {
+                    name: ctx.variables.get(name, "") for name in check_state_vars
+                }
+                check_state_stack.append(snapshot)
+                if args and args[0] == "RESET":
+                    for name in check_state_vars:
+                        ctx.variables[name] = ""
+
+            case "cmake_pop_check_state":
+                # cmake_pop_check_state() - restore CMAKE_REQUIRED_* state.
+                if check_state_stack:
+                    snapshot = check_state_stack.pop()
+                    for name in check_state_vars:
+                        ctx.variables[name] = snapshot[name]
+
+            case "cmake_reset_check_state":
+                # cmake_reset_check_state() - clear CMAKE_REQUIRED_* state.
+                for name in check_state_vars:
+                    ctx.variables[name] = ""
 
             case "check_c_source_compiles" | "check_cxx_source_compiles":
                 # check_(c|cxx)_source_compiles(<code> <var> [FAIL_REGEX <re>...])
