@@ -90,6 +90,106 @@ class ReturnFromFunction(Exception):
     pass
 
 
+def _check_source_compiles(
+    ctx: "BuildContext",
+    code: str,
+    language: str,
+    fail_regexes: list[str],
+) -> bool:
+    """Compile (and, unless CMAKE_TRY_COMPILE_TARGET_TYPE is STATIC_LIBRARY,
+    link) a snippet of source code, honoring the CMAKE_REQUIRED_* variables.
+
+    Mirrors the bits of CheckCSourceCompiles/CheckCXXSourceCompiles that real
+    projects rely on (flags, defs, includes, libraries, link options and
+    FAIL_REGEX).
+    """
+    import re
+    import tempfile
+
+    compiler = ctx.cxx_compiler if language == "CXX" else ctx.c_compiler
+    suffix = ".cpp" if language == "CXX" else ".c"
+
+    def _as_list(name: str) -> list[str]:
+        raw = ctx.variables.get(name, "")
+        if not raw:
+            return []
+        # CMAKE_REQUIRED_* are CMake lists (";"-separated); flags may also use
+        # spaces, which shlex handles.
+        items: list[str] = []
+        for part in raw.split(";"):
+            part = part.strip()
+            if part:
+                items.extend(shlex.split(part))
+        return items
+
+    required_flags = _as_list("CMAKE_REQUIRED_FLAGS")
+    required_defs = _as_list("CMAKE_REQUIRED_DEFINITIONS")
+    required_includes = _as_list("CMAKE_REQUIRED_INCLUDES")
+    required_link_options = _as_list("CMAKE_REQUIRED_LINK_OPTIONS")
+    required_libraries = _as_list("CMAKE_REQUIRED_LIBRARIES")
+
+    # STATIC_LIBRARY means "compile only" (no linking), matching CMake's
+    # CMAKE_TRY_COMPILE_TARGET_TYPE handling.
+    compile_only = (
+        ctx.variables.get("CMAKE_TRY_COMPILE_TARGET_TYPE", "") == "STATIC_LIBRARY"
+    )
+
+    tmpdir = Path(tempfile.mkdtemp())
+    src_path = tmpdir / f"src{suffix}"
+    src_path.write_text(code, encoding="utf-8")
+    out_path = tmpdir / ("out.o" if compile_only else "out")
+
+    cmd: list[str] = [compiler]
+    cmd.extend(required_flags)
+    cmd.extend(required_defs)
+    for inc in required_includes:
+        cmd.append(f"-I{inc}")
+    if compile_only:
+        cmd.append("-c")
+    cmd.extend(["-o", str(out_path), str(src_path)])
+    if not compile_only:
+        cmd.extend(required_link_options)
+        cmd.extend(required_libraries)
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+    except Exception:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        return False
+
+    output = (result.stdout or "") + (result.stderr or "")
+    shutil.rmtree(tmpdir, ignore_errors=True)
+
+    success = result.returncode == 0
+    if success and fail_regexes:
+        for pattern in fail_regexes:
+            try:
+                if re.search(pattern, output):
+                    success = False
+                    break
+            except re.error:
+                continue
+    return success
+
+
+def _parse_source_check_args(args: list[str]) -> tuple[str, str, list[str]]:
+    """Parse check_(c|cxx)_source_compiles(<code> <var> [FAIL_REGEX <re>...])."""
+    code = args[0]
+    result_var = args[1]
+    fail_regexes: list[str] = []
+    i = 2
+    while i < len(args):
+        if args[i] == "FAIL_REGEX":
+            i += 1
+            while i < len(args) and args[i] not in ("SRC_EXT",):
+                # FAIL_REGEX may be a single ";"-separated list or several args.
+                fail_regexes.extend(p for p in args[i].split(";") if p)
+                i += 1
+            continue
+        i += 1
+    return code, result_var, fail_regexes
+
+
 def process_commands(
     commands: list[Command],
     ctx: BuildContext,
@@ -1261,6 +1361,18 @@ def process_commands(
                         pass
 
                     ctx.variables[result_var] = "1" if supported else ""
+
+            case "check_c_source_compiles" | "check_cxx_source_compiles":
+                # check_(c|cxx)_source_compiles(<code> <var> [FAIL_REGEX <re>...])
+                if len(args) >= 2:
+                    code, result_var, fail_regexes = _parse_source_check_args(args)
+                    language = (
+                        "CXX" if cmd.name == "check_cxx_source_compiles" else "C"
+                    )
+                    success = _check_source_compiles(
+                        ctx, code, language, fail_regexes
+                    )
+                    ctx.variables[result_var] = "1" if success else ""
 
             case "check_c_compiler_flag":
                 # check_c_compiler_flag(<flag> <var>)
