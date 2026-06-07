@@ -2390,6 +2390,121 @@ int main() {{
                                 f"Could not find path for: {', '.join(names)}"
                             )
 
+            case "find_file":
+                # find_file(<VAR> NAMES name1 [...] [HINTS ...] [PATHS ...]
+                #           [PATH_SUFFIXES ...] [REQUIRED]) - like find_path but
+                # stores the full path to the file (including its name).
+                if len(args) >= 2:
+                    var_name = args[0]
+                    existing = ctx.variables.get(var_name, "")
+                    if var_name in ctx.cache_variables or (
+                        existing and not existing.endswith("-NOTFOUND")
+                    ):
+                        frame.pc += 1
+                        continue
+                    ctx.cache_variables.add(var_name)
+                    names = []
+                    paths = []
+                    hints = []
+                    suffixes = []
+                    required = False
+
+                    i = 1
+                    while i < len(args):
+                        arg = args[i]
+                        if arg == "NAMES":
+                            i += 1
+                            while i < len(args) and args[i] not in (
+                                "PATHS",
+                                "HINTS",
+                                "PATH_SUFFIXES",
+                                "REQUIRED",
+                            ):
+                                names.append(args[i])
+                                i += 1
+                            continue
+                        elif arg == "PATHS":
+                            i += 1
+                            while i < len(args) and args[i] not in (
+                                "NAMES",
+                                "HINTS",
+                                "PATH_SUFFIXES",
+                                "REQUIRED",
+                            ):
+                                if args[i] == "ENV" and i + 1 < len(args):
+                                    env_value = os.environ.get(args[i + 1], "")
+                                    if env_value:
+                                        paths.extend(
+                                            p for p in env_value.split(os.pathsep) if p
+                                        )
+                                    i += 2
+                                else:
+                                    paths.append(args[i])
+                                    i += 1
+                            continue
+                        elif arg == "HINTS":
+                            i += 1
+                            while i < len(args) and args[i] not in (
+                                "NAMES",
+                                "PATHS",
+                                "PATH_SUFFIXES",
+                                "REQUIRED",
+                            ):
+                                if args[i] == "ENV" and i + 1 < len(args):
+                                    env_value = os.environ.get(args[i + 1], "")
+                                    if env_value:
+                                        hints.extend(
+                                            p for p in env_value.split(os.pathsep) if p
+                                        )
+                                    i += 2
+                                else:
+                                    hints.append(args[i])
+                                    i += 1
+                            continue
+                        elif arg == "PATH_SUFFIXES":
+                            i += 1
+                            while i < len(args) and args[i] not in (
+                                "NAMES",
+                                "PATHS",
+                                "HINTS",
+                                "REQUIRED",
+                            ):
+                                suffixes.append(args[i])
+                                i += 1
+                            continue
+                        elif arg == "REQUIRED":
+                            required = True
+                        else:
+                            if not names:
+                                names.append(arg)
+                            else:
+                                paths.append(arg)
+                        i += 1
+
+                    search_dirs = _search_dirs_with_defaults("path", hints, paths)
+
+                    found_file = None
+                    for name in names:
+                        for d in search_dirs:
+                            for suffix in [""] + suffixes:
+                                candidate = Path(d) / suffix / name
+                                if candidate.exists():
+                                    found_file = str(candidate.absolute())
+                                    break
+                            if found_file:
+                                break
+                        if found_file:
+                            break
+
+                    if found_file:
+                        ctx.variables[var_name] = found_file
+                    else:
+                        ctx.variables[var_name] = f"{var_name}-NOTFOUND"
+                        if required:
+                            raise FileNotFoundError(
+                                f"Could not find file for: {', '.join(names)}"
+                            )
+
             case "find_library":
                 if len(args) >= 2:
                     var_name = args[0]
