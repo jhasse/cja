@@ -74,7 +74,7 @@ def test_check_c_source_compiles_honors_required_libraries() -> None:
             "check_c_source_compiles([==[\n"
             "#include <winsock2.h>\n"
             "int main(void) { WSADATA d; return WSAStartup(MAKEWORD(2, 2), &d); }\n"
-            "]==] HAVE_SQRT)\n"
+            "]==] HAVE_REQUIRED_LIB)\n"
         )
         required_libraries = "ws2_32.lib"
     else:
@@ -82,11 +82,11 @@ def test_check_c_source_compiles_honors_required_libraries() -> None:
             "check_c_source_compiles([==[\n"
             "#include <math.h>\n"
             "int main(void) { return (int)sqrt(4.0) - 2; }\n"
-            "]==] HAVE_SQRT)\n"
+            "]==] HAVE_REQUIRED_LIB)\n"
         )
         required_libraries = "-lm"
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
     ctx.variables["CMAKE_REQUIRED_LIBRARIES"] = required_libraries
     process_commands(parse(content), ctx)
 
-    assert ctx.variables["HAVE_SQRT"] == "1"
+    assert ctx.variables["HAVE_REQUIRED_LIB"] == "1"
