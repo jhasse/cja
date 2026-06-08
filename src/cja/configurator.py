@@ -132,6 +132,22 @@ def _check_source_compiles(
     required_includes = _as_list("CMAKE_REQUIRED_INCLUDES")
     required_link_options = _as_list("CMAKE_REQUIRED_LINK_OPTIONS")
     required_libraries = _as_list("CMAKE_REQUIRED_LIBRARIES")
+    if sys.platform == "win32":
+        compiler_name = Path(compiler).name.lower()
+        msvc_like = compiler_name in {"cl", "cl.exe"} or compiler_name.startswith(
+            "clang-cl"
+        )
+        if not msvc_like:
+            translated_libraries: list[str] = []
+            for lib in required_libraries:
+                if (
+                    lib.lower().endswith(".lib")
+                    and Path(lib).name == lib
+                ):
+                    translated_libraries.append(f"-l{lib[:-4]}")
+                else:
+                    translated_libraries.append(lib)
+            required_libraries = translated_libraries
 
     # STATIC_LIBRARY means "compile only" (no linking), matching CMake's
     # CMAKE_TRY_COMPILE_TARGET_TYPE handling.
