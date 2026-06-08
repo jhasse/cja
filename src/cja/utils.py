@@ -334,3 +334,34 @@ def strip_generator_expressions(
         # any other list value.
         result = ";".join(result.split())
     return result
+
+
+def split_unquoted_list_args(value: str) -> list[str]:
+    """Split list arguments on semicolons outside generator expressions."""
+    if ";" not in value:
+        return [value]
+    result: list[str] = []
+    current: list[str] = []
+    genex_depth = 0
+    i = 0
+    while i < len(value):
+        if value.startswith("$<", i):
+            genex_depth += 1
+            current.append("$<")
+            i += 2
+            continue
+        ch = value[i]
+        if ch == ">" and genex_depth > 0:
+            genex_depth -= 1
+            current.append(ch)
+            i += 1
+            continue
+        if ch == ";" and genex_depth == 0:
+            result.append("".join(current))
+            current = []
+            i += 1
+            continue
+        current.append(ch)
+        i += 1
+    result.append("".join(current))
+    return result
