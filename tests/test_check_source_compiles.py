@@ -6,8 +6,10 @@ as list separators.
 """
 
 import platform
+import subprocess
 from pathlib import Path
 
+from cja import configurator
 from cja.generator import BuildContext, process_commands
 from cja.parser import parse
 
@@ -90,3 +92,26 @@ def test_check_c_source_compiles_honors_required_libraries() -> None:
     process_commands(parse(content), ctx)
 
     assert ctx.variables["HAVE_REQUIRED_LIB"] == "1"
+
+
+def test_check_c_source_compiles_translates_dot_lib_for_gnu_on_windows(
+    monkeypatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], capture_output: bool, text: bool):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(configurator.sys, "platform", "win32")
+    monkeypatch.setattr(configurator.subprocess, "run", fake_run)
+
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    ctx.c_compiler = "clang"
+    ctx.variables["CMAKE_REQUIRED_LIBRARIES"] = "ws2_32.lib"
+
+    assert configurator._check_source_compiles(
+        ctx, "int main(void) { return 0; }", "C", []
+    )
+    assert calls
+    assert "-lws2_32" in calls[0]
