@@ -99,7 +99,9 @@ def test_check_c_source_compiles_translates_dot_lib_for_gnu_on_windows(
 ) -> None:
     calls: list[list[str]] = []
 
-    def fake_run(cmd: list[str], capture_output: bool, text: bool):
+    def fake_run(
+        cmd: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
         calls.append(cmd)
         return subprocess.CompletedProcess(cmd, 0, "", "")
 

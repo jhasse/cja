@@ -142,8 +142,7 @@ def _check_source_compiles(
             for lib in required_libraries:
                 if (
                     lib.lower().endswith(".lib")
-                    and "/" not in lib
-                    and "\\" not in lib
+                    and Path(lib).name == lib
                 ):
                     translated_libraries.append(f"-l{lib[:-4]}")
                 else:
