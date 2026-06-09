@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import hashlib
+import os
 import shlex
 import shutil
 import subprocess
@@ -132,22 +133,28 @@ def _check_source_compiles(
     required_includes = _as_list("CMAKE_REQUIRED_INCLUDES")
     required_link_options = _as_list("CMAKE_REQUIRED_LINK_OPTIONS")
     required_libraries = _as_list("CMAKE_REQUIRED_LIBRARIES")
-    if sys.platform == "win32":
-        compiler_name = Path(compiler).name.lower()
-        msvc_like = compiler_name in {"cl", "cl.exe"} or compiler_name.startswith(
-            "clang-cl"
-        )
-        if not msvc_like:
-            translated_libraries: list[str] = []
-            for lib in required_libraries:
-                if (
-                    lib.lower().endswith(".lib")
-                    and Path(lib).name == lib
-                ):
-                    translated_libraries.append(f"-l{lib[:-4]}")
-                else:
-                    translated_libraries.append(lib)
-            required_libraries = translated_libraries
+    compiler_name = Path(compiler).name.lower()
+    msvc_like = compiler_name in {"cl", "cl.exe"} or compiler_name.startswith(
+        "clang-cl"
+    )
+    if not msvc_like:
+        # GNU-like command lines take libraries as -lfoo or as file paths.
+        # CMAKE_REQUIRED_LIBRARIES entries may be bare names ("dl", "m"),
+        # ".lib" names (on Windows), file paths, or already-formed flags;
+        # translate the first two while leaving the rest untouched.
+        translated_libraries: list[str] = []
+        for lib in required_libraries:
+            if lib.startswith("-") or "/" in lib or os.sep in lib:
+                translated_libraries.append(lib)
+            elif lib.lower().endswith(".lib") and Path(lib).name == lib:
+                translated_libraries.append(f"-l{lib[:-4]}")
+            elif Path(lib).exists() or lib.endswith(
+                (".a", ".so", ".dylib", ".o")
+            ):
+                translated_libraries.append(lib)
+            else:
+                translated_libraries.append(f"-l{lib}")
+        required_libraries = translated_libraries
 
     # STATIC_LIBRARY means "compile only" (no linking), matching CMake's
     # CMAKE_TRY_COMPILE_TARGET_TYPE handling.
@@ -1477,6 +1484,38 @@ int main() {{
                     ctx.variables[result_var] = "TRUE" if success else "FALSE"
                     if output_var:
                         ctx.variables[output_var] = compile_output.strip()
+
+            case "check_function_exists":
+                # check_function_exists(<function> <variable>)
+                if len(args) >= 2:
+                    function = args[0]
+                    variable = args[-1]
+
+                    check_quiet = ctx.quiet or is_truthy(
+                        ctx.variables.get("CMAKE_REQUIRED_QUIET", "")
+                    )
+
+                    # Declare the function ourselves and call it so the linker
+                    # has to resolve the symbol, mirroring CMake's
+                    # CheckFunctionExists module. Reuse _check_source_compiles so
+                    # the CMAKE_REQUIRED_* variables (libraries, flags, link
+                    # options) are honored.
+                    test_code = f"""#ifdef __cplusplus
+extern "C"
+#endif
+char {function}(void);
+int main(void) {{
+    return (int)(long){function}();
+}}
+"""
+                    found = _check_source_compiles(ctx, test_code, "C", [])
+
+                    ctx.variables[variable] = "1" if found else ""
+                    if not check_quiet:
+                        color = "green" if found else "red"
+                        print(
+                            f"{colored(status_marker(found), color)} {function}"
+                        )
 
             case "check_symbol_exists":
                 # check_symbol_exists(<symbol> <files> <variable>)
