@@ -1,5 +1,6 @@
 """Tests for check_function_exists command."""
 
+import platform
 from pathlib import Path
 
 import pytest
@@ -43,18 +44,28 @@ def test_check_function_exists_with_required_library():
 
     On glibc 2.34+ dlopen lives in libc, but specifying libdl must not break the
     check (passing -ldl remains valid). This mirrors LuaJIT's dlopen probe.
+    On Windows, WSAStartup from ws2_32 is used as an equivalent probe.
     """
+    if platform.system() == "Windows":
+        func = "WSAStartup"
+        lib = "ws2_32.lib"
+        var = "HAVE_WSASTARTUP"
+    else:
+        func = "dlopen"
+        lib = "dl"
+        var = "HAVE_DLOPEN"
+
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
-    ctx.variables["CMAKE_REQUIRED_LIBRARIES"] = "dl"
+    ctx.variables["CMAKE_REQUIRED_LIBRARIES"] = lib
     commands = [
         Command(
             name="check_function_exists",
-            args=["dlopen", "HAVE_DLOPEN"],
+            args=[func, var],
             line=1,
         ),
     ]
     process_commands(commands, ctx)
-    assert ctx.variables["HAVE_DLOPEN"] == "1"
+    assert ctx.variables[var] == "1"
 
 
 def test_check_function_exists_prints_status_output(
