@@ -40,6 +40,40 @@ def _find_first_library(lib_dirs: list[Path], names: list[str]) -> str:
     return ""
 
 
+def _pkg_config_info(pkg_name: str) -> tuple[bool, str, str, str]:
+    """Query pkg-config for a package.
+
+    Returns ``(found, cflags, libs, version)``. ``found`` is False when the
+    package is unknown to pkg-config or pkg-config is unavailable.
+    """
+    try:
+        result = subprocess.run(
+            ["pkg-config", "--exists", pkg_name],
+            capture_output=True,
+        )
+    except FileNotFoundError:
+        return False, "", "", ""
+    if result.returncode != 0:
+        return False, "", "", ""
+
+    cflags = subprocess.run(
+        ["pkg-config", "--cflags", pkg_name],
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    libs = subprocess.run(
+        ["pkg-config", "--libs", pkg_name],
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    version = subprocess.run(
+        ["pkg-config", "--modversion", pkg_name],
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    return True, cflags, libs, version
+
+
 def handle_builtin_find_package(
     ctx: BuildContext,
     cmd: Command,
@@ -957,6 +991,172 @@ def handle_builtin_find_package(
                 ctx.print_error("could not find package: FLEX", cmd.line)
                 raise SystemExit(1)
             if not quiet:
+                print(f"{colored(status_marker(False), 'red')} {package_name}")
+        return True
+
+    if package_name == "X11":
+        # CMake's FindX11 finds the core X11 library plus a large set of
+        # related libraries, exposing per-library X11_<lib>_FOUND /
+        # X11_<lib>_LIB / X11_<lib>_INCLUDE_PATH variables and X11::<lib>
+        # imported targets. Each entry is (target_suffix, pkg_config_name,
+        # library_base_name).
+        x11_libraries = [
+            ("X11", "x11", "X11"),
+            ("Xext", "xext", "Xext"),
+            ("Xrandr", "xrandr", "Xrandr"),
+            ("Xrender", "xrender", "Xrender"),
+            ("Xfixes", "xfixes", "Xfixes"),
+            ("Xcursor", "xcursor", "Xcursor"),
+            ("Xinerama", "xinerama", "Xinerama"),
+            ("Xi", "xi", "Xi"),
+            ("Xtst", "xtst", "Xtst"),
+            ("Xt", "xt", "Xt"),
+            ("Xmu", "xmu", "Xmu"),
+            ("Xpm", "xpm", "Xpm"),
+            ("Xss", "xscrnsaver", "Xss"),
+            ("Xxf86vm", "xxf86vm", "Xxf86vm"),
+            ("Xft", "xft", "Xft"),
+            ("xkbcommon", "xkbcommon", "xkbcommon"),
+            ("ICE", "ice", "ICE"),
+            ("SM", "sm", "SM"),
+            ("Xau", "xau", "Xau"),
+            ("Xdmcp", "xdmcp", "Xdmcp"),
+            ("Xcomposite", "xcomposite", "Xcomposite"),
+            ("Xdamage", "xdamage", "Xdamage"),
+            ("Xaw", "xaw7", "Xaw"),
+            ("xcb", "xcb", "xcb"),
+            ("X11_xcb", "x11-xcb", "X11-xcb"),
+        ]
+
+        keywords = {
+            "REQUIRED",
+            "QUIET",
+            "COMPONENTS",
+            "OPTIONAL_COMPONENTS",
+            "EXACT",
+            "MODULE",
+            "CONFIG",
+            "NO_MODULE",
+        }
+        required_components: list[str] = []
+        optional_components: list[str] = []
+        i = 1
+        while i < len(args):
+            token = args[i]
+            if token == "COMPONENTS":
+                i += 1
+                while i < len(args) and args[i] not in keywords:
+                    required_components.append(args[i])
+                    i += 1
+                continue
+            if token == "OPTIONAL_COMPONENTS":
+                i += 1
+                while i < len(args) and args[i] not in keywords:
+                    optional_components.append(args[i])
+                    i += 1
+                continue
+            i += 1
+
+        lib_search_dirs = _unique_existing_dirs(
+            [
+                Path("/usr/lib"),
+                Path("/usr/lib64"),
+                Path("/usr/lib/x86_64-linux-gnu"),
+                Path("/usr/lib/aarch64-linux-gnu"),
+                Path("/usr/local/lib"),
+                Path("/opt/X11/lib"),
+                Path("/opt/homebrew/lib"),
+            ]
+        )
+        include_search_dirs = _unique_existing_dirs(
+            [
+                Path("/usr/include"),
+                Path("/usr/local/include"),
+                Path("/opt/X11/include"),
+            ]
+        )
+
+        if platform.system() == "Darwin":
+            lib_suffixes = [".dylib", ".a"]
+        else:
+            lib_suffixes = [".so", ".a"]
+
+        include_dirs: list[str] = []
+
+        for target_suffix, pkg_name, lib_base in x11_libraries:
+            comp_found, comp_cflags, comp_libs, _ = _pkg_config_info(pkg_name)
+            comp_include_path = ""
+
+            if comp_found:
+                for entry in shlex.split(comp_cflags):
+                    if entry.startswith("-I"):
+                        comp_include_path = entry[2:]
+                        if entry[2:] not in include_dirs:
+                            include_dirs.append(entry[2:])
+            else:
+                # Fallback: search for the library file directly.
+                lib_names = [f"lib{lib_base}{suffix}" for suffix in lib_suffixes]
+                lib_path = _find_first_library(lib_search_dirs, lib_names)
+                if lib_path:
+                    comp_found = True
+                    comp_libs = lib_path
+                    for inc_dir in include_search_dirs:
+                        if (inc_dir / "X11" / "Xlib.h").exists():
+                            comp_include_path = str(inc_dir)
+                            if str(inc_dir) not in include_dirs:
+                                include_dirs.append(str(inc_dir))
+                            break
+
+            if comp_found:
+                ctx.variables[f"X11_{target_suffix}_FOUND"] = "TRUE"
+                ctx.variables[f"X11_{target_suffix}_LIB"] = comp_libs
+                if comp_include_path:
+                    ctx.variables[f"X11_{target_suffix}_INCLUDE_PATH"] = (
+                        comp_include_path
+                    )
+                ctx.imported_targets[f"X11::{target_suffix}"] = ImportedTarget(
+                    cflags=comp_cflags,
+                    libs=comp_libs,
+                )
+            else:
+                ctx.variables[f"X11_{target_suffix}_FOUND"] = "FALSE"
+
+        found = ctx.variables.get("X11_X11_FOUND") == "TRUE"
+
+        # Xkb is a header-based feature: its API lives inside libX11, so CMake
+        # exposes X11_Xkb_FOUND / X11_Xkb_INCLUDE_PATH (without a separate
+        # X11::Xkb target) when X11/XKBlib.h is present alongside libX11.
+        xkb_header_dir = ""
+        for inc_dir in [Path(d) for d in include_dirs] + include_search_dirs:
+            if (inc_dir / "X11" / "XKBlib.h").exists():
+                xkb_header_dir = str(inc_dir)
+                break
+        if found and xkb_header_dir:
+            ctx.variables["X11_Xkb_FOUND"] = "TRUE"
+            ctx.variables["X11_Xkb_INCLUDE_PATH"] = xkb_header_dir
+        else:
+            ctx.variables["X11_Xkb_FOUND"] = "FALSE"
+
+        unique_include_dirs = list(dict.fromkeys(include_dirs))
+        if found:
+            ctx.variables["X11_INCLUDE_DIR"] = ";".join(unique_include_dirs)
+            ctx.variables["X11_LIBRARIES"] = ctx.variables.get("X11_X11_LIB", "")
+
+        missing_required = [
+            component
+            for component in required_components
+            if ctx.variables.get(f"X11_{component}_FOUND") != "TRUE"
+        ]
+        ok = found and not missing_required
+        ctx.variables["X11_FOUND"] = "TRUE" if ok else "FALSE"
+
+        if required and not ok:
+            ctx.print_error("could not find package: X11", cmd.line)
+            raise SystemExit(1)
+        if not quiet:
+            if ok:
+                print(f"{colored(status_marker(True), 'green')} {package_name}")
+            else:
                 print(f"{colored(status_marker(False), 'red')} {package_name}")
         return True
 
