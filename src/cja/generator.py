@@ -129,7 +129,19 @@ def _resolve_cja_cmd() -> list[str]:
     cmd = ["cja"]
     absolute = shutil.which(cmd[0])
     if absolute is None:
-        cmd = [sys.executable, "-m", "cja"]
+        # cja isn't on PATH (e.g. the venv isn't sourced). Prefer the `cja`
+        # console script installed next to the running interpreter so the
+        # command stays a single token; `python -m cja` would be a multi-token
+        # command that breaks once it gets quoted into ninja rules.
+        bindir = Path(sys.executable).parent
+        script = next(
+            (s for s in (bindir / "cja", bindir / "cja.exe") if s.is_file()),
+            None,
+        )
+        if script is not None:
+            cmd = [str(script)]
+        else:
+            cmd = [sys.executable, "-m", "cja"]
     elif os.getenv("VIRTUAL_ENV") is not None:
         cmd = [absolute]
     if platform.system() == "Windows":
