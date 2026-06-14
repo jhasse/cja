@@ -37,7 +37,7 @@ def test_parse_define_with_equals_in_value() -> None:
 def test_cli_version_flag() -> None:
     """Test cja CLI --version flag."""
     result = subprocess.run(
-        ["uv", "run", "cja", "--version"],
+        [sys.executable, "-m", "cja", "--version"],
         capture_output=True,
         text=True,
     )
@@ -66,7 +66,7 @@ def test_cli_d_flag(tmp_path: Path) -> None:
     copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
 
     result = subprocess.run(
-        ["uv", "run", "cja", "-DCMAKE_BUILD_TYPE=Debug"],
+        [sys.executable, "-m", "cja", "-DCMAKE_BUILD_TYPE=Debug"],
         capture_output=True,
         text=True,
         cwd=source_dir,
@@ -86,8 +86,8 @@ def test_cli_multiple_d_flags(tmp_path: Path) -> None:
 
     result = subprocess.run(
         [
-            "uv",
-            "run",
+            sys.executable,
+            "-m",
             "cja",
             "-DCMAKE_BUILD_TYPE=Release",
             "-DENABLE_TESTS=ON",
@@ -146,7 +146,7 @@ def test_build_subcommand(tmp_path: Path) -> None:
     copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
 
     result = subprocess.run(
-        ["uv", "run", "cja", "build"],
+        [sys.executable, "-m", "cja", "build"],
         capture_output=True,
         text=True,
         cwd=source_dir,
@@ -164,7 +164,7 @@ def test_build_subcommand_release(tmp_path: Path) -> None:
     copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
 
     result = subprocess.run(
-        ["uv", "run", "cja", "build", "--release"],
+        [sys.executable, "-m", "cja", "build", "--release"],
         capture_output=True,
         text=True,
         cwd=source_dir,
@@ -188,7 +188,7 @@ def test_build_subcommand_skips_configure_if_ninja_exists(tmp_path: Path) -> Non
 
     # First build - should configure
     result1 = subprocess.run(
-        ["uv", "run", "cja", "build"],
+        [sys.executable, "-m", "cja", "build"],
         capture_output=True,
         text=True,
         cwd=source_dir,
@@ -198,7 +198,7 @@ def test_build_subcommand_skips_configure_if_ninja_exists(tmp_path: Path) -> Non
 
     # Second build - should skip configure
     result2 = subprocess.run(
-        ["uv", "run", "cja", "build"],
+        [sys.executable, "-m", "cja", "build"],
         capture_output=True,
         text=True,
         cwd=source_dir,
@@ -222,7 +222,7 @@ add_test(NAME mytest COMMAND echo "Hello from test")
     )
 
     result = subprocess.run(
-        ["uv", "run", "cja", "test"],
+        [sys.executable, "-m", "cja", "test"],
         capture_output=True,
         text=True,
         cwd=source_dir,
@@ -238,7 +238,7 @@ def test_cli_make_directory(tmp_path: Path) -> None:
     assert not dir_path.exists()
 
     result = subprocess.run(
-        ["uv", "run", "cja", "-E", "make_directory", str(dir_path)],
+        [sys.executable, "-m", "cja", "-E", "make_directory", str(dir_path)],
         capture_output=True,
         text=True,
         cwd=tmp_path,
@@ -254,7 +254,7 @@ def test_unused_d_variable_warning(tmp_path: Path) -> None:
     copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
 
     result = subprocess.run(
-        ["uv", "run", "cja", "-DUNUSED_FOO=1", "-DUNUSED_BAR=2"],
+        [sys.executable, "-m", "cja", "-DUNUSED_FOO=1", "-DUNUSED_BAR=2"],
         capture_output=True,
         text=True,
         cwd=source_dir,
@@ -281,7 +281,7 @@ add_executable(used_d main.c)
     )
 
     result = subprocess.run(
-        ["uv", "run", "cja", "-DMY_FLAG=ON"],
+        [sys.executable, "-m", "cja", "-DMY_FLAG=ON"],
         capture_output=True,
         text=True,
         cwd=source_dir,
@@ -296,7 +296,7 @@ def test_unused_d_variable_warning_suppressed_by_quiet(tmp_path: Path) -> None:
     copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
 
     result = subprocess.run(
-        ["uv", "run", "cja", "--quiet", "-DUNUSED_FOO=1"],
+        [sys.executable, "-m", "cja", "--quiet", "-DUNUSED_FOO=1"],
         capture_output=True,
         text=True,
         cwd=source_dir,
@@ -311,7 +311,7 @@ def test_quiet_flag_suppresses_output(tmp_path: Path) -> None:
     copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
 
     result = subprocess.run(
-        ["uv", "run", "cja", "--quiet"],
+        [sys.executable, "-m", "cja", "--quiet"],
         capture_output=True,
         text=True,
         cwd=source_dir,
@@ -344,7 +344,7 @@ def test_script_mode_basic(tmp_path: Path) -> None:
     script.write_text('message("hello-from-cja")\n')
 
     result = subprocess.run(
-        ["uv", "run", "cja", "-P", str(script)],
+        [sys.executable, "-m", "cja", "-P", str(script)],
         capture_output=True,
         text=True,
         cwd=tmp_path,
@@ -360,7 +360,7 @@ def test_script_mode_define_variable(tmp_path: Path) -> None:
     script.write_text('message("FOO=${FOO}")\n')
 
     result = subprocess.run(
-        ["uv", "run", "cja", "-DFOO=bar", "-P", str(script)],
+        [sys.executable, "-m", "cja", "-DFOO=bar", "-P", str(script)],
         capture_output=True,
         text=True,
         cwd=tmp_path,
@@ -381,7 +381,7 @@ def test_script_mode_argv_and_script_mode_file(tmp_path: Path) -> None:
     )
 
     result = subprocess.run(
-        ["uv", "run", "cja", "-P", str(script), "alpha", "beta"],
+        [sys.executable, "-m", "cja", "-P", str(script), "alpha", "beta"],
         capture_output=True,
         text=True,
         cwd=tmp_path,
@@ -397,7 +397,7 @@ def test_script_mode_argv_and_script_mode_file(tmp_path: Path) -> None:
 def test_script_mode_missing_script(tmp_path: Path) -> None:
     """cja -P without a script argument fails cleanly."""
     result = subprocess.run(
-        ["uv", "run", "cja", "-P"],
+        [sys.executable, "-m", "cja", "-P"],
         capture_output=True,
         text=True,
         cwd=tmp_path,
@@ -419,7 +419,7 @@ add_executable(myexe main.c)
     )
 
     result = subprocess.run(
-        ["uv", "run", "cja", "run"],
+        [sys.executable, "-m", "cja", "run"],
         capture_output=True,
         text=True,
         cwd=source_dir,
