@@ -423,3 +423,32 @@ add_custom_command(TARGET myapp POST_BUILD COMMAND echo done)
     assert "myapp.post_build" in ninja_content
     # The executable itself should appear as a dependency of the stamp
     assert "$builddir/myapp" in ninja_content
+
+
+def test_add_custom_command_comment_not_in_depends(tmp_path: Path) -> None:
+    """COMMENT keyword and its value must not appear as dependencies."""
+    from cja.generator import configure
+
+    source_dir = tmp_path
+    cmake_content = """\
+cmake_minimum_required(VERSION 3.10)
+project(CommentTest)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/out.txt
+    COMMAND echo hello
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/input.txt
+    COMMENT "Generating out.txt"
+    VERBATIM
+)
+"""
+    (source_dir / "CMakeLists.txt").write_text(cmake_content)
+    (source_dir / "input.txt").write_text("")
+
+    configure(source_dir, "build")
+
+    ninja_content = (source_dir / "build.ninja").read_text()
+
+    assert "COMMENT" not in ninja_content
+    assert "Generating" not in ninja_content
+    assert "input.txt" in ninja_content

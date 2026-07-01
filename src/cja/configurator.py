@@ -1943,6 +1943,9 @@ int main() {{
                                 command_list.append([])
                         elif arg == "VERBATIM":
                             verbatim = True
+                            current_section = None
+                        elif arg in ("COMMENT", "USES_TERMINAL", "COMMAND_EXPAND_LISTS", "DEPFILE", "JOB_POOL", "BYPRODUCTS"):
+                            current_section = arg  # values for these are ignored
                         else:
                             arg = ctx.expand_variables(arg, strict, cmd.line)
                             if current_section == "OUTPUT":
