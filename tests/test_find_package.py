@@ -716,3 +716,101 @@ def test_find_package_png_required_missing(
     with pytest.raises(SystemExit) as exc_info:
         process_commands(commands, ctx)
     assert exc_info.value.code == 1
+
+
+def has_vulkan_headers() -> bool:
+    """Check if Vulkan headers are present on the system."""
+    import os
+
+    for inc in ("/usr/include", "/usr/local/include", "/opt/homebrew/include"):
+        if (Path(inc) / "vulkan" / "vulkan.h").exists():
+            return True
+    if os.environ.get("VULKAN_SDK"):
+        sdk_inc = Path(os.environ["VULKAN_SDK"]) / "include" / "vulkan" / "vulkan.h"
+        if sdk_inc.exists():
+            return True
+    return False
+
+
+def test_find_package_vulkan_found_via_pkg_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test find_package(Vulkan) when vulkan is available via pkg-config."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+
+    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        if cmd == ["pkg-config", "--exists", "vulkan"]:
+            return subprocess.CompletedProcess(cmd, 0)
+        if cmd == ["pkg-config", "--cflags", "vulkan"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="-I/usr/include")
+        if cmd == ["pkg-config", "--libs", "vulkan"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="-lvulkan")
+        if cmd == ["pkg-config", "--modversion", "vulkan"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="1.3.261")
+        return subprocess.CompletedProcess(cmd, 1)
+
+    monkeypatch.setattr("cja.generator.subprocess.run", fake_run)
+
+    commands = [Command(name="find_package", args=["Vulkan"], line=1)]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["Vulkan_FOUND"] == "TRUE"
+    assert ctx.variables["VULKAN_FOUND"] == "TRUE"
+    assert ctx.variables["Vulkan_LIBRARIES"] == "-lvulkan"
+    assert ctx.variables["Vulkan_LIBRARY"] == "-lvulkan"
+    assert ctx.variables["Vulkan_INCLUDE_DIRS"] == "/usr/include"
+    assert ctx.variables["Vulkan_INCLUDE_DIR"] == "/usr/include"
+    assert ctx.variables["Vulkan_VERSION"] == "1.3.261"
+    assert "Vulkan::Vulkan" in ctx.imported_targets
+
+
+def test_find_package_vulkan_required_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test find_package(Vulkan REQUIRED) failure when Vulkan is not found."""
+    if has_vulkan_headers():
+        pytest.skip("Vulkan headers present on system, can't test missing case")
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+
+    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        if cmd == ["pkg-config", "--exists", "vulkan"]:
+            return subprocess.CompletedProcess(cmd, 1)
+        return subprocess.CompletedProcess(cmd, 1)
+
+    monkeypatch.setattr("cja.generator.subprocess.run", fake_run)
+    monkeypatch.delenv("VULKAN_SDK", raising=False)
+
+    commands = [Command(name="find_package", args=["Vulkan", "REQUIRED"], line=1)]
+    with pytest.raises(SystemExit) as exc_info:
+        process_commands(commands, ctx)
+    assert exc_info.value.code == 1
+
+
+def test_find_package_vulkan_found_via_vulkan_sdk(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Test find_package(Vulkan) via VULKAN_SDK environment variable."""
+    sdk = tmp_path / "vulkan_sdk"
+    inc = sdk / "include" / "vulkan"
+    inc.mkdir(parents=True)
+    (inc / "vulkan.h").write_text("")
+    lib_dir = sdk / "lib"
+    lib_dir.mkdir()
+    (lib_dir / "libvulkan.so").write_text("")
+
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+
+    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        if cmd == ["pkg-config", "--exists", "vulkan"]:
+            return subprocess.CompletedProcess(cmd, 1)
+        return subprocess.CompletedProcess(cmd, 1)
+
+    monkeypatch.setattr("cja.generator.subprocess.run", fake_run)
+    monkeypatch.setenv("VULKAN_SDK", str(sdk))
+
+    commands = [Command(name="find_package", args=["Vulkan"], line=1)]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["Vulkan_FOUND"] == "TRUE"
+    assert "Vulkan::Vulkan" in ctx.imported_targets

@@ -1160,4 +1160,100 @@ def handle_builtin_find_package(
                 print(f"{colored(status_marker(False), 'red')} {package_name}")
         return True
 
+    if package_name == "Vulkan":
+        import os
+
+        found = False
+        vulkan_cflags = ""
+        vulkan_libs = ""
+        vulkan_version = ""
+        include_dirs: list[str] = []
+
+        # 1. Try pkg-config
+        pkg_found, vulkan_cflags, vulkan_libs, vulkan_version = _pkg_config_info("vulkan")
+        if pkg_found:
+            found = True
+            for entry in shlex.split(vulkan_cflags):
+                if entry.startswith("-I"):
+                    include_dirs.append(entry[2:])
+
+        # 2. Try VULKAN_SDK environment variable
+        if not found:
+            vulkan_sdk = os.environ.get("VULKAN_SDK")
+            if vulkan_sdk:
+                sdk_inc = Path(vulkan_sdk) / "include"
+                sdk_lib_dirs = _unique_existing_dirs(
+                    [
+                        Path(vulkan_sdk) / "lib",
+                        Path(vulkan_sdk) / "lib64",
+                    ]
+                )
+                if (sdk_inc / "vulkan" / "vulkan.h").exists():
+                    found = True
+                    vulkan_cflags = f"-I{sdk_inc}"
+                    include_dirs = [str(sdk_inc)]
+                    if platform.system() == "Darwin":
+                        lib_names = ["libvulkan.dylib", "libvulkan.a"]
+                    else:
+                        lib_names = ["libvulkan.so", "libvulkan.a"]
+                    vulkan_libs = _find_first_library(sdk_lib_dirs, lib_names)
+
+        # 3. Fall back to searching common system paths
+        if not found:
+            for include_root in (
+                "/usr/include",
+                "/usr/local/include",
+                "/opt/homebrew/include",
+            ):
+                if (Path(include_root) / "vulkan" / "vulkan.h").exists():
+                    include_dirs = [include_root]
+                    vulkan_cflags = f"-I{include_root}"
+                    lib_search_dirs = _unique_existing_dirs(
+                        [
+                            Path("/usr/lib"),
+                            Path("/usr/lib64"),
+                            Path("/usr/lib/x86_64-linux-gnu"),
+                            Path("/usr/lib/aarch64-linux-gnu"),
+                            Path("/usr/local/lib"),
+                            Path("/opt/homebrew/lib"),
+                        ]
+                    )
+                    if platform.system() == "Darwin":
+                        lib_names = ["libvulkan.dylib", "libvulkan.a"]
+                    else:
+                        lib_names = ["libvulkan.so", "libvulkan.a"]
+                    vulkan_libs = _find_first_library(lib_search_dirs, lib_names)
+                    if vulkan_libs:
+                        found = True
+                    break
+
+        unique_include_dirs = list(dict.fromkeys(include_dirs))
+
+        if found:
+            ctx.variables["Vulkan_FOUND"] = "TRUE"
+            ctx.variables["VULKAN_FOUND"] = "TRUE"
+            ctx.variables["Vulkan_LIBRARIES"] = vulkan_libs
+            ctx.variables["Vulkan_LIBRARY"] = vulkan_libs
+            ctx.variables["Vulkan_INCLUDE_DIRS"] = ";".join(unique_include_dirs)
+            if unique_include_dirs:
+                ctx.variables["Vulkan_INCLUDE_DIR"] = unique_include_dirs[0]
+            if vulkan_version:
+                ctx.variables["Vulkan_VERSION"] = vulkan_version
+
+            ctx.imported_targets["Vulkan::Vulkan"] = ImportedTarget(
+                cflags=vulkan_cflags,
+                libs=vulkan_libs,
+            )
+            if not quiet:
+                print(f"{colored(status_marker(True), 'green')} {package_name}")
+        else:
+            ctx.variables["Vulkan_FOUND"] = "FALSE"
+            ctx.variables["VULKAN_FOUND"] = "FALSE"
+            if required:
+                ctx.print_error("could not find package: Vulkan", cmd.line)
+                raise SystemExit(1)
+            if not quiet:
+                print(f"{colored(status_marker(False), 'red')} {package_name}")
+        return True
+
     return False
