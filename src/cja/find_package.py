@@ -1,5 +1,6 @@
 """Built-in find_package() handlers."""
 
+import os
 from pathlib import Path
 import platform
 import re
@@ -13,7 +14,7 @@ from termcolor import colored
 from .build_context import BuildContext
 from .parser import Command
 from .targets import ImportedTarget
-from .utils import status_marker
+from .utils import split_unquoted_list_args, status_marker
 
 
 def _unique_existing_dirs(candidates: list[Path]) -> list[Path]:
@@ -38,6 +39,164 @@ def _find_first_library(lib_dirs: list[Path], names: list[str]) -> str:
             if candidate.exists() and candidate.is_file():
                 return str(candidate)
     return ""
+
+
+def _var_or_env(ctx: BuildContext, *names: str) -> str:
+    """Return the first non-empty value from CMake variables or the environment."""
+    for name in names:
+        value = ctx.variables.get(name, "")
+        if value:
+            return value
+        env_value = os.environ.get(name, "")
+        if env_value:
+            return env_value
+    return ""
+
+
+def _prefix_path_entries(ctx: BuildContext) -> list[str]:
+    """Collect CMAKE_PREFIX_PATH entries from variables and the environment."""
+    entries: list[str] = []
+    seen: set[str] = set()
+
+    def add(entry: str) -> None:
+        path = os.path.expanduser(entry.strip())
+        if not path or path in seen:
+            return
+        seen.add(path)
+        entries.append(path)
+
+    cmake_prefix_path = ctx.variables.get("CMAKE_PREFIX_PATH", "")
+    for prefix in (
+        split_unquoted_list_args(cmake_prefix_path) if cmake_prefix_path else []
+    ):
+        add(prefix)
+
+    env_prefix_path = os.environ.get("CMAKE_PREFIX_PATH", "")
+    for prefix in env_prefix_path.split(os.pathsep) if env_prefix_path else []:
+        add(prefix)
+
+    return entries
+
+
+def _boost_hint_include_dirs(ctx: BuildContext) -> list[Path]:
+    """Build Boost header search dirs from CMake/env hints (FindBoost-compatible)."""
+    dirs: list[Path] = []
+    seen: set[str] = set()
+
+    def add(candidate: str) -> None:
+        if not candidate:
+            return
+        path = os.path.expanduser(candidate.strip())
+        normalized = str(Path(path))
+        if normalized in seen:
+            return
+        seen.add(normalized)
+        dirs.append(Path(path))
+
+    for var in ("BOOST_INCLUDEDIR", "Boost_INCLUDEDIR", "BOOST_INCLUDE_DIR", "Boost_INCLUDE_DIR"):
+        add(_var_or_env(ctx, var))
+
+    root = _var_or_env(ctx, "BOOST_ROOT", "BOOSTROOT", "Boost_ROOT")
+    if root:
+        add(str(Path(root) / "include"))
+
+    for prefix in _prefix_path_entries(ctx):
+        add(str(Path(prefix) / "include"))
+        add(prefix)
+
+    return dirs
+
+
+def _boost_hint_library_dirs(
+    ctx: BuildContext, include_dirs: list[str]
+) -> list[Path]:
+    """Build Boost library search dirs from CMake/env hints (FindBoost-compatible)."""
+    dirs: list[Path] = []
+    seen: set[str] = set()
+
+    def add(candidate: str) -> None:
+        if not candidate:
+            return
+        path = os.path.expanduser(candidate.strip())
+        normalized = str(Path(path))
+        if normalized in seen:
+            return
+        seen.add(normalized)
+        dirs.append(Path(path))
+
+    for var in ("BOOST_LIBRARYDIR", "Boost_LIBRARYDIR", "BOOST_LIBRARY_DIR", "Boost_LIBRARY_DIR"):
+        add(_var_or_env(ctx, var))
+
+    root = _var_or_env(ctx, "BOOST_ROOT", "BOOSTROOT", "Boost_ROOT")
+    if root:
+        root_path = Path(root)
+        for subdir in ("lib", "lib64", "stage/lib"):
+            add(str(root_path / subdir))
+
+    for include_dir in include_dirs:
+        include_path = Path(include_dir)
+        add(str(include_path.parent / "lib"))
+        add(str(include_path.parent / "lib64"))
+
+    for prefix in _prefix_path_entries(ctx):
+        add(str(Path(prefix) / "lib"))
+        add(str(Path(prefix) / "lib64"))
+        add(prefix)
+
+    return dirs
+
+
+def _default_boost_include_dirs() -> list[Path]:
+    """Return the default system include directories searched for Boost headers."""
+    return [
+        Path("/usr/include"),
+        Path("/usr/local/include"),
+        Path("/opt/homebrew/include"),
+    ]
+
+
+def _default_boost_library_dirs() -> list[Path]:
+    """Return the default system library directories searched for Boost libraries."""
+    return [
+        Path("/usr/lib"),
+        Path("/usr/lib64"),
+        Path("/usr/local/lib"),
+        Path("/opt/homebrew/lib"),
+    ]
+
+
+def _print_boost_not_found_diagnostics(
+    *,
+    include_search_dirs: list[Path],
+    lib_search_candidates: list[Path],
+    headers_found: bool,
+    missing_components: list[str],
+    pkg_config_checked: bool,
+    components_requested: bool,
+) -> None:
+    """Print Boost search locations when find_package(Boost) fails."""
+    print("Boost not found. Checked the following locations:", file=sys.stderr)
+
+    if pkg_config_checked:
+        print("  pkg-config: boost, boost_headers", file=sys.stderr)
+
+    if not headers_found:
+        print("  Headers (boost/version.hpp):", file=sys.stderr)
+        for include_root in include_search_dirs:
+            print(f"    {include_root / 'boost' / 'version.hpp'}", file=sys.stderr)
+
+    if missing_components:
+        print(f"  Missing components: {', '.join(missing_components)}", file=sys.stderr)
+
+    if missing_components or (not headers_found and components_requested):
+        print("  Libraries:", file=sys.stderr)
+        seen: set[str] = set()
+        for lib_dir in lib_search_candidates:
+            normalized = str(lib_dir)
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            print(f"    {lib_dir}", file=sys.stderr)
 
 
 def _pkg_config_info(pkg_name: str) -> tuple[bool, str, str, str]:
@@ -337,9 +496,12 @@ def handle_builtin_find_package(
         boost_version = ""
         include_dirs: list[str] = []
         missing_required_components: list[str] = []
+        include_search_dirs = _boost_hint_include_dirs(ctx) + _default_boost_include_dirs()
+        pkg_config_checked = False
 
         pkg_base = None
         try:
+            pkg_config_checked = True
             for candidate in ("boost", "boost_headers"):
                 result = subprocess.run(
                     ["pkg-config", "--exists", candidate],
@@ -373,17 +535,15 @@ def handle_builtin_find_package(
             found = True
 
         if not found:
-            for include_root in (
-                "/usr/include",
-                "/usr/local/include",
-                "/opt/homebrew/include",
-            ):
-                version_header = Path(include_root) / "boost/version.hpp"
+            for include_root in include_search_dirs:
+                version_header = include_root / "boost" / "version.hpp"
                 if version_header.exists():
-                    include_dirs = [include_root]
+                    include_dirs = [str(include_root)]
                     boost_cflags = f"-I{include_root}"
                     found = True
                     break
+
+        headers_found = found
 
         if boost_cflags:
             for entry in shlex.split(boost_cflags):
@@ -404,14 +564,10 @@ def handle_builtin_find_package(
                 if version_match:
                     boost_version = version_match.group(1).replace("_", ".")
 
-        lib_search_dirs = _unique_existing_dirs(
-            [
-                Path("/usr/lib"),
-                Path("/usr/lib64"),
-                Path("/usr/local/lib"),
-                Path("/opt/homebrew/lib"),
-            ]
+        lib_search_candidates = (
+            _boost_hint_library_dirs(ctx, include_dirs) + _default_boost_library_dirs()
         )
+        lib_search_dirs = _unique_existing_dirs(lib_search_candidates)
         component_libs: list[str] = []
         for component in required_components + optional_components:
             pkg_component = f"boost_{component.lower()}"
@@ -526,12 +682,28 @@ def handle_builtin_find_package(
 
         if required and not found:
             ctx.print_error("could not find package: Boost", cmd.line)
+            _print_boost_not_found_diagnostics(
+                include_search_dirs=include_search_dirs,
+                lib_search_candidates=lib_search_candidates,
+                headers_found=headers_found,
+                missing_components=missing_required_components,
+                pkg_config_checked=pkg_config_checked,
+                components_requested=bool(required_components or optional_components),
+            )
             raise SystemExit(1)
         if not quiet:
             if found:
                 print(f"{colored(status_marker(True), 'green')} {package_name}")
             else:
                 print(f"{colored(status_marker(False), 'red')} {package_name}")
+                _print_boost_not_found_diagnostics(
+                    include_search_dirs=include_search_dirs,
+                    lib_search_candidates=lib_search_candidates,
+                    headers_found=headers_found,
+                    missing_components=missing_required_components,
+                    pkg_config_checked=pkg_config_checked,
+                    components_requested=bool(required_components or optional_components),
+                )
         return True
 
     if package_name == "PNG":
@@ -1161,8 +1333,6 @@ def handle_builtin_find_package(
         return True
 
     if package_name == "Vulkan":
-        import os
-
         found = False
         vulkan_cflags = ""
         vulkan_libs = ""
