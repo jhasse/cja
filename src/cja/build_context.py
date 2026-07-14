@@ -249,10 +249,10 @@ class BuildContext:
                         f"undefined variable referenced: {var_name}", line
                     )
                     return ""
-                level = self.print_error if strict else self.print_warning
-                level(f"undefined variable referenced: {var_name}", line)
                 if strict:
-                    sys.exit(1)
+                    self.print_warning(
+                        f"undefined variable referenced: {var_name}", line
+                    )
                 return ""
             value = self.variables.get(var_name, "")
             if value == UNDEFINED_VAR_SENTINEL:
