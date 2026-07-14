@@ -22,6 +22,24 @@ from .parser import Command
 from .configurator import process_commands
 
 
+def _quote_ninja_cmd_part(part: str) -> str:
+    """Quote one argv token for a Ninja rule command line.
+
+    On Windows, Ninja passes the command through cmd.exe, which does not treat
+    single quotes as quoting. shlex.quote uses single quotes there, so convert
+    paths to forward slashes and reserve double quotes for arguments with spaces.
+    """
+    if part == "$builddir":
+        return part
+    if platform.system() == "Windows":
+        normalized = part.replace("\\", "/")
+        if re.search(r'[\s"]', normalized):
+            escaped = normalized.replace('"', '\\"')
+            return f'"{escaped}"'
+        return normalized
+    return shlex.quote(part)
+
+
 def _infer_compiler_id(compiler: str) -> str:
     """Infer CMake-style compiler ID from a compiler command."""
     parts = shlex.split(compiler) if compiler else []
@@ -571,9 +589,7 @@ def generate_ninja(
                 )
 
             def quote_part(part: str) -> str:
-                if part == "$builddir":
-                    return part
-                return shlex.quote(part)
+                return _quote_ninja_cmd_part(part)
 
             reconfigure_cmd = " ".join(
                 quote_part(part) for part in reconfigure_cmd_parts

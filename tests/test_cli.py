@@ -9,7 +9,7 @@ import sys
 import pytest
 
 from cja.cli import parse_define
-from cja.generator import configure
+from cja.generator import _quote_ninja_cmd_part, configure
 from tests.helpers import copy_unignored_tree
 
 
@@ -404,6 +404,45 @@ def test_script_mode_missing_script(tmp_path: Path) -> None:
     )
     assert result.returncode != 0
     assert "-P requires a script" in result.stderr
+
+
+def test_quote_ninja_cmd_part_windows_paths() -> None:
+    """Windows Ninja commands must not use shlex single quotes for -D flags."""
+    if platform.system() != "Windows":
+        pytest.skip("Windows-specific quoting behavior")
+
+    quoted = _quote_ninja_cmd_part("-DBoost_INCLUDE_DIR=C:\\local\\boost_1_83_0")
+    assert quoted == "-DBoost_INCLUDE_DIR=C:/local/boost_1_83_0"
+    assert not quoted.startswith("'")
+
+
+def test_regenerate_during_build_via_ninja(tmp_path: Path) -> None:
+    """Ninja reconfigure rule should re-run cja with preserved -D flags."""
+    source_dir = tmp_path / "hello"
+    copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
+
+    result = subprocess.run(
+        [sys.executable, "-m", "cja", "-DMY_FLAG=ON"],
+        capture_output=True,
+        text=True,
+        cwd=source_dir,
+    )
+    assert result.returncode == 0
+
+    build_ninja = source_dir / "build.ninja"
+    assert "-DMY_FLAG=ON" in build_ninja.read_text()
+
+    cmake_file = source_dir / "CMakeLists.txt"
+    cmake_file.write_text(cmake_file.read_text() + "\n# touch\n")
+
+    ninja_cmd = ["ninja", "-f", "build.ninja"]
+    result = subprocess.run(
+        ninja_cmd,
+        capture_output=True,
+        text=True,
+        cwd=source_dir,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_run_subcommand(tmp_path: Path) -> None:
