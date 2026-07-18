@@ -1701,6 +1701,7 @@ int main() {{
 
                     lib = ctx.get_library(target_name)
                     exe = ctx.get_executable(target_name)
+                    target = lib or exe
 
                     if prop_name == "TYPE":
                         if lib:
@@ -1709,6 +1710,24 @@ int main() {{
                             ctx.variables[var_name] = "EXECUTABLE"
                         else:
                             ctx.variables[var_name] = f"{var_name}-NOTFOUND"
+                    elif target is None:
+                        ctx.variables[var_name] = f"{var_name}-NOTFOUND"
+                    elif prop_name == "INCLUDE_DIRECTORIES":
+                        dirs = (
+                            lib.include_directories
+                            if lib is not None
+                            else exe.include_directories  # type: ignore[union-attr]
+                        )
+                        ctx.variables[var_name] = ";".join(dirs) if dirs else ""
+                    elif prop_name == "INTERFACE_INCLUDE_DIRECTORIES":
+                        if lib is not None:
+                            ctx.variables[var_name] = ";".join(
+                                lib.public_include_directories
+                            )
+                        else:
+                            ctx.variables[var_name] = ""
+                    elif prop_name in target.properties:
+                        ctx.variables[var_name] = target.properties[prop_name]
                     else:
                         ctx.variables[var_name] = f"{var_name}-NOTFOUND"
 

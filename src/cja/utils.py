@@ -218,6 +218,8 @@ def strip_generator_expressions(
             return expand_text(content[len("BUILD_INTERFACE:") :])
         if content.startswith("INSTALL_INTERFACE:"):
             return ""
+        if content == "SEMICOLON":
+            return ";"
         if content.startswith("BOOL:"):
             arg = expand_text(content[len("BOOL:") :])
             return "1" if is_truthy(arg) else "0"

@@ -406,16 +406,20 @@ def handle_target_include_directories(
                         )
                 if not expanded:
                     continue
-                expanded = resolve_cmake_path(expanded, ctx.current_source_dir)
-                if Path(expanded).is_absolute():
-                    expanded = str(Path(expanded).resolve())
-                if visibility == "PUBLIC":
-                    public_dirs.append(expanded)
-                    target_dirs.append(expanded)
-                elif visibility == "INTERFACE":
-                    public_dirs.append(expanded)
-                else:
-                    target_dirs.append(expanded)
+                for piece in expanded.split(";"):
+                    piece = piece.strip()
+                    if not piece:
+                        continue
+                    piece = resolve_cmake_path(piece, ctx.current_source_dir)
+                    if Path(piece).is_absolute():
+                        piece = str(Path(piece).resolve())
+                    if visibility == "PUBLIC":
+                        public_dirs.append(piece)
+                        target_dirs.append(piece)
+                    elif visibility == "INTERFACE":
+                        public_dirs.append(piece)
+                    else:
+                        target_dirs.append(piece)
         # Add directories to library or executable
         lib = ctx.get_library(target_name)
         if lib:
