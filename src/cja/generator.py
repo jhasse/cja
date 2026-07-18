@@ -1078,6 +1078,15 @@ def generate_ninja(
                 target_dir, "COMPILE_OPTIONS"
             )
             lib_compile_flags: list[str] = []
+            # SHARED/MODULE default to POSITION_INDEPENDENT_CODE ON (like CMake).
+            pic = lib.properties.get("POSITION_INDEPENDENT_CODE", "")
+            if not pic:
+                if lib.lib_type in ("SHARED", "MODULE"):
+                    pic = "TRUE"
+                else:
+                    pic = ctx.variables.get("CMAKE_POSITION_INDEPENDENT_CODE", "")
+            if is_truthy(pic) and not is_truthy(ctx.variables.get("WIN32", "")):
+                lib_compile_flags.append("-fPIC")
             for option in dir_compile_options:
                 opt = strip_generator_expressions(option)
                 if opt:

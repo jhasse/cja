@@ -104,6 +104,23 @@ def test_alias_to_shared_library_is_linked_by_output(tmp_path: Path) -> None:
         else ".so"
     )
     assert f"$builddir/libcore{ext}" in content
+    if platform.system() != "Windows":
+        assert "-fPIC" in content
+
+
+def test_shared_library_compiles_with_fpic(tmp_path: Path) -> None:
+    """SHARED libraries should compile objects with -fPIC on non-Windows."""
+    (tmp_path / "lib.cpp").write_text("int x() { return 1; }\n")
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    ctx.variables["WIN32"] = "FALSE"
+    process_commands(
+        [Command(name="add_library", args=["mylib", "SHARED", "lib.cpp"], line=1)],
+        ctx,
+    )
+    ninja_file = tmp_path / "build.ninja"
+    generate_ninja(ctx, ninja_file, "build")
+    assert "-fPIC" in ninja_file.read_text()
+
 
 
 def test_alias_propagates_public_include_directories(tmp_path: Path) -> None:
