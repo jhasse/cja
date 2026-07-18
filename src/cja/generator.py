@@ -633,6 +633,7 @@ def generate_ninja(
                 "  ", " "
             ).strip(),
             depfile="$out.d",
+            deps="gcc",
             description="\x1b[32mCompiling $in\x1b[0m",
         )
         n.newline()
@@ -643,6 +644,18 @@ def generate_ninja(
                 "  ", " "
             ).strip(),
             depfile="$out.d",
+            deps="gcc",
+            description="\x1b[32mCompiling $in\x1b[0m",
+        )
+        n.newline()
+
+        # Assembly: compilers typically do not write a depfile for .s/.S, and a
+        # missing depfile makes ninja rebuild the object on every invocation.
+        n.rule(
+            "asm",
+            command=f"$cc {base_cflags} {c_flags} $cflags -c $in -o $out".replace(
+                "  ", " "
+            ).strip(),
             description="\x1b[32mCompiling $in\x1b[0m",
         )
         n.newline()
@@ -1180,19 +1193,18 @@ def generate_ninja(
                 register_output(obj_name, lib.defined_file, lib.defined_line)
                 objects.append(obj_name)
 
-                # Determine if C or C++
+                # Determine if C, C++, or assembly
                 is_cxx = source.endswith((".cpp", ".cxx", ".cc", ".C", ".mm", ".MM"))
                 is_asm = source.endswith((".s", ".S"))
-                if is_cxx:
-                    rule = "cxx"
-                    uses_cxx = True
-                else:
-                    rule = "cc"
                 if is_asm:
+                    rule = "asm"
                     source_language = "ASM"
                 elif is_cxx:
+                    rule = "cxx"
+                    uses_cxx = True
                     source_language = "CXX"
                 else:
+                    rule = "cc"
                     source_language = "C"
 
                 # Check for source file properties
@@ -1227,7 +1239,7 @@ def generate_ninja(
                         else:
                             source_depends.append(d)
 
-                if rule == "cc":
+                if rule in ("cc", "asm"):
                     source_compile_flags = [
                         flag
                         for flag in source_compile_flags
@@ -1261,7 +1273,7 @@ def generate_ninja(
                     )
 
                 # Generate clang-tidy validation node if applicable
-                tidy_cmd = cxx_clang_tidy if is_cxx else c_clang_tidy
+                tidy_cmd = None if is_asm else (cxx_clang_tidy if is_cxx else c_clang_tidy)
                 tidy_stamp: str | None = None
                 if tidy_cmd:
                     tidy_args = tidy_cmd.replace(";", " ")
@@ -1459,19 +1471,18 @@ def generate_ninja(
                 register_output(obj_name, exe.defined_file, exe.defined_line)
                 objects.append(obj_name)
 
-                # Determine if C or C++
+                # Determine if C, C++, or assembly
                 is_cxx = source.endswith((".cpp", ".cxx", ".cc", ".C", ".mm", ".MM"))
                 is_asm = source.endswith((".s", ".S"))
-                if is_cxx:
-                    rule = "cxx"
-                    uses_cxx = True
-                else:
-                    rule = "cc"
                 if is_asm:
+                    rule = "asm"
                     source_language = "ASM"
                 elif is_cxx:
+                    rule = "cxx"
+                    uses_cxx = True
                     source_language = "CXX"
                 else:
+                    rule = "cc"
                     source_language = "C"
 
                 # Check for source file properties
@@ -1506,7 +1517,7 @@ def generate_ninja(
                         else:
                             source_depends.append(d)
 
-                if rule == "cc":
+                if rule in ("cc", "asm"):
                     source_compile_flags = [
                         flag
                         for flag in source_compile_flags
@@ -1540,7 +1551,7 @@ def generate_ninja(
                     )
 
                 # Generate clang-tidy validation node if applicable
-                tidy_cmd = cxx_clang_tidy if is_cxx else c_clang_tidy
+                tidy_cmd = None if is_asm else (cxx_clang_tidy if is_cxx else c_clang_tidy)
                 tidy_stamp: str | None = None
                 if tidy_cmd:
                     tidy_args = tidy_cmd.replace(";", " ")
