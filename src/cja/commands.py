@@ -2116,6 +2116,32 @@ def _cmake_timestamp_format(
     return "".join(result)
 
 
+def _pattern_has_wildcard(pattern: str) -> bool:
+    return any(ch in pattern for ch in "*?[")
+
+
+def _cmake_glob_files(pattern: str, source_dir: Path, recursive: bool) -> list[str]:
+    """Match files like CMake file(GLOB) / file(GLOB_RECURSE)."""
+    if Path(pattern).is_absolute():
+        if not recursive or not _pattern_has_wildcard(pattern):
+            return py_glob.glob(pattern)
+        abs_parent = Path(pattern).parent
+        name = Path(pattern).name
+        return py_glob.glob(str(abs_parent / "**" / name), recursive=True)
+
+    full_pattern = str(source_dir / pattern)
+    if not recursive or not _pattern_has_wildcard(pattern):
+        return py_glob.glob(full_pattern)
+
+    parts = Path(pattern).parts
+    if len(parts) == 1:
+        return py_glob.glob(str(source_dir / "**" / pattern), recursive=True)
+
+    parent = Path(*parts[:-1])
+    name = parts[-1]
+    return py_glob.glob(str(source_dir / parent / "**" / name), recursive=True)
+
+
 def handle_file(
     ctx: BuildContext,
     cmd: Command,
@@ -2170,8 +2196,9 @@ def handle_file(
             else:
                 ctx.variables[var_name] = ""
 
-    elif subcommand == "GLOB":
+    elif subcommand in ("GLOB", "GLOB_RECURSE"):
         if len(args) >= 3:
+            recursive = subcommand == "GLOB_RECURSE"
             var_name = args[1]
             patterns: list[str] = []
             relative_base: Path | None = None
@@ -2203,12 +2230,9 @@ def handle_file(
             matched_files: list[str] = []
             for pattern in patterns:
                 expanded_pattern = ctx.expand_variables(pattern, strict, cmd.line)
-                if Path(expanded_pattern).is_absolute():
-                    matched = py_glob.glob(expanded_pattern)
-                else:
-                    matched = py_glob.glob(
-                        str(ctx.current_source_dir / expanded_pattern)
-                    )
+                matched = _cmake_glob_files(
+                    expanded_pattern, ctx.current_source_dir, recursive
+                )
                 if list_directories is False:
                     matched = [m for m in matched if not Path(m).is_dir()]
                 matched.sort()

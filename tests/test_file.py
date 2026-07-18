@@ -75,6 +75,46 @@ def test_file_glob_relative(tmp_path: Path) -> None:
     assert ctx.variables["GFX_FILES"] == "a.webp;b.webp"
 
 
+def test_file_glob_recurse_finds_nested(tmp_path: Path) -> None:
+    """file(GLOB_RECURSE *.cpp) finds sources in subdirectories."""
+    sub = tmp_path / "Source"
+    sub.mkdir()
+    (sub / "SharedCode.cpp").touch()
+    (tmp_path / "top.cpp").touch()
+
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    process_commands(
+        [Command(name="file", args=["GLOB_RECURSE", "srcs", "*.cpp"], line=1)],
+        ctx,
+    )
+
+    files = ctx.variables["srcs"].split(";")
+    assert len(files) == 2
+    assert any(f.endswith("SharedCode.cpp") for f in files)
+    assert any(f.endswith("top.cpp") for f in files)
+
+
+def test_file_glob_recurse_literal_path(tmp_path: Path) -> None:
+    """file(GLOB_RECURSE) with a literal relative path finds that file."""
+    sub = tmp_path / "Source"
+    sub.mkdir()
+    (sub / "SharedCode.cpp").touch()
+
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    process_commands(
+        [
+            Command(
+                name="file",
+                args=["GLOB_RECURSE", "srcs", "Source/SharedCode.cpp"],
+                line=1,
+            )
+        ],
+        ctx,
+    )
+
+    assert ctx.variables["srcs"].endswith("Source/SharedCode.cpp")
+
+
 def test_file_write_creates_parent_dir(tmp_path: Path) -> None:
     """file(WRITE ...) should create parent directories."""
     source_dir = Path.cwd() / f"tmp_file_write_{tmp_path.name}"
