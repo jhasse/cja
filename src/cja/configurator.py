@@ -32,6 +32,7 @@ from .commands import (
     handle_configure_file,
     handle_file,
     handle_function,
+    handle_generate_export_header,
     handle_get_directory_property,
     handle_get_filename_component,
     handle_get_property,
@@ -984,6 +985,7 @@ def process_commands(
                         "CPack",
                         "FetchContent",
                         "FindPackageHandleStandardArgs",
+                        "GenerateExportHeader",
                         "GNUInstallDirs",
                     }
                     if module_name == "CTest":
@@ -1796,6 +1798,9 @@ int main() {{
 
             case "configure_file":
                 handle_configure_file(ctx, cmd, args, strict)
+
+            case "generate_export_header":
+                handle_generate_export_header(ctx, cmd, args, strict)
 
             case "configure_package_config_file":
                 # configure_package_config_file(<input> <output> INSTALL_DESTINATION <path> [PATH_VARS ...]

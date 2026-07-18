@@ -2489,3 +2489,243 @@ def handle_configure_file(
 
     dst.parent.mkdir(parents=True, exist_ok=True)
     dst.write_text(content)
+
+def _make_c_identifier(value: str) -> str:
+    """Mirror CMake string(MAKE_C_IDENTIFIER)."""
+    result = re.sub(r"[^a-zA-Z0-9_]", "_", value)
+    if result and result[0].isdigit():
+        result = "_" + result
+    return result
+
+
+_EXPORT_HEADER_TEMPLATE = """
+#ifndef {include_guard_name}
+#define {include_guard_name}
+
+#ifdef {static_define}
+#  define {export_macro_name}
+#  define {no_export_macro_name}
+#else
+#  ifndef {export_macro_name}
+#    ifdef {export_import_condition}
+        /* We are building this library */
+#      define {export_macro_name} {define_export}
+#    else
+        /* We are using this library */
+#      define {export_macro_name} {define_import}
+#    endif
+#  endif
+
+#  ifndef {no_export_macro_name}
+#    define {no_export_macro_name} {define_no_export}
+#  endif
+#endif
+
+#ifndef {deprecated_macro_name}
+#  define {deprecated_macro_name} {define_deprecated}
+#endif
+
+#ifndef {deprecated_macro_name}_EXPORT
+#  define {deprecated_macro_name}_EXPORT {export_macro_name} {deprecated_macro_name}
+#endif
+
+#ifndef {deprecated_macro_name}_NO_EXPORT
+#  define {deprecated_macro_name}_NO_EXPORT {no_export_macro_name} {deprecated_macro_name}
+#endif
+
+/* NOLINTNEXTLINE(readability-avoid-unconditional-preprocessor-if) */
+#if {define_no_deprecated} /* DEFINE_NO_DEPRECATED */
+#  ifndef {no_deprecated_macro_name}
+#    define {no_deprecated_macro_name}
+#  endif
+#endif
+{custom_content}
+#endif /* {include_guard_name} */
+"""
+
+
+def handle_generate_export_header(
+    ctx: BuildContext,
+    cmd: Command,
+    args: list[str],
+    strict: bool,
+) -> None:
+    """Handle generate_export_header() from the GenerateExportHeader module."""
+    if not args:
+        if strict:
+            ctx.print_error("generate_export_header requires a target", cmd.line)
+            sys.exit(1)
+        return
+
+    target_name = args[0]
+    lib = ctx.get_library(target_name)
+    if lib is None:
+        if strict:
+            ctx.print_error(
+                f"generate_export_header given unknown target: {target_name}",
+                cmd.line,
+            )
+            sys.exit(1)
+        return
+
+    if lib.lib_type not in ("STATIC", "SHARED", "OBJECT", "MODULE"):
+        print(
+            f"CMake Warning at {ctx.current_list_file}:{cmd.line} "
+            f"(generate_export_header):\n"
+            f"  This macro can only be used with libraries"
+        )
+        return
+
+    options = {"DEFINE_NO_DEPRECATED"}
+    one_value = {
+        "PREFIX_NAME",
+        "BASE_NAME",
+        "EXPORT_MACRO_NAME",
+        "EXPORT_FILE_NAME",
+        "DEPRECATED_MACRO_NAME",
+        "NO_EXPORT_MACRO_NAME",
+        "STATIC_DEFINE",
+        "NO_DEPRECATED_MACRO_NAME",
+        "CUSTOM_CONTENT_FROM_VARIABLE",
+        "INCLUDE_GUARD_NAME",
+    }
+    parsed: dict[str, str | bool] = {}
+    i = 1
+    while i < len(args):
+        token = args[i]
+        if token in options:
+            parsed[token] = True
+            i += 1
+            continue
+        if token in one_value:
+            if i + 1 >= len(args):
+                if strict:
+                    ctx.print_error(
+                        f"generate_export_header missing value for {token}",
+                        cmd.line,
+                    )
+                    sys.exit(1)
+                return
+            parsed[token] = args[i + 1]
+            i += 2
+            continue
+        if strict:
+            ctx.print_error(
+                f'Unknown keywords given to generate_export_header(): "{token}"',
+                cmd.line,
+            )
+            sys.exit(1)
+        return
+
+    prefix_name = str(parsed.get("PREFIX_NAME", ""))
+    base_name = str(parsed.get("BASE_NAME", target_name))
+    base_upper = base_name.upper()
+    base_lower = base_name.lower()
+
+    export_macro_name = str(
+        parsed.get("EXPORT_MACRO_NAME", f"{prefix_name}{base_upper}_EXPORT")
+    )
+    if "EXPORT_MACRO_NAME" in parsed:
+        export_macro_name = f"{prefix_name}{export_macro_name}"
+    export_macro_name = _make_c_identifier(export_macro_name)
+
+    no_export_macro_name = str(
+        parsed.get("NO_EXPORT_MACRO_NAME", f"{prefix_name}{base_upper}_NO_EXPORT")
+    )
+    if "NO_EXPORT_MACRO_NAME" in parsed:
+        no_export_macro_name = f"{prefix_name}{no_export_macro_name}"
+    no_export_macro_name = _make_c_identifier(no_export_macro_name)
+
+    deprecated_macro_name = str(
+        parsed.get("DEPRECATED_MACRO_NAME", f"{prefix_name}{base_upper}_DEPRECATED")
+    )
+    if "DEPRECATED_MACRO_NAME" in parsed:
+        deprecated_macro_name = f"{prefix_name}{deprecated_macro_name}"
+    deprecated_macro_name = _make_c_identifier(deprecated_macro_name)
+
+    static_define = str(
+        parsed.get("STATIC_DEFINE", f"{prefix_name}{base_upper}_STATIC_DEFINE")
+    )
+    if "STATIC_DEFINE" in parsed:
+        static_define = f"{prefix_name}{static_define}"
+    static_define = _make_c_identifier(static_define)
+
+    no_deprecated_macro_name = str(
+        parsed.get(
+            "NO_DEPRECATED_MACRO_NAME", f"{prefix_name}{base_upper}_NO_DEPRECATED"
+        )
+    )
+    if "NO_DEPRECATED_MACRO_NAME" in parsed:
+        no_deprecated_macro_name = f"{prefix_name}{no_deprecated_macro_name}"
+    no_deprecated_macro_name = _make_c_identifier(no_deprecated_macro_name)
+
+    include_guard_name = str(
+        parsed.get("INCLUDE_GUARD_NAME", f"{export_macro_name}_H")
+    )
+
+    current_binary_dir = Path(
+        ctx.variables.get("CMAKE_CURRENT_BINARY_DIR", str(ctx.build_dir))
+    )
+    if "EXPORT_FILE_NAME" in parsed:
+        export_file_name = Path(str(parsed["EXPORT_FILE_NAME"]))
+        if not export_file_name.is_absolute():
+            export_file_name = current_binary_dir / export_file_name
+    else:
+        export_file_name = current_binary_dir / f"{base_lower}_export.h"
+
+    export_import_condition = lib.properties.get("DEFINE_SYMBOL", "")
+    if not export_import_condition:
+        export_import_condition = f"{target_name}_EXPORTS"
+    export_import_condition = _make_c_identifier(export_import_condition)
+
+    define_export = ""
+    define_import = ""
+    define_no_export = ""
+    define_deprecated = ""
+
+    win32 = is_truthy(ctx.variables.get("WIN32", ""))
+    cygwin = is_truthy(ctx.variables.get("CYGWIN", ""))
+
+    if not win32:
+        define_deprecated = "__attribute__ ((__deprecated__))"
+    else:
+        define_deprecated = "__declspec(deprecated)"
+
+    if lib.lib_type != "STATIC":
+        if win32 or cygwin:
+            define_export = "__declspec(dllexport)"
+            define_import = "__declspec(dllimport)"
+        else:
+            # Assume modern GCC/Clang hidden-visibility support (matches CMake
+            # on Linux/macOS after CheckCompilerFlag succeeds).
+            define_export = '__attribute__((visibility("default")))'
+            define_import = '__attribute__((visibility("default")))'
+            define_no_export = '__attribute__((visibility("hidden")))'
+
+    custom_content = ""
+    if "CUSTOM_CONTENT_FROM_VARIABLE" in parsed:
+        var_name = str(parsed["CUSTOM_CONTENT_FROM_VARIABLE"])
+        if var_name in ctx.variables:
+            custom_content = ctx.variables[var_name]
+
+    define_no_deprecated = "1" if parsed.get("DEFINE_NO_DEPRECATED") else "0"
+
+    content = _EXPORT_HEADER_TEMPLATE.format(
+        include_guard_name=include_guard_name,
+        static_define=static_define,
+        export_macro_name=export_macro_name,
+        no_export_macro_name=no_export_macro_name,
+        export_import_condition=export_import_condition,
+        define_export=define_export,
+        define_import=define_import,
+        define_no_export=define_no_export,
+        deprecated_macro_name=deprecated_macro_name,
+        define_deprecated=define_deprecated,
+        define_no_deprecated=define_no_deprecated,
+        no_deprecated_macro_name=no_deprecated_macro_name,
+        custom_content=custom_content,
+    )
+
+    export_file_name.parent.mkdir(parents=True, exist_ok=True)
+    if not export_file_name.exists() or export_file_name.read_text() != content:
+        export_file_name.write_text(content)
