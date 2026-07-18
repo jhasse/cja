@@ -173,6 +173,20 @@ def handle_include_directories(
     else:
         ctx.directory_properties[abs_dir]["INCLUDE_DIRECTORIES"] = ";".join(dirs)
 
+    # Directory-level include dirs apply to all targets defined in this
+    # directory, including ones created before this call (matching CMake's
+    # generate-time directory property behavior).
+    for lib in ctx.libraries:
+        if lib.defined_file is not None and lib.defined_file.parent == ctx.current_source_dir:
+            for d in dirs:
+                if d not in lib.include_directories:
+                    lib.include_directories.append(d)
+    for exe in ctx.executables:
+        if exe.defined_file is not None and exe.defined_file.parent == ctx.current_source_dir:
+            for d in dirs:
+                if d not in exe.include_directories:
+                    exe.include_directories.append(d)
+
 
 def handle_target_link_libraries(
     ctx: BuildContext,
@@ -605,6 +619,12 @@ def handle_set_target_properties(
                             lib.public_include_directories.append(expanded)
                         elif exe:
                             exe.include_directories.append(expanded)
+                elif prop_name == "COMPILE_DEFINITIONS":
+                    defs = [d for d in prop_value.split(";") if d]
+                    if lib:
+                        lib.compile_definitions.extend(defs)
+                    elif exe:
+                        exe.compile_definitions.extend(defs)
                 else:
                     if lib:
                         lib.properties[prop_name] = prop_value
@@ -711,8 +731,10 @@ def handle_set_property(
                     else:
                         lib.compile_definitions = list(prop_values)
                 elif exe:
-                    # Executables don't have compile_definitions directly yet
-                    pass
+                    if append_mode:
+                        exe.compile_definitions.extend(prop_values)
+                    else:
+                        exe.compile_definitions = list(prop_values)
             else:
                 value = ";".join(prop_values)
                 if lib:

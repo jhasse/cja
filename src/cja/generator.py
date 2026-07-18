@@ -823,15 +823,43 @@ def generate_ninja(
             artifact produced by another command, prefix it with $builddir.
             Resolving the source case first avoids self-dependency cycles when a
             copy command's source and output share the same relative path.
+            Bare target names (executables/libraries) resolve to their outputs.
             """
             d = _expand_genex(dep)
             if not d or Path(d).is_absolute():
                 return d
+            if d in target_files:
+                return target_files[d]
             if (ctx.source_dir / d).exists():
                 return d
             if d in custom_command_outputs:
                 return f"$builddir/{d}"
             return d
+
+        def _absolute_target_file(ninja_path: str) -> str:
+            """Convert a $builddir/... ninja path to an absolute filesystem path."""
+            if ninja_path.startswith("$builddir/"):
+                return to_posix_path(
+                    str(ctx.build_dir / ninja_path[len("$builddir/") :])
+                )
+            if ninja_path == "$builddir":
+                return to_posix_path(str(ctx.build_dir))
+            return ninja_path
+
+        def _format_command(command: list[str], *, verbatim: bool) -> str:
+            """Format one COMMAND argv, substituting target names with their files."""
+            expanded = [_expand_genex(c) for c in command]
+            if expanded and expanded[0] in target_files:
+                expanded[0] = _absolute_target_file(target_files[expanded[0]])
+            if verbatim:
+                parts = []
+                for arg in expanded:
+                    if arg in shell_operators:
+                        parts.append(str(arg))
+                    else:
+                        parts.append(shlex.quote(str(arg)))
+                return " ".join(parts)
+            return " ".join(str(c) for c in expanded)
 
         # Generate custom commands
         for custom_cmd in ctx.custom_commands:
@@ -848,21 +876,10 @@ def generate_ninja(
                     outputs.append(o)
 
             # Process multiple commands
-            cmd_parts: list[str] = []
-            for command in custom_cmd.commands:
-                if custom_cmd.verbatim:
-                    parts = []
-                    for arg in command:
-                        expanded = _expand_genex(arg)
-                        if expanded in shell_operators:
-                            parts.append(str(expanded))
-                        else:
-                            parts.append(shlex.quote(str(expanded)))
-                    cmd_parts.append(" ".join(parts))
-                else:
-                    cmd_parts.append(
-                        " ".join(str(_expand_genex(c)) for c in command)
-                    )
+            cmd_parts: list[str] = [
+                _format_command(command, verbatim=custom_cmd.verbatim)
+                for command in custom_cmd.commands
+            ]
 
             cmd_str = " && ".join(cmd_parts)
 
@@ -909,21 +926,10 @@ def generate_ninja(
 
             if ct.commands:
                 # Custom target with commands: use custom_command rule
-                ct_cmd_parts: list[str] = []
-                for command in ct.commands:
-                    if ct.verbatim:
-                        parts = []
-                        for arg in command:
-                            expanded = _expand_genex(arg)
-                            if expanded in shell_operators:
-                                parts.append(str(expanded))
-                            else:
-                                parts.append(shlex.quote(str(expanded)))
-                        ct_cmd_parts.append(" ".join(parts))
-                    else:
-                        ct_cmd_parts.append(
-                            " ".join(str(_expand_genex(c)) for c in command)
-                        )
+                ct_cmd_parts: list[str] = [
+                    _format_command(command, verbatim=ct.verbatim)
+                    for command in ct.commands
+                ]
 
                 ct_cmd_str = " && ".join(ct_cmd_parts)
                 if ct.working_directory:
@@ -1038,6 +1044,20 @@ def generate_ninja(
                     return f"$builddir/{stripped}", stripped
             return source, source
 
+        def _generated_source_deps(sources: list[str]) -> list[str]:
+            """Ninja nodes for custom-command outputs listed among target sources.
+
+            Generated headers (and other non-compiled outputs) still need to
+            exist before compiling the target, matching CMake's behavior when
+            generated files appear in a target's SOURCES.
+            """
+            deps: list[str] = []
+            for source in sources:
+                resolved, _ = _resolve_source(source)
+                if resolved.startswith("$builddir/") and resolved not in deps:
+                    deps.append(resolved)
+            return deps
+
         # Generate build statements for libraries
         for lib in ctx.libraries:
             if lib.is_alias:
@@ -1133,6 +1153,10 @@ def generate_ninja(
             c_clang_tidy = lib.properties.get("C_CLANG_TIDY")
 
             lib_dep_order_only = _target_order_only(lib.dependencies)
+            lib_generated_deps = _generated_source_deps(lib.sources)
+            lib_order_only = list(
+                dict.fromkeys([*lib_dep_order_only, *lib_generated_deps])
+            )
 
             for source in compileable_sources:
                 actual_source, obj_source = _resolve_source(source)
@@ -1250,7 +1274,7 @@ def generate_ninja(
                     rule,
                     actual_source,
                     implicit=source_depends,
-                    order_only=lib_dep_order_only or None,
+                    order_only=lib_order_only or None,
                     variables=source_vars,
                     validation=tidy_stamp,
                 )
@@ -1408,6 +1432,10 @@ def generate_ninja(
             c_clang_tidy = exe.properties.get("C_CLANG_TIDY")
 
             exe_dep_order_only = _target_order_only(exe.dependencies)
+            exe_generated_deps = _generated_source_deps(exe.sources)
+            exe_order_only = list(
+                dict.fromkeys([*exe_dep_order_only, *exe_generated_deps])
+            )
 
             for source in compileable_sources:
                 actual_source, obj_source = _resolve_source(source)
@@ -1525,7 +1553,7 @@ def generate_ninja(
                     rule,
                     actual_source,
                     implicit=source_depends,
-                    order_only=exe_dep_order_only or None,
+                    order_only=exe_order_only or None,
                     variables=source_vars,
                     validation=tidy_stamp,
                 )
@@ -1645,7 +1673,7 @@ def generate_ninja(
                 exe_name,
                 link_rule,
                 link_inputs,
-                order_only=exe_dep_order_only or None,
+                order_only=exe_order_only or None,
                 variables=variables if variables else None,
             )
             n.newline()

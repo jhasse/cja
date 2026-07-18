@@ -452,3 +452,37 @@ add_custom_command(
     assert "COMMENT" not in ninja_content
     assert "Generating" not in ninja_content
     assert "input.txt" in ninja_content
+
+
+def test_add_custom_command_depends_on_executable_target(tmp_path: Path) -> None:
+    """DEPENDS on an executable target name resolves to the built binary."""
+    from cja.generator import configure
+
+    source_dir = tmp_path
+    cmake_content = """\
+cmake_minimum_required(VERSION 3.10)
+project(TargetDepTest)
+
+add_executable(tool tool.c)
+
+add_custom_command(
+    OUTPUT generated.txt
+    COMMAND tool ARGS --write generated.txt
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    DEPENDS tool
+)
+"""
+    (source_dir / "CMakeLists.txt").write_text(cmake_content)
+    (source_dir / "tool.c").write_text("int main() { return 0; }\n")
+
+    configure(source_dir, "build")
+
+    ninja_content = (source_dir / "build.ninja").read_text()
+
+    # DEPENDS should reference the build output, not a source-relative path.
+    assert "build $builddir/generated.txt: custom_command $builddir/tool" in ninja_content
+    # ARGS must not appear in the shell command.
+    assert " ARGS " not in ninja_content
+    # COMMAND tool is substituted with an absolute path to the built binary.
+    assert f"{tmp_path / 'build' / 'tool'}" in ninja_content
+    assert "&& tool --write" not in ninja_content

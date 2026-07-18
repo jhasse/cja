@@ -977,6 +977,8 @@ def process_commands(
                         "CheckCXXSymbolExists",
                         "CheckSymbolExists",
                         "CheckIncludeFiles",
+                        "CheckLibraryExists",
+                        "CheckFunctionExists",
                         "CheckTypeSize",
                         "CMakeDependentOption",
                         "CPack",
@@ -1517,6 +1519,51 @@ int main(void) {{
                             f"{colored(status_marker(found), color)} {function}"
                         )
 
+            case "check_library_exists":
+                # check_library_exists(<library> <function> <location> <variable>)
+                if len(args) >= 4:
+                    library = args[0]
+                    function = args[1]
+                    location = args[2]
+                    variable = args[3]
+
+                    check_quiet = ctx.quiet or is_truthy(
+                        ctx.variables.get("CMAKE_REQUIRED_QUIET", "")
+                    )
+
+                    saved_libraries = ctx.variables.get("CMAKE_REQUIRED_LIBRARIES", "")
+                    saved_flags = ctx.variables.get("CMAKE_REQUIRED_FLAGS", "")
+                    libs = [p for p in saved_libraries.split(";") if p]
+                    libs.append(library)
+                    ctx.variables["CMAKE_REQUIRED_LIBRARIES"] = ";".join(libs)
+                    if location:
+                        flags = saved_flags
+                        loc_flag = f"-L{location}"
+                        ctx.variables["CMAKE_REQUIRED_FLAGS"] = (
+                            f"{flags} {loc_flag}".strip()
+                        )
+
+                    test_code = f"""#ifdef __cplusplus
+extern "C"
+#endif
+char {function}(void);
+int main(void) {{
+    return (int)(long){function}();
+}}
+"""
+                    found = _check_source_compiles(ctx, test_code, "C", [])
+
+                    ctx.variables["CMAKE_REQUIRED_LIBRARIES"] = saved_libraries
+                    if location:
+                        ctx.variables["CMAKE_REQUIRED_FLAGS"] = saved_flags
+
+                    ctx.variables[variable] = "1" if found else ""
+                    if not check_quiet:
+                        color = "green" if found else "red"
+                        print(
+                            f"{colored(status_marker(found), color)} {library}"
+                        )
+
             case "check_symbol_exists":
                 # check_symbol_exists(<symbol> <files> <variable>)
                 if len(args) >= 3:
@@ -1890,6 +1937,38 @@ int main() {{
                             expanded
                         )
 
+            case "add_definitions":
+                # Legacy form of add_compile_definitions. Arguments typically
+                # look like -DFOO or -DFOO=1; strip the -D prefix so the
+                # generator can re-add it uniformly.
+                for arg in args:
+                    expanded = ctx.expand_variables(arg, strict, cmd.line)
+                    if not expanded:
+                        continue
+                    definition = (
+                        expanded[2:]
+                        if expanded.startswith("-D")
+                        else expanded
+                    )
+                    ctx.compile_definitions.append(definition)
+                    try:
+                        abs_dir = str(ctx.current_source_dir.resolve())
+                    except FileNotFoundError:
+                        abs_dir = str(ctx.current_source_dir.absolute())
+                    if abs_dir not in ctx.directory_properties:
+                        ctx.directory_properties[abs_dir] = {}
+                    existing = ctx.directory_properties[abs_dir].get(
+                        "COMPILE_DEFINITIONS"
+                    )
+                    if existing:
+                        ctx.directory_properties[abs_dir]["COMPILE_DEFINITIONS"] = (
+                            existing + ";" + definition
+                        )
+                    else:
+                        ctx.directory_properties[abs_dir]["COMPILE_DEFINITIONS"] = (
+                            definition
+                        )
+
             case "add_custom_command":
                 # Support TARGET form: add_custom_command(TARGET <name> POST_BUILD|PRE_BUILD|PRE_LINK COMMAND ...)
                 if args and args[0] == "TARGET":
@@ -1944,10 +2023,16 @@ int main() {{
                         elif arg == "VERBATIM":
                             verbatim = True
                             current_section = None
+                        elif arg == "ARGS":
+                            # Legacy CMake keyword; ignored.
+                            pass
                         elif arg in ("COMMENT", "USES_TERMINAL", "COMMAND_EXPAND_LISTS", "DEPFILE", "JOB_POOL", "BYPRODUCTS"):
                             current_section = arg  # values for these are ignored
                         else:
                             arg = ctx.expand_variables(arg, strict, cmd.line)
+                            if not arg:
+                                arg_idx += 1
+                                continue
                             if current_section == "OUTPUT":
                                 # Make relative to build_dir or source_dir
                                 rel = make_relative(arg, ctx.build_dir)
@@ -1957,11 +2042,21 @@ int main() {{
                             elif current_section == "COMMAND":
                                 command_list[-1].append(arg)
                             elif current_section == "DEPENDS":
-                                # Make relative to build_dir or source_dir
-                                rel = make_relative(arg, ctx.build_dir)
-                                if rel == arg:
-                                    rel = ctx.resolve_path(arg)
-                                depends.append(rel)
+                                # Target names stay bare so the generator can
+                                # map them to built artifacts. File paths are
+                                # resolved relative to build/source as usual.
+                                is_target = (
+                                    ctx.get_executable(arg) is not None
+                                    or ctx.get_library(arg) is not None
+                                    or any(ct.name == arg for ct in ctx.custom_targets)
+                                )
+                                if is_target:
+                                    depends.append(arg)
+                                else:
+                                    rel = make_relative(arg, ctx.build_dir)
+                                    if rel == arg:
+                                        rel = ctx.resolve_path(arg)
+                                    depends.append(rel)
                             elif current_section == "MAIN_DEPENDENCY":
                                 # Make relative to build_dir or source_dir
                                 rel = make_relative(arg, ctx.build_dir)
@@ -2011,17 +2106,31 @@ int main() {{
                         if arg == "VERBATIM":
                             ct_verbatim = True
                         ct_section = None
+                    elif arg == "ARGS":
+                        # Legacy CMake keyword; ignored.
+                        pass
                     elif arg == "SOURCES":
                         ct_section = "SOURCES"
                     else:
                         arg = ctx.expand_variables(arg, strict, cmd.line)
+                        if not arg:
+                            ct_idx += 1
+                            continue
                         if ct_section == "COMMAND":
                             ct_commands[-1].append(arg)
                         elif ct_section == "DEPENDS":
-                            rel = make_relative(arg, ctx.build_dir)
-                            if rel == arg:
-                                rel = ctx.resolve_path(arg)
-                            ct_depends.append(rel)
+                            is_target = (
+                                ctx.get_executable(arg) is not None
+                                or ctx.get_library(arg) is not None
+                                or any(ct.name == arg for ct in ctx.custom_targets)
+                            )
+                            if is_target:
+                                ct_depends.append(arg)
+                            else:
+                                rel = make_relative(arg, ctx.build_dir)
+                                if rel == arg:
+                                    rel = ctx.resolve_path(arg)
+                                ct_depends.append(rel)
                         elif ct_section == "WORKING_DIRECTORY":
                             ct_working_directory = arg
                         elif ct_section == "COMMENT":
