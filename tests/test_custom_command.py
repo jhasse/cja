@@ -1,9 +1,12 @@
 """Tests for add_custom_command support."""
 
+import platform
 from pathlib import Path
 
 from cja.generator import BuildContext, process_commands
 from cja.parser import Command
+
+EXE_EXT = ".exe" if platform.system() == "Windows" else ""
 
 
 def test_add_custom_command_minimal() -> None:
@@ -480,9 +483,13 @@ add_custom_command(
     ninja_content = (source_dir / "build.ninja").read_text()
 
     # DEPENDS should reference the build output, not a source-relative path.
-    assert "build $builddir/generated.txt: custom_command $builddir/tool" in ninja_content
+    assert (
+        f"build $builddir/generated.txt: custom_command $builddir/tool{EXE_EXT}"
+        in ninja_content
+    )
     # ARGS must not appear in the shell command.
     assert " ARGS " not in ninja_content
     # COMMAND tool is substituted with an absolute path to the built binary.
-    assert f"{tmp_path / 'build' / 'tool'}" in ninja_content
+    expected_tool = (tmp_path / "build" / f"tool{EXE_EXT}").as_posix()
+    assert expected_tool in ninja_content
     assert "&& tool --write" not in ninja_content
