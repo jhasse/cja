@@ -25,6 +25,25 @@ def test_target_link_libraries_skips_empty_argument() -> None:
     assert exe.link_libraries == ["m"]
 
 
+def test_target_link_libraries_link_public_keyword() -> None:
+    """Legacy LINK_PUBLIC should be treated like PUBLIC, not a library name."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="add_library", args=["mylib", "SHARED", "lib.c"], line=1),
+        Command(
+            name="target_link_libraries",
+            args=["mylib", "LINK_PUBLIC", "m", "dl"],
+            line=2,
+        ),
+    ]
+    process_commands(commands, ctx, strict=True)
+
+    lib = ctx.get_library("mylib")
+    assert lib is not None
+    assert lib.link_libraries == ["m", "dl"]
+    assert "LINK_PUBLIC" not in lib.link_libraries
+
+
 def test_add_library_empty_target_name_fails() -> None:
     """add_library() should fail for empty target names."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
@@ -120,7 +139,6 @@ def test_shared_library_compiles_with_fpic(tmp_path: Path) -> None:
     ninja_file = tmp_path / "build.ninja"
     generate_ninja(ctx, ninja_file, "build")
     assert "-fPIC" in ninja_file.read_text()
-
 
 
 def test_alias_propagates_public_include_directories(tmp_path: Path) -> None:

@@ -198,15 +198,16 @@ def handle_target_link_libraries(
         target_name = args[0]
         # Parse libraries with visibility keywords
         # CMake supports: target_link_libraries(<target> <PRIVATE|PUBLIC|INTERFACE> <item>...)
+        # Legacy keywords LINK_PUBLIC / LINK_PRIVATE are still used by some projects.
         visibility = "PUBLIC"  # Default visibility
         for arg in args[1:]:
             if len(arg) == 0:
                 continue  # Argument might be an empty variable, skip
-            if arg == "PUBLIC":
+            if arg in ("PUBLIC", "LINK_PUBLIC"):
                 visibility = "PUBLIC"
-            elif arg == "INTERFACE":
+            elif arg in ("INTERFACE", "LINK_INTERFACE_LIBRARIES"):
                 visibility = "INTERFACE"
-            elif arg == "PRIVATE":
+            elif arg in ("PRIVATE", "LINK_PRIVATE"):
                 visibility = "PRIVATE"
             else:
                 # It's a library name (may be a semicolon-separated list from
@@ -2517,6 +2518,7 @@ def handle_configure_file(
 
     dst.parent.mkdir(parents=True, exist_ok=True)
     dst.write_text(content)
+
 
 def _make_c_identifier(value: str) -> str:
     """Mirror CMake string(MAKE_C_IDENTIFIER)."""
