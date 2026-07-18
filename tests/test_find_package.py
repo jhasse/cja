@@ -726,10 +726,35 @@ def test_find_package_boost_found_via_boost_includedir(
 def test_find_package_boost_not_found_prints_search_paths(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
 ) -> None:
     """When Boost is not found, print the header paths that were searched."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
-    monkeypatch.setattr("cja.generator.subprocess.run", _pkg_config_misses_boost)
+    # Avoid picking up a system Boost install via pkg-config or /usr/include.
+    monkeypatch.setattr("cja.find_package.subprocess.run", _pkg_config_misses_boost)
+    empty_include = tmp_path / "include"
+    empty_include.mkdir()
+    monkeypatch.setattr(
+        "cja.find_package._default_boost_include_dirs",
+        lambda: [empty_include],
+    )
+    monkeypatch.setattr(
+        "cja.find_package._default_boost_library_dirs",
+        lambda: [tmp_path / "lib"],
+    )
+    for var in (
+        "BOOST_ROOT",
+        "BOOSTROOT",
+        "Boost_ROOT",
+        "BOOST_INCLUDEDIR",
+        "Boost_INCLUDEDIR",
+        "BOOST_INCLUDE_DIR",
+        "Boost_INCLUDE_DIR",
+        "BOOST_LIBRARYDIR",
+        "Boost_LIBRARYDIR",
+        "CMAKE_PREFIX_PATH",
+    ):
+        monkeypatch.delenv(var, raising=False)
 
     commands = [Command(name="find_package", args=["Boost"], line=1)]
     process_commands(commands, ctx)
