@@ -228,6 +228,33 @@ add_custom_command(
     )
 
 
+def test_add_custom_command_working_dir_under_source_is_relative(
+    tmp_path: Path,
+) -> None:
+    """Absolute WORKING_DIRECTORY under the source tree becomes a relative cd."""
+    from cja.generator import configure
+
+    source_dir = tmp_path
+    cmake_content = """\
+cmake_minimum_required(VERSION 3.10)
+project(WorkDirRelTest)
+
+add_custom_command(
+    OUTPUT out.txt
+    COMMAND echo hello
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/generated
+    VERBATIM
+)
+"""
+    (source_dir / "CMakeLists.txt").write_text(cmake_content)
+
+    configure(source_dir, "build")
+
+    ninja_content = (source_dir / "build.ninja").read_text()
+    assert "cd build/generated && echo hello" in ninja_content
+    assert f"cd {source_dir.as_posix()}/build/generated" not in ninja_content
+
+
 def test_add_custom_command_multiple_commands(tmp_path: Path) -> None:
     """Test that multiple COMMAND sections are correctly joined with &&."""
     from cja.generator import configure

@@ -387,6 +387,36 @@ def _ninja_flag_path(path: str, source_dir: Path) -> str:
     return path
 
 
+def _cd_prefix(working_dir: str, source_dir: Path) -> str:
+    """Return a ``cd <dir> && `` prefix for a custom command working directory.
+
+    Ninja runs from the source root. Absolute paths under that tree are rewritten
+    as source-relative paths (e.g. ``/proj/build/generated`` → ``build/generated``).
+    Paths already using ``$builddir`` are left unchanged. When the working
+    directory is the source root itself, no ``cd`` is emitted.
+    """
+    if not working_dir:
+        return ""
+    if working_dir == "$builddir" or working_dir.startswith("$builddir/"):
+        return f"cd {to_posix_path(working_dir)} && "
+
+    wd = Path(working_dir)
+    if not wd.is_absolute():
+        return f"cd {to_posix_path(working_dir)} && "
+
+    try:
+        source_resolved = source_dir.resolve()
+        wd_resolved = wd.resolve()
+        if wd_resolved == source_resolved:
+            return ""
+        if wd_resolved.is_relative_to(source_resolved):
+            rel = wd_resolved.relative_to(source_resolved)
+            return f"cd {to_posix_path(rel)} && "
+    except (OSError, RuntimeError, ValueError):
+        pass
+    return f"cd {to_posix_path(working_dir)} && "
+
+
 def handle_add_subdirectory(
     ctx: BuildContext,
     cmd: Command,
@@ -904,7 +934,7 @@ def generate_ninja(
             working_dir = custom_cmd.working_directory
             if working_dir:
                 working_dir = _expand_genex(working_dir)
-                cmd_str = f"cd {to_posix_path(working_dir)} && {cmd_str}"
+                cmd_str = f"{_cd_prefix(working_dir, ctx.source_dir)}{cmd_str}"
 
             n.build(
                 outputs,
@@ -947,7 +977,7 @@ def generate_ninja(
                 ct_cmd_str = " && ".join(ct_cmd_parts)
                 if ct.working_directory:
                     ct_wd = _expand_genex(ct.working_directory)
-                    ct_cmd_str = f"cd {ct_wd} && {ct_cmd_str}"
+                    ct_cmd_str = f"{_cd_prefix(ct_wd, ctx.source_dir)}{ct_cmd_str}"
 
                 # Use a stamp file so ninja can track when the target last ran
                 stamp = f"$builddir/{ct.name}.stamp"
