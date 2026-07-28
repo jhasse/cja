@@ -78,6 +78,107 @@ def _prefix_path_entries(ctx: BuildContext) -> list[str]:
     return entries
 
 
+_WINDOWS_BOOST_ROOT_GLOB = "boost_*"
+
+# Where "b2 install" places Boost on Windows when no prefix is given.
+_WINDOWS_BOOST_FIXED_ROOTS = (Path("C:/Boost"),)
+
+# Prebuilt Windows Boost binaries ship their libraries in toolset- and
+# architecture-specific directories such as ``lib64-msvc-14.3``.
+_WINDOWS_BOOST_LIBRARY_GLOBS = (
+    "lib64-msvc-*",
+    "lib64-clang-*",
+    "lib32-msvc-*",
+    "lib32-clang-*",
+)
+
+
+def _version_sort_key(name: str) -> tuple[int, ...]:
+    """Return a numeric sort key from a versioned directory name."""
+    return tuple(int(part) for part in re.findall(r"\d+", name))
+
+
+def _sorted_versioned_dirs(parent: Path, pattern: str) -> list[Path]:
+    """Return directories in ``parent`` matching ``pattern``, newest first."""
+    try:
+        matches = [entry for entry in parent.glob(pattern) if entry.is_dir()]
+    except OSError:
+        return []
+    return sorted(
+        matches,
+        key=lambda entry: (_version_sort_key(entry.name), entry.name),
+        reverse=True,
+    )
+
+
+def _windows_boost_root_parents() -> list[Path]:
+    """Return directories that hold version-suffixed Boost installs on Windows."""
+    parents: list[Path] = []
+    seen: set[str] = set()
+    candidates = [Path("C:/local")]
+    for var in ("ProgramW6432", "ProgramFiles", "ProgramFiles(x86)"):
+        value = os.environ.get(var, "")
+        if value:
+            candidates.append(Path(value) / "boost")
+
+    for candidate in candidates:
+        # ProgramW6432 and ProgramFiles usually name the same directory.
+        normalized = str(candidate).casefold()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        parents.append(candidate)
+
+    return parents
+
+
+def _windows_boost_root_dirs() -> list[Path]:
+    """Return the default Boost install prefixes on Windows, newest version first.
+
+    The Windows installers unpack into a version-suffixed directory such as
+    ``C:/local/boost_1_85_0``, so those are globbed rather than hardcoded.
+    ``C:/Boost`` covers Boost built from source and installed with b2.
+    """
+    roots: list[Path] = []
+    seen: set[str] = set()
+
+    def add(root: Path) -> None:
+        normalized = str(root)
+        if normalized in seen:
+            return
+        seen.add(normalized)
+        roots.append(root)
+
+    for parent in _windows_boost_root_parents():
+        for root in _sorted_versioned_dirs(parent, _WINDOWS_BOOST_ROOT_GLOB):
+            add(root)
+    for root in _WINDOWS_BOOST_FIXED_ROOTS:
+        add(root)
+    return roots
+
+
+def _boost_root_include_dirs(root: Path) -> list[Path]:
+    """Return the header roots to search under a Boost install prefix."""
+    # A versioned suffix (include/boost-1_85) wins over a plain include/, and
+    # the Windows installers keep headers in the prefix itself.
+    dirs = _sorted_versioned_dirs(root / "include", "boost-*")
+    dirs.append(root / "include")
+    dirs.append(root)
+    return dirs
+
+
+def _boost_root_library_dirs(root: Path) -> list[Path]:
+    """Return the library dirs to search under a Boost install prefix."""
+    dirs: list[Path] = []
+    if platform.system() == "Windows":
+        for pattern in _WINDOWS_BOOST_LIBRARY_GLOBS:
+            dirs.extend(_sorted_versioned_dirs(root, pattern))
+    dirs.append(root / "lib")
+    dirs.append(root / "lib64")
+    dirs.append(root / "stage" / "lib")
+    return dirs
+
+
 def _boost_hint_include_dirs(ctx: BuildContext) -> list[Path]:
     """Build Boost header search dirs from CMake/env hints (FindBoost-compatible)."""
     dirs: list[Path] = []
@@ -98,11 +199,12 @@ def _boost_hint_include_dirs(ctx: BuildContext) -> list[Path]:
 
     root = _var_or_env(ctx, "BOOST_ROOT", "BOOSTROOT", "Boost_ROOT")
     if root:
-        add(str(Path(root) / "include"))
+        for include_dir in _boost_root_include_dirs(Path(root)):
+            add(str(include_dir))
 
     for prefix in _prefix_path_entries(ctx):
-        add(str(Path(prefix) / "include"))
-        add(prefix)
+        for include_dir in _boost_root_include_dirs(Path(prefix)):
+            add(str(include_dir))
 
     return dirs
 
@@ -129,18 +231,20 @@ def _boost_hint_library_dirs(
 
     root = _var_or_env(ctx, "BOOST_ROOT", "BOOSTROOT", "Boost_ROOT")
     if root:
-        root_path = Path(root)
-        for subdir in ("lib", "lib64", "stage/lib"):
-            add(str(root_path / subdir))
+        for lib_dir in _boost_root_library_dirs(Path(root)):
+            add(str(lib_dir))
 
     for include_dir in include_dirs:
         include_path = Path(include_dir)
-        add(str(include_path.parent / "lib"))
-        add(str(include_path.parent / "lib64"))
+        # Headers usually live in <prefix>/include, but the Windows installers
+        # put them in the prefix itself, so treat both as install prefixes.
+        for prefix_path in (include_path.parent, include_path):
+            for lib_dir in _boost_root_library_dirs(prefix_path):
+                add(str(lib_dir))
 
     for prefix in _prefix_path_entries(ctx):
-        add(str(Path(prefix) / "lib"))
-        add(str(Path(prefix) / "lib64"))
+        for lib_dir in _boost_root_library_dirs(Path(prefix)):
+            add(str(lib_dir))
         add(prefix)
 
     return dirs
@@ -148,6 +252,11 @@ def _boost_hint_library_dirs(
 
 def _default_boost_include_dirs() -> list[Path]:
     """Return the default system include directories searched for Boost headers."""
+    if platform.system() == "Windows":
+        dirs: list[Path] = []
+        for root in _windows_boost_root_dirs():
+            dirs.extend(_boost_root_include_dirs(root))
+        return dirs
     return [
         Path("/usr/include"),
         Path("/usr/local/include"),
@@ -157,6 +266,11 @@ def _default_boost_include_dirs() -> list[Path]:
 
 def _default_boost_library_dirs() -> list[Path]:
     """Return the default system library directories searched for Boost libraries."""
+    if platform.system() == "Windows":
+        dirs: list[Path] = []
+        for root in _windows_boost_root_dirs():
+            dirs.extend(_boost_root_library_dirs(root))
+        return dirs
     return [
         Path("/usr/lib"),
         Path("/usr/lib64"),
@@ -165,9 +279,52 @@ def _default_boost_library_dirs() -> list[Path]:
     ]
 
 
+def _default_boost_include_patterns() -> list[str]:
+    """Return the glob patterns searched for version-suffixed Boost installs."""
+    if platform.system() != "Windows":
+        return []
+    return [
+        str(parent / _WINDOWS_BOOST_ROOT_GLOB)
+        for parent in _windows_boost_root_parents()
+    ]
+
+
+def _find_windows_boost_component_library(
+    lib_dirs: list[Path], component: str
+) -> str:
+    """Find a Boost component library using the MSVC naming scheme.
+
+    Prebuilt Windows binaries carry toolset, architecture and version suffixes
+    (e.g. ``boost_thread-vc143-mt-x64-1_85.lib``), so the base name has to be
+    matched as a prefix. Debug variants (``-gd``) are a last resort.
+    """
+    base = f"boost_{component.lower()}"
+    patterns = (
+        f"{base}.lib",
+        f"{base}-*.lib",
+        f"lib{base}.lib",
+        f"lib{base}-*.lib",
+    )
+    for lib_dir in lib_dirs:
+        matches: list[Path] = []
+        for pattern in patterns:
+            try:
+                matches.extend(
+                    entry for entry in lib_dir.glob(pattern) if entry.is_file()
+                )
+            except OSError:
+                continue
+        if not matches:
+            continue
+        release = [match for match in matches if "-gd" not in match.stem]
+        return str(sorted(release or matches)[0])
+    return ""
+
+
 def _print_boost_not_found_diagnostics(
     *,
     include_search_dirs: list[Path],
+    include_search_patterns: list[str],
     lib_search_candidates: list[Path],
     headers_found: bool,
     missing_components: list[str],
@@ -182,6 +339,8 @@ def _print_boost_not_found_diagnostics(
 
     if not headers_found:
         print("  Headers (boost/version.hpp):", file=sys.stderr)
+        for pattern in include_search_patterns:
+            print(f"    {Path(pattern) / 'boost' / 'version.hpp'}", file=sys.stderr)
         for include_root in include_search_dirs:
             print(f"    {include_root / 'boost' / 'version.hpp'}", file=sys.stderr)
 
@@ -511,6 +670,9 @@ def handle_builtin_find_package(
                     pkg_base = candidate
                     break
         except FileNotFoundError:
+            # pkg-config is commonly absent on Windows; don't report it as a
+            # location that was searched.
+            pkg_config_checked = False
             pkg_base = None
 
         if pkg_base:
@@ -533,6 +695,9 @@ def handle_builtin_find_package(
             boost_libs = libs_result.stdout.strip()
             boost_version = version_result.stdout.strip()
             found = True
+            for entry in shlex.split(boost_cflags):
+                if entry.startswith("-I"):
+                    include_dirs.append(entry[2:])
 
         if not found:
             for include_root in include_search_dirs:
@@ -544,11 +709,6 @@ def handle_builtin_find_package(
                     break
 
         headers_found = found
-
-        if boost_cflags:
-            for entry in shlex.split(boost_cflags):
-                if entry.startswith("-I"):
-                    include_dirs.append(entry[2:])
 
         if found and not boost_version and include_dirs:
             version_header = Path(include_dirs[0]) / "boost/version.hpp"
@@ -599,29 +759,35 @@ def handle_builtin_find_package(
             else:
                 # Fallback: search for the library file directly
                 if platform.system() == "Windows":
-                    lib_names = [
-                        f"boost_{component.lower()}.lib",
-                        f"libboost_{component.lower()}.lib",
-                    ]
-                elif platform.system() == "Darwin":
-                    lib_names = [
-                        f"libboost_{component.lower()}.dylib",
-                        f"libboost_{component.lower()}.a",
-                    ]
+                    lib_path = _find_windows_boost_component_library(
+                        lib_search_dirs, component
+                    )
+                    if lib_path:
+                        component_found = True
+                        component_cflags = boost_cflags
+                        # MSVC-style names carry toolset/arch/version suffixes,
+                        # so a -lboost_<component> flag would not resolve.
+                        component_link_flags = lib_path
                 else:
-                    lib_names = [
-                        f"libboost_{component.lower()}.so",
-                        f"libboost_{component.lower()}.a",
-                    ]
-                for lib_dir in lib_search_dirs:
-                    for lib_name in lib_names:
-                        if (lib_dir / lib_name).exists():
-                            component_found = True
-                            component_cflags = boost_cflags
-                            component_link_flags = f"-lboost_{component.lower()}"
+                    if platform.system() == "Darwin":
+                        lib_names = [
+                            f"libboost_{component.lower()}.dylib",
+                            f"libboost_{component.lower()}.a",
+                        ]
+                    else:
+                        lib_names = [
+                            f"libboost_{component.lower()}.so",
+                            f"libboost_{component.lower()}.a",
+                        ]
+                    for lib_dir in lib_search_dirs:
+                        for lib_name in lib_names:
+                            if (lib_dir / lib_name).exists():
+                                component_found = True
+                                component_cflags = boost_cflags
+                                component_link_flags = f"-lboost_{component.lower()}"
+                                break
+                        if component_found:
                             break
-                    if component_found:
-                        break
 
                 if not component_found and include_dirs:
                     # Header-only component (e.g. Boost.System since 1.69)
@@ -684,6 +850,7 @@ def handle_builtin_find_package(
             ctx.print_error("could not find package: Boost", cmd.line)
             _print_boost_not_found_diagnostics(
                 include_search_dirs=include_search_dirs,
+                include_search_patterns=_default_boost_include_patterns(),
                 lib_search_candidates=lib_search_candidates,
                 headers_found=headers_found,
                 missing_components=missing_required_components,
@@ -698,6 +865,7 @@ def handle_builtin_find_package(
                 print(f"{colored(status_marker(False), 'red')} {package_name}")
                 _print_boost_not_found_diagnostics(
                     include_search_dirs=include_search_dirs,
+                    include_search_patterns=_default_boost_include_patterns(),
                     lib_search_candidates=lib_search_candidates,
                     headers_found=headers_found,
                     missing_components=missing_required_components,

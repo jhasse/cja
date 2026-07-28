@@ -490,6 +490,9 @@ def test_find_package_boost_required_component_missing(
         return subprocess.CompletedProcess(cmd, 1)
 
     monkeypatch.setattr("cja.generator.subprocess.run", fake_run)
+    # Keep a Boost install that happens to be present on this machine out of
+    # the search, so the component really is missing.
+    monkeypatch.setattr("cja.find_package._default_boost_library_dirs", lambda: [])
 
     original_exists = Path.exists
 
@@ -582,7 +585,11 @@ def test_find_package_boost_component_library_fallback(
     assert ctx.variables["Boost_FOUND"] == "TRUE"
     assert ctx.variables["Boost_thread_FOUND"] == "TRUE"
     assert "Boost::thread" in ctx.imported_targets
-    assert ctx.imported_targets["Boost::thread"].libs == "-lboost_thread"
+    if platform.system() == "Windows":
+        # MSVC-style libraries are linked by path, not with a -l flag.
+        assert ctx.imported_targets["Boost::thread"].libs == str(fake_lib)
+    else:
+        assert ctx.imported_targets["Boost::thread"].libs == "-lboost_thread"
 
 
 def test_find_package_boost_header_only_component(
@@ -608,6 +615,9 @@ def test_find_package_boost_header_only_component(
         return subprocess.CompletedProcess(cmd, 1)
 
     monkeypatch.setattr("cja.generator.subprocess.run", fake_run)
+    # Keep a Boost install that happens to be present on this machine out of
+    # the search, so the header-only path is the only one available.
+    monkeypatch.setattr("cja.find_package._default_boost_library_dirs", lambda: [])
 
     # No library file exists for this component
     original_exists = Path.exists
@@ -673,6 +683,25 @@ def test_find_package_boost_targets_registered_without_components(
 def _pkg_config_misses_boost(cmd: list[str], **kwargs):  # type: ignore[no-untyped-def]
     """Fake subprocess.run that reports Boost is unavailable via pkg-config."""
     return subprocess.CompletedProcess(cmd, 1)
+
+
+def _clear_boost_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Remove environment hints so only the default search paths are used."""
+    for var in (
+        "BOOST_ROOT",
+        "BOOSTROOT",
+        "Boost_ROOT",
+        "BOOST_INCLUDEDIR",
+        "Boost_INCLUDEDIR",
+        "BOOST_INCLUDE_DIR",
+        "Boost_INCLUDE_DIR",
+        "BOOST_LIBRARYDIR",
+        "Boost_LIBRARYDIR",
+        "BOOST_LIBRARY_DIR",
+        "Boost_LIBRARY_DIR",
+        "CMAKE_PREFIX_PATH",
+    ):
+        monkeypatch.delenv(var, raising=False)
 
 
 def test_find_package_boost_found_via_boost_root(
@@ -764,6 +793,131 @@ def test_find_package_boost_not_found_prints_search_paths(
     assert "Boost not found. Checked the following locations:" in captured.err
     assert "Headers (boost/version.hpp):" in captured.err
     assert "boost\\version.hpp" in captured.err or "boost/version.hpp" in captured.err
+
+
+def test_boost_default_include_dirs_on_windows(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """On Windows the defaults must be the installer prefixes, not unix paths."""
+    from cja import find_package as find_package_module
+
+    local = tmp_path / "local"
+    (local / "boost_1_84_0").mkdir(parents=True)
+    (local / "boost_1_85_0").mkdir(parents=True)
+
+    monkeypatch.setattr("cja.find_package.platform.system", lambda: "Windows")
+    monkeypatch.setattr(
+        "cja.find_package._windows_boost_root_parents",
+        lambda: [local],
+    )
+
+    dirs = find_package_module._default_boost_include_dirs()
+
+    assert Path("/usr/include") not in dirs
+    assert Path("/usr/local/include") not in dirs
+    assert Path("/opt/homebrew/include") not in dirs
+    # The installers put the headers directly into the versioned prefix, and
+    # the newest install must win.
+    assert local / "boost_1_85_0" in dirs
+    assert dirs.index(local / "boost_1_85_0") < dirs.index(local / "boost_1_84_0")
+
+
+def test_boost_default_library_dirs_on_windows(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Windows library defaults must cover the toolset-specific directories."""
+    from cja import find_package as find_package_module
+
+    local = tmp_path / "local"
+    root = local / "boost_1_85_0"
+    (root / "lib64-msvc-14.3").mkdir(parents=True)
+    (root / "lib32-msvc-14.3").mkdir(parents=True)
+
+    monkeypatch.setattr("cja.find_package.platform.system", lambda: "Windows")
+    monkeypatch.setattr(
+        "cja.find_package._windows_boost_root_parents",
+        lambda: [local],
+    )
+
+    dirs = find_package_module._default_boost_library_dirs()
+
+    assert Path("/usr/lib") not in dirs
+    assert dirs.index(root / "lib64-msvc-14.3") < dirs.index(root / "lib32-msvc-14.3")
+    assert root / "lib" in dirs
+
+
+def test_find_package_boost_windows_installer_layout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """find_package(Boost) must find the layout produced by the Windows installer:
+    headers in the prefix itself and MSVC-suffixed libraries in lib64-msvc-*."""
+    root = tmp_path / "boost_1_85_0"
+    (root / "boost").mkdir(parents=True)
+    (root / "boost" / "version.hpp").write_text(
+        '#define BOOST_LIB_VERSION "1_85"\n',
+        encoding="utf-8",
+    )
+    lib_dir = root / "lib64-msvc-14.3"
+    lib_dir.mkdir()
+    release_lib = lib_dir / "boost_thread-vc143-mt-x64-1_85.lib"
+    release_lib.write_text("")
+    (lib_dir / "boost_thread-vc143-mt-gd-x64-1_85.lib").write_text("")
+
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    monkeypatch.setattr("cja.find_package.subprocess.run", _pkg_config_misses_boost)
+    monkeypatch.setattr("cja.find_package.platform.system", lambda: "Windows")
+    monkeypatch.setattr(
+        "cja.find_package._windows_boost_root_parents",
+        lambda: [tmp_path],
+    )
+    monkeypatch.setattr("cja.find_package._WINDOWS_BOOST_FIXED_ROOTS", ())
+    _clear_boost_env(monkeypatch)
+
+    commands = [
+        Command(
+            name="find_package",
+            args=["Boost", "REQUIRED", "COMPONENTS", "thread"],
+            line=1,
+        )
+    ]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["Boost_FOUND"] == "TRUE"
+    assert ctx.variables["Boost_INCLUDE_DIR"] == str(root)
+    assert ctx.variables["Boost_VERSION"] == "1.85"
+    # The debug variant must not be preferred over the release one.
+    assert ctx.imported_targets["Boost::thread"].libs == str(release_lib)
+
+
+def test_find_package_boost_not_found_lists_windows_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """The failure diagnostics must show Windows paths, including the installer
+    glob, instead of unix paths that can never exist on Windows."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    monkeypatch.setattr("cja.find_package.subprocess.run", _pkg_config_misses_boost)
+    monkeypatch.setattr("cja.find_package.platform.system", lambda: "Windows")
+    monkeypatch.setattr(
+        "cja.find_package._windows_boost_root_parents",
+        lambda: [tmp_path / "local"],
+    )
+    monkeypatch.setattr("cja.find_package._WINDOWS_BOOST_FIXED_ROOTS", ())
+    _clear_boost_env(monkeypatch)
+
+    commands = [Command(name="find_package", args=["Boost"], line=1)]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["Boost_FOUND"] == "FALSE"
+    captured = capsys.readouterr()
+    assert str(tmp_path / "local" / "boost_*") in captured.err
+    assert "/usr/include" not in captured.err
+    assert "usr\\include" not in captured.err
+    assert "homebrew" not in captured.err
 
 
 def test_find_package_boost_found_via_boost_include_dir_variable(
