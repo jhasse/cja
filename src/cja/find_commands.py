@@ -348,9 +348,7 @@ def handle_find_library(ctx: BuildContext, cmd: Command, args: list[str]) -> Non
                 break
 
         lib_filenames: list[str] = []
-        if name.startswith("lib") and (
-            name.endswith(".a") or name.endswith(".so") or name.endswith(".dylib")
-        ):
+        if name.startswith("lib") and name.endswith((".a", ".so", ".dylib")):
             lib_filenames.append(name)
         else:
             for ext in extensions:

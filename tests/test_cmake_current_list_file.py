@@ -1,8 +1,8 @@
 """Tests for CMAKE_CURRENT_LIST_FILE variable."""
 
-import pytest
 from pathlib import Path
 
+import pytest
 import termcolor
 
 

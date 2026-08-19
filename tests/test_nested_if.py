@@ -1,8 +1,9 @@
 """Test nested parentheses in if() conditions."""
 
 from pathlib import Path
-from cja.parser import parse
+
 from cja.generator import configure
+from cja.parser import parse
 
 
 def test_nested_parentheses_parsing() -> None:

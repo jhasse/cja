@@ -11,15 +11,15 @@ import sys
 from pathlib import Path, PurePath
 from typing import cast
 
-from .utils import is_truthy, make_relative, strip_generator_expressions, to_posix_path
+from termcolor import colored
+
 from .build_context import (
     BuildContext,
 )
-from termcolor import colored
-
+from .configurator import process_commands
 from .ninja_syntax import Writer
 from .parser import Command
-from .configurator import process_commands
+from .utils import is_truthy, make_relative, strip_generator_expressions, to_posix_path
 
 
 def _quote_ninja_cmd_part(part: str) -> str:
@@ -52,7 +52,7 @@ def _infer_compiler_id(compiler: str) -> str:
 
     if base in ("clang", "clang++", "clang-cl") or "clang" in base:
         return "Clang"
-    if base in ("gcc", "g++") or base.startswith("gcc-") or base.startswith("g++-"):
+    if base in ("gcc", "g++") or base.startswith(("gcc-", "g++-")):
         return "GNU"
     if base in ("cl", "cl.exe"):
         return "MSVC"
@@ -240,7 +240,7 @@ def _rc_manifest_deps(ctx: BuildContext, rc_path: str) -> list[str]:
     try:
         content = abs_path.read_text(encoding="utf-8", errors="replace")
         # Match RT_MANIFEST "filename" or RT_MANIFEST 'filename'
-        for match in re.finditer(r"RT_MANIFEST\s+[\"']([^\"']+)[\"']", content, re.I):
+        for match in re.finditer(r"RT_MANIFEST\s+[\"']([^\"']+)[\"']", content, re.IGNORECASE):
             manifest_ref = match.group(1)
             rc_dir = Path(rc_path).parent
             if rc_dir and rc_dir != Path("."):
@@ -1663,8 +1663,7 @@ def generate_ninja(
                 else:
                     # Generic library name or path
                     if (
-                        lib_name.startswith("-")
-                        or lib_name.startswith("$")
+                        lib_name.startswith(("-", "$"))
                         or "/" in lib_name
                         or lib_name.endswith(
                             (".a", ".so", ".dylib", ".lib", ".dll", ".o", ".obj")

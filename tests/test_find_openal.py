@@ -14,8 +14,9 @@ def has_openal() -> bool:
     try:
         for candidate in ("openal", "openal-soft"):
             result = subprocess.run(
-                ["pkg-config", "--exists", candidate], capture_output=True
-            )
+                ["pkg-config", "--exists", candidate], capture_output=True,
+          check=False,
+      )
             if result.returncode == 0:
                 return True
     except FileNotFoundError:

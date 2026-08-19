@@ -1,7 +1,7 @@
 """Tests for check_type_size command."""
 
-from pathlib import Path
 import ctypes
+from pathlib import Path
 
 from cja.build_context import BuildContext
 from cja.configurator import process_commands

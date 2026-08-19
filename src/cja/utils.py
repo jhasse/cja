@@ -1,7 +1,6 @@
-from pathlib import Path
 import re
 import sys
-
+from pathlib import Path
 
 _DRIVE_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
 _UNC_PATH_RE = re.compile(r"^[\\/]{2}[^\\/]+[\\/][^\\/]+")
@@ -106,7 +105,7 @@ def make_relative(path_str: str, root: Path) -> str:
     try:
         path = Path(path_str)
         path_abs = path.resolve() if path.is_absolute() else path
-        root_abs = root.resolve() if root.is_absolute() else root.resolve()
+        root_abs = root.resolve()
         if path_abs.is_absolute() and path_abs.is_relative_to(root_abs):
             return to_posix_path(path_abs.relative_to(root_abs))
     except ValueError:

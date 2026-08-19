@@ -1,13 +1,13 @@
 """Built-in find_package() handlers."""
 
 import os
-from pathlib import Path
 import platform
 import re
-import shutil
 import shlex
+import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 from termcolor import colored
 
@@ -317,7 +317,7 @@ def _find_windows_boost_component_library(
         if not matches:
             continue
         release = [match for match in matches if "-gd" not in match.stem]
-        return str(sorted(release or matches)[0])
+        return str(min(release or matches))
     return ""
 
 
@@ -368,6 +368,7 @@ def _pkg_config_info(pkg_name: str) -> tuple[bool, str, str, str]:
         result = subprocess.run(
             ["pkg-config", "--exists", pkg_name],
             capture_output=True,
+            check=False,
         )
     except FileNotFoundError:
         return False, "", "", ""
@@ -378,16 +379,19 @@ def _pkg_config_info(pkg_name: str) -> tuple[bool, str, str, str]:
         ["pkg-config", "--cflags", pkg_name],
         capture_output=True,
         text=True,
+        check=False,
     ).stdout.strip()
     libs = subprocess.run(
         ["pkg-config", "--libs", pkg_name],
         capture_output=True,
         text=True,
+        check=False,
     ).stdout.strip()
     version = subprocess.run(
         ["pkg-config", "--modversion", pkg_name],
         capture_output=True,
         text=True,
+        check=False,
     ).stdout.strip()
     return True, cflags, libs, version
 
@@ -494,6 +498,7 @@ def handle_builtin_find_package(
             result = subprocess.run(
                 ["pkg-config", "--exists", "fontconfig"],
                 capture_output=True,
+                check=False,
             )
             if result.returncode == 0:
                 found = True
@@ -501,16 +506,19 @@ def handle_builtin_find_package(
                     ["pkg-config", "--cflags", "fontconfig"],
                     capture_output=True,
                     text=True,
+                    check=False,
                 )
                 libs_result = subprocess.run(
                     ["pkg-config", "--libs", "fontconfig"],
                     capture_output=True,
                     text=True,
+                    check=False,
                 )
                 version_result = subprocess.run(
                     ["pkg-config", "--modversion", "fontconfig"],
                     capture_output=True,
                     text=True,
+                    check=False,
                 )
 
                 fc_cflags = cflags_result.stdout.strip()
@@ -560,6 +568,7 @@ def handle_builtin_find_package(
                 result = subprocess.run(
                     ["pkg-config", "--exists", candidate],
                     capture_output=True,
+                    check=False,
                 )
                 if result.returncode == 0:
                     found = True
@@ -573,16 +582,19 @@ def handle_builtin_find_package(
                 ["pkg-config", "--cflags", pkg_name],
                 capture_output=True,
                 text=True,
+                check=False,
             )
             libs_result = subprocess.run(
                 ["pkg-config", "--libs", pkg_name],
                 capture_output=True,
                 text=True,
+                check=False,
             )
             version_result = subprocess.run(
                 ["pkg-config", "--modversion", pkg_name],
                 capture_output=True,
                 text=True,
+                check=False,
             )
 
             webp_cflags = cflags_result.stdout.strip()
@@ -665,6 +677,7 @@ def handle_builtin_find_package(
                 result = subprocess.run(
                     ["pkg-config", "--exists", candidate],
                     capture_output=True,
+                    check=False,
                 )
                 if result.returncode == 0:
                     pkg_base = candidate
@@ -680,16 +693,19 @@ def handle_builtin_find_package(
                 ["pkg-config", "--cflags", pkg_base],
                 capture_output=True,
                 text=True,
+                check=False,
             )
             libs_result = subprocess.run(
                 ["pkg-config", "--libs", pkg_base],
                 capture_output=True,
                 text=True,
+                check=False,
             )
             version_result = subprocess.run(
                 ["pkg-config", "--modversion", pkg_base],
                 capture_output=True,
                 text=True,
+                check=False,
             )
             boost_cflags = cflags_result.stdout.strip()
             boost_libs = libs_result.stdout.strip()
@@ -738,6 +754,7 @@ def handle_builtin_find_package(
                 result = subprocess.run(
                     ["pkg-config", "--exists", pkg_component],
                     capture_output=True,
+                    check=False,
                 )
                 component_found = result.returncode == 0
             except FileNotFoundError:
@@ -748,11 +765,13 @@ def handle_builtin_find_package(
                     ["pkg-config", "--cflags", pkg_component],
                     capture_output=True,
                     text=True,
+                    check=False,
                 )
                 libs_result = subprocess.run(
                     ["pkg-config", "--libs", pkg_component],
                     capture_output=True,
                     text=True,
+                    check=False,
                 )
                 component_cflags = cflags_result.stdout.strip()
                 component_link_flags = libs_result.stdout.strip()
@@ -887,6 +906,7 @@ def handle_builtin_find_package(
                 result = subprocess.run(
                     ["pkg-config", "--exists", candidate],
                     capture_output=True,
+                    check=False,
                 )
                 if result.returncode == 0:
                     pkg_name = candidate
@@ -900,16 +920,19 @@ def handle_builtin_find_package(
                 ["pkg-config", "--cflags", pkg_name],
                 capture_output=True,
                 text=True,
+                check=False,
             )
             libs_result = subprocess.run(
                 ["pkg-config", "--libs", pkg_name],
                 capture_output=True,
                 text=True,
+                check=False,
             )
             version_result = subprocess.run(
                 ["pkg-config", "--modversion", pkg_name],
                 capture_output=True,
                 text=True,
+                check=False,
             )
 
             png_cflags = cflags_result.stdout.strip()
@@ -961,6 +984,7 @@ def handle_builtin_find_package(
                 result = subprocess.run(
                     ["pkg-config", "--exists", candidate],
                     capture_output=True,
+                    check=False,
                 )
                 if result.returncode == 0:
                     pkg_name = candidate
@@ -974,16 +998,19 @@ def handle_builtin_find_package(
                 ["pkg-config", "--cflags", pkg_name],
                 capture_output=True,
                 text=True,
+                check=False,
             )
             libs_result = subprocess.run(
                 ["pkg-config", "--libs", pkg_name],
                 capture_output=True,
                 text=True,
+                check=False,
             )
             version_result = subprocess.run(
                 ["pkg-config", "--modversion", pkg_name],
                 capture_output=True,
                 text=True,
+                check=False,
             )
 
             openal_cflags = cflags_result.stdout.strip()
@@ -1062,6 +1089,7 @@ def handle_builtin_find_package(
                 result = subprocess.run(
                     ["pkg-config", "--exists", candidate],
                     capture_output=True,
+                    check=False,
                 )
                 if result.returncode == 0:
                     pkg_name = candidate
@@ -1075,16 +1103,19 @@ def handle_builtin_find_package(
                 ["pkg-config", "--cflags", pkg_name],
                 capture_output=True,
                 text=True,
+                check=False,
             )
             libs_result = subprocess.run(
                 ["pkg-config", "--libs", pkg_name],
                 capture_output=True,
                 text=True,
+                check=False,
             )
             version_result = subprocess.run(
                 ["pkg-config", "--modversion", pkg_name],
                 capture_output=True,
                 text=True,
+                check=False,
             )
 
             freetype_cflags = cflags_result.stdout.strip()
@@ -1168,6 +1199,7 @@ def handle_builtin_find_package(
                 result = subprocess.run(
                     ["pkg-config", "--exists", pkg_name],
                     capture_output=True,
+                    check=False,
                 )
                 component_found = result.returncode == 0
             except FileNotFoundError:
@@ -1179,16 +1211,19 @@ def handle_builtin_find_package(
                     ["pkg-config", "--cflags", pkg_name],
                     capture_output=True,
                     text=True,
+                    check=False,
                 )
                 libs_result = subprocess.run(
                     ["pkg-config", "--libs", pkg_name],
                     capture_output=True,
                     text=True,
+                    check=False,
                 )
                 version_result = subprocess.run(
                     ["pkg-config", "--modversion", pkg_name],
                     capture_output=True,
                     text=True,
+                    check=False,
                 )
 
                 comp_cflags = cflags_result.stdout.strip()
@@ -1234,6 +1269,7 @@ def handle_builtin_find_package(
                     [bison_executable, "--version"],
                     capture_output=True,
                     text=True,
+                    check=False,
                 )
                 version_match = re.search(
                     r"(\d+\.\d+(?:\.\d+)?)", version_result.stdout
@@ -1273,6 +1309,7 @@ def handle_builtin_find_package(
                     [flex_executable, "--version"],
                     capture_output=True,
                     text=True,
+                    check=False,
                 )
                 version_match = re.search(
                     r"(\d+\.\d+(?:\.\d+)?)", version_result.stdout

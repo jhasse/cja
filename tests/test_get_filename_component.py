@@ -1,6 +1,7 @@
 """Tests for get_filename_component command."""
 
 from pathlib import Path
+
 from cja.generator import configure
 
 

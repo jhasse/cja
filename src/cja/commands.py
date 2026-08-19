@@ -1,24 +1,25 @@
-from datetime import datetime, timezone
 import glob as py_glob
 import hashlib
 import os
-from pathlib import Path
 import re
 import shlex
 import shutil
 import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
 from .build_context import (
     BuildContext,
     find_matching_endfunction,
     find_matching_endmacro,
 )
+from .parser import Command
 from .syntax import (
     FunctionDef,
     MacroDef,
     SourceFileProperties,
     evaluate_condition,
 )
-from .parser import Command
 from .targets import Executable, ImportedTarget, Library
 from .utils import (
     UNDEFINED_VAR_SENTINEL,
@@ -399,12 +400,13 @@ def handle_target_include_directories(
                 # Expand variables and resolve relative paths
                 expanded = ctx.expand_variables(arg, strict, cmd.line)
                 expanded = strip_generator_expressions(expanded, ctx.variables)
-                if "$<" in expanded:
-                    if not _is_supported_include_dir_genex(expanded):
-                        ctx.print_warning(
-                            f"generator expressions in target_include_directories are not yet supported: {arg}",
-                            cmd.line,
-                        )
+                if "$<" in expanded and not _is_supported_include_dir_genex(
+                    expanded
+                ):
+                    ctx.print_warning(
+                        f"generator expressions in target_include_directories are not yet supported: {arg}",
+                        cmd.line,
+                    )
                 if not expanded:
                     continue
                 for piece in expanded.split(";"):
@@ -571,9 +573,7 @@ def handle_set_target_properties(
 
             for prop_name, prop_value in properties.items():
                 if imported_target is not None:
-                    if prop_name.startswith("IMPORTED_LOCATION") or prop_name.startswith(
-                        "IMPORTED_IMPLIB"
-                    ):
+                    if prop_name.startswith(("IMPORTED_LOCATION", "IMPORTED_IMPLIB")):
                         current = shlex.split(imported_target.libs) if imported_target.libs else []
                         current.append(prop_value)
                         imported_target.libs = " ".join(dict.fromkeys(current))
@@ -885,8 +885,7 @@ def handle_get_property(
             ctx.variables[var_name] = (
                 "1"
                 if (
-                    prop_name in ctx.global_properties
-                    and ctx.global_properties[prop_name]
+                    ctx.global_properties.get(prop_name)
                 )
                 else "0"
             )
@@ -906,9 +905,7 @@ def handle_get_property(
             elif prop_name == "COMPILE_DEFINITIONS" and lib:
                 value = ";".join(lib.compile_definitions)
 
-            if query_type == "DEFINED":
-                ctx.variables[var_name] = "1" if value else "0"
-            elif query_type == "SET":
+            if query_type == "DEFINED" or query_type == "SET":
                 ctx.variables[var_name] = "1" if value else "0"
             else:
                 ctx.variables[var_name] = value
@@ -932,9 +929,7 @@ def handle_get_property(
                 elif prop_name == "OBJECT_DEPENDS":
                     value = ";".join(file_props.object_depends)
 
-            if query_type == "DEFINED":
-                ctx.variables[var_name] = "1" if value else "0"
-            elif query_type == "SET":
+            if query_type == "DEFINED" or query_type == "SET":
                 ctx.variables[var_name] = "1" if value else "0"
             else:
                 ctx.variables[var_name] = value
@@ -1796,7 +1791,14 @@ def handle_math(
                 ctx.variables[var_name] = hex(int(result))
             else:
                 ctx.variables[var_name] = str(int(result))
-        except Exception as e:
+        except (
+            SyntaxError,
+            TypeError,
+            ValueError,
+            ZeroDivisionError,
+            OverflowError,
+            NameError,
+        ) as e:
             if strict:
                 ctx.print_error(
                     f"math(EXPR) failed to evaluate '{expr}': {e}", cmd.line
@@ -1934,19 +1936,20 @@ def handle_string(
                         for m in re.finditer(cmake_regex_to_python(pattern), full_input)
                     ]
                     ctx.variables[out_var] = ";".join(matches)
-            elif regex_sub == "REPLACE":
+            elif regex_sub == "REPLACE" and len(args) >= 6:
                 # string(REGEX REPLACE <regex> <replace_string> <out_var> <input> [<input>...])
-                if len(args) >= 6:
-                    pattern = args[2]
-                    replace_str = args[3]
-                    out_var = args[4]
-                    inputs = args[5:]
-                    full_input = "".join(inputs)
+                pattern = args[2]
+                replace_str = args[3]
+                out_var = args[4]
+                inputs = args[5:]
+                full_input = "".join(inputs)
 
-                    # CMake uses \1, \2 etc for backreferences, Python uses \1, \2
-                    # but also supports \g<1> which is safer.
-                    # Actually CMake's REGEX REPLACE is a bit different.
-                    ctx.variables[out_var] = re.sub(cmake_regex_to_python(pattern), replace_str, full_input)
+                # CMake uses \1, \2 etc for backreferences, Python uses \1, \2
+                # but also supports \g<1> which is safer.
+                # Actually CMake's REGEX REPLACE is a bit different.
+                ctx.variables[out_var] = re.sub(
+                    cmake_regex_to_python(pattern), replace_str, full_input
+                )
 
     elif subcommand == "SUBSTRING":
         # string(SUBSTRING <string> <begin> <length> <out_var>)
@@ -2219,17 +2222,13 @@ def handle_file(
             assert len(str(ctx.build_dir)) > 1
             # check that build_dir is below cwd:
             assert str(ctx.build_dir).startswith(str(Path.cwd()))
-            if strict:
-                # check that only writing to files below build_dir:
-                if not str(Path(filename).resolve()).startswith(
-                    str(ctx.build_dir.resolve())
-                ):
-                    ctx.print_warning(
-                        "writing to files ({}) outside of build directory ({}) is not allowed".format(
-                            filename, str(ctx.build_dir)
-                        ),
-                        cmd.line,
-                    )
+            if strict and not str(Path(filename).resolve()).startswith(
+                str(ctx.build_dir.resolve())
+            ):
+                ctx.print_warning(
+                    f"writing to files ({filename}) outside of build directory ({ctx.build_dir!s}) is not allowed",
+                    cmd.line,
+                )
             Path(filename).parent.mkdir(parents=True, exist_ok=True)
             with open(filename, mode) as f:
                 f.write(content)

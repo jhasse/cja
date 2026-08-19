@@ -3,8 +3,7 @@
 from pathlib import Path
 
 from cja.generator import BuildContext, process_commands
-from cja.parser import parse
-from cja.parser import parse_file
+from cja.parser import parse, parse_file
 
 
 def test_mixed_quoting() -> None:

@@ -1,6 +1,7 @@
 """Tests for set_target_properties command."""
 
 from pathlib import Path
+
 from cja.generator import configure
 
 

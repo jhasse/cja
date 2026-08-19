@@ -1,6 +1,7 @@
 """Tests for GNUInstallDirs module."""
 
 from pathlib import Path
+
 from cja.generator import configure
 
 

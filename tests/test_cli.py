@@ -1,17 +1,16 @@
 """Tests for CLI argument handling."""
 
 import importlib.metadata
-import subprocess
 import platform
-from pathlib import Path
+import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
 from cja.cli import parse_define
 from cja.generator import _quote_ninja_cmd_part, configure
 from tests.helpers import copy_unignored_tree
-
 
 EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
 EXE_EXT = ".exe" if platform.system() == "Windows" else ""
@@ -40,6 +39,7 @@ def test_cli_version_flag() -> None:
         [sys.executable, "-m", "cja", "--version"],
         capture_output=True,
         text=True,
+        check=False,
     )
 
     assert result.returncode == 0
@@ -70,6 +70,7 @@ def test_cli_d_flag(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
         cwd=source_dir,
+        check=False,
     )
     assert result.returncode == 0
 
@@ -95,6 +96,7 @@ def test_cli_multiple_d_flags(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
         cwd=source_dir,
+        check=False,
     )
     assert result.returncode == 0
 
@@ -150,6 +152,7 @@ def test_build_subcommand(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
         cwd=source_dir,
+        check=False,
     )
     assert result.returncode == 0
 
@@ -168,6 +171,7 @@ def test_build_subcommand_release(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
         cwd=source_dir,
+        check=False,
     )
     assert result.returncode == 0
 
@@ -192,6 +196,7 @@ def test_build_subcommand_skips_configure_if_ninja_exists(tmp_path: Path) -> Non
         capture_output=True,
         text=True,
         cwd=source_dir,
+        check=False,
     )
     assert result1.returncode == 0
     assert "Configured" in result1.stdout
@@ -202,6 +207,7 @@ def test_build_subcommand_skips_configure_if_ninja_exists(tmp_path: Path) -> Non
         capture_output=True,
         text=True,
         cwd=source_dir,
+        check=False,
     )
     assert result2.returncode == 0
     assert "Configured" not in result2.stdout
@@ -226,6 +232,7 @@ add_test(NAME mytest COMMAND echo "Hello from test")
         capture_output=True,
         text=True,
         cwd=source_dir,
+        check=False,
     )
     assert result.returncode == 0
     assert "Running mytest" in result.stdout
@@ -242,6 +249,7 @@ def test_cli_make_directory(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
         cwd=tmp_path,
+        check=False,
     )
     assert result.returncode == 0
     assert dir_path.exists()
@@ -258,6 +266,7 @@ def test_unused_d_variable_warning(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
         cwd=source_dir,
+        check=False,
     )
     assert result.returncode == 0
     assert "Manually-specified variables were not used by the project" in result.stderr
@@ -285,6 +294,7 @@ add_executable(used_d main.c)
         capture_output=True,
         text=True,
         cwd=source_dir,
+        check=False,
     )
     assert result.returncode == 0
     assert "Manually-specified variables were not used" not in result.stderr
@@ -300,6 +310,7 @@ def test_unused_d_variable_warning_suppressed_by_quiet(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
         cwd=source_dir,
+        check=False,
     )
     assert result.returncode == 0
     assert result.stderr == ""
@@ -315,6 +326,7 @@ def test_quiet_flag_suppresses_output(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
         cwd=source_dir,
+        check=False,
     )
     assert result.returncode == 0
     assert result.stdout == ""
@@ -327,7 +339,7 @@ def test_quiet_flag_via_api(tmp_path: Path) -> None:
     copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
 
     import io
-    from contextlib import redirect_stdout, redirect_stderr
+    from contextlib import redirect_stderr, redirect_stdout
 
     stdout = io.StringIO()
     stderr = io.StringIO()
@@ -348,6 +360,7 @@ def test_script_mode_basic(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
         cwd=tmp_path,
+        check=False,
     )
     assert result.returncode == 0
     assert "hello-from-cja" in result.stdout
@@ -364,6 +377,7 @@ def test_script_mode_define_variable(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
         cwd=tmp_path,
+        check=False,
     )
     assert result.returncode == 0
     assert "FOO=bar" in result.stdout
@@ -385,6 +399,7 @@ def test_script_mode_argv_and_script_mode_file(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
         cwd=tmp_path,
+        check=False,
     )
     assert result.returncode == 0
     assert "ARGC=5" in result.stdout
@@ -401,6 +416,7 @@ def test_script_mode_missing_script(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
         cwd=tmp_path,
+        check=False,
     )
     assert result.returncode != 0
     assert "-P requires a script" in result.stderr
@@ -426,6 +442,7 @@ def test_regenerate_during_build_via_ninja(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
         cwd=source_dir,
+        check=False,
     )
     assert result.returncode == 0
 
@@ -441,6 +458,7 @@ def test_regenerate_during_build_via_ninja(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
         cwd=source_dir,
+        check=False,
     )
     assert result.returncode == 0, result.stderr
 
@@ -462,5 +480,6 @@ add_executable(myexe main.c)
         capture_output=True,
         text=True,
         cwd=source_dir,
+        check=False,
     )
     assert result.returncode == 42

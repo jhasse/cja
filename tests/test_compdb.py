@@ -1,7 +1,8 @@
 """Test compilation database generation."""
 
-from pathlib import Path
 import json
+from pathlib import Path
+
 from cja.generator import configure
 
 

@@ -135,8 +135,8 @@ def test_target_compile_options_multiline_genex(tmp_path: Path) -> None:
             args=[
                 "mylib",
                 "PRIVATE",
-                "$<$<CXX_COMPILER_ID:GNU>:\n"
-                "  -Wall -Wextra -Wno-unused-parameter -Wno-unused-variable>",
+                ("$<$<CXX_COMPILER_ID:GNU>:\n"
+                "  -Wall -Wextra -Wno-unused-parameter -Wno-unused-variable>"),
             ],
             line=2,
         ),

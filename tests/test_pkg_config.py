@@ -1,9 +1,10 @@
 """Tests for PkgConfig support."""
 
-from pathlib import Path
 import shutil
 import subprocess
 import sys
+from pathlib import Path
+
 import pytest
 
 from cja.generator import BuildContext, process_commands
@@ -75,6 +76,7 @@ def has_pkg_config_openssl() -> bool:
         result = subprocess.run(
             ["pkg-config", "--exists", "openssl"],
             capture_output=True,
+            check=False,
         )
         return result.returncode == 0
     except FileNotFoundError:
@@ -109,6 +111,7 @@ def has_pkg_config_vorbisfile() -> bool:
         result = subprocess.run(
             ["pkg-config", "--exists", "vorbisfile"],
             capture_output=True,
+            check=False,
         )
         return result.returncode == 0
     except FileNotFoundError:
@@ -226,6 +229,7 @@ def _has_pkg_config_packages(*packages: str) -> bool:
         result = subprocess.run(
             ["pkg-config", "--exists"] + list(packages),
             capture_output=True,
+            check=False,
         )
         return result.returncode == 0
     except FileNotFoundError:

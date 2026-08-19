@@ -1,11 +1,16 @@
-from dataclasses import dataclass, field
 import os
-from pathlib import Path
 import re
-from typing import Callable
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from pathlib import Path
 
 from .parser import Command
-from .utils import UNDEFINED_VAR_SENTINEL, cmake_regex_to_python, is_constant_truthy, is_truthy
+from .utils import (
+    UNDEFINED_VAR_SENTINEL,
+    cmake_regex_to_python,
+    is_constant_truthy,
+    is_truthy,
+)
 
 
 @dataclass
@@ -207,7 +212,7 @@ def evaluate_condition(
         # Single value
         if left in variables:
             return is_truthy(resolve(left))
-        return is_constant_truthy(left)  # noqa: F821
+        return is_constant_truthy(left)
 
     return parse_or()
 

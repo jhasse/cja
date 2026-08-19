@@ -23,8 +23,7 @@ def tokenize(content: str) -> list[tuple[str, int, bool]]:
     """
     # UTF-8 BOM appears in some upstream CMakeLists.txt files (e.g. Box2D).
     # Treat it as a file marker, not part of the first command token.
-    if content.startswith("\ufeff"):
-        content = content[1:]
+    content = content.removeprefix("\ufeff")
 
     tokens: list[tuple[str, int, bool]] = []
     i = 0
@@ -202,7 +201,7 @@ def parse(content: str, filename: str = "CMakeLists.txt") -> list[Command]:
         is_bracket: list[bool] = []
         depth = 1
         while i < len(tokens):
-            token, token_line, token_bracket = tokens[i]
+            token, _token_line, token_bracket = tokens[i]
             if not token_bracket and token == "(":
                 depth += 1
             elif not token_bracket and token == ")":

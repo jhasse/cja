@@ -1,7 +1,9 @@
-from cja.generator import BuildContext, process_commands, generate_ninja
-from cja.parser import Command
-import pytest
 import platform
+
+import pytest
+
+from cja.generator import BuildContext, generate_ninja, process_commands
+from cja.parser import Command
 
 EXE_EXT = ".exe" if platform.system() == "Windows" else ""
 LIB_EXT = ".lib" if platform.system() == "Windows" else ".a"

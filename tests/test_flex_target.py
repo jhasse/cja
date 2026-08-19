@@ -143,6 +143,7 @@ def test_flex_target_end_to_end(tmp_path: Path) -> None:
         cwd=source_dir,
         capture_output=True,
         text=True,
+        check=False,
     )
     assert result.returncode == 0, (
         f"ninja failed: stdout={result.stdout!r} stderr={result.stderr!r}"

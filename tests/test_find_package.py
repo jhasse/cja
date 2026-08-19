@@ -18,6 +18,7 @@ def has_pkg_config_gtest() -> bool:
         result = subprocess.run(
             ["pkg-config", "--exists", "gtest"],
             capture_output=True,
+            check=False,
         )
         return result.returncode == 0
     except FileNotFoundError:
@@ -31,6 +32,7 @@ def has_pkg_config_webp() -> bool:
             result = subprocess.run(
                 ["pkg-config", "--exists", candidate],
                 capture_output=True,
+                check=False,
             )
             if result.returncode == 0:
                 return True
@@ -108,12 +110,8 @@ def test_find_package_no_module_does_not_clear_required_in_module(
     module_dir = tmp_path / "cmake"
     module_dir.mkdir(parents=True)
     (module_dir / "FindLoopPkg.cmake").write_text(
-        "\n".join(
-            [
-                "find_package(LoopPkg QUIET NO_MODULE)",
-                "find_package_handle_standard_args(LoopPkg DEFAULT_MSG LOOPPKG_LIB)",
-            ]
-        )
+        "find_package(LoopPkg QUIET NO_MODULE)\n"
+        "find_package_handle_standard_args(LoopPkg DEFAULT_MSG LOOPPKG_LIB)\n"
     )
 
     ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
@@ -203,18 +201,14 @@ def test_find_package_gtest_alias_imported_targets(
     module_dir.mkdir(parents=True)
     find_gtest = module_dir / "FindGTest.cmake"
     find_gtest.write_text(
-        "\n".join(
-            [
-                "set(GTest_FOUND TRUE)",
-                "set(GTEST_FOUND TRUE)",
-                "add_library(GTest::gtest UNKNOWN IMPORTED)",
-                "add_library(GTest::gtest_main UNKNOWN IMPORTED)",
-                "add_library(GTest::GTest INTERFACE IMPORTED)",
-                "target_link_libraries(GTest::GTest INTERFACE GTest::gtest)",
-                "add_library(GTest::Main INTERFACE IMPORTED)",
-                "target_link_libraries(GTest::Main INTERFACE GTest::gtest_main)",
-            ]
-        )
+        "set(GTest_FOUND TRUE)\n"
+        "set(GTEST_FOUND TRUE)\n"
+        "add_library(GTest::gtest UNKNOWN IMPORTED)\n"
+        "add_library(GTest::gtest_main UNKNOWN IMPORTED)\n"
+        "add_library(GTest::GTest INTERFACE IMPORTED)\n"
+        "target_link_libraries(GTest::GTest INTERFACE GTest::gtest)\n"
+        "add_library(GTest::Main INTERFACE IMPORTED)\n"
+        "target_link_libraries(GTest::Main INTERFACE GTest::gtest_main)\n"
     )
 
     ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
@@ -245,21 +239,17 @@ def test_find_package_gtest_from_module_path(tmp_path: Path) -> None:
     module_dir.mkdir(parents=True)
     find_gtest = module_dir / "FindGTest.cmake"
     find_gtest.write_text(
-        "\n".join(
-            [
-                "set(GTest_FOUND TRUE)",
-                "set(GTEST_FOUND TRUE)",
-                'set(GTEST_INCLUDE_DIR "/usr/include")',
-                'set(GTEST_LIBRARIES "/usr/lib/libgtest.a")',
-                'set(GTEST_MAIN_LIBRARIES "/usr/lib/libgtest_main.a")',
-                "add_library(GTest::gtest UNKNOWN IMPORTED)",
-                "add_library(GTest::gtest_main UNKNOWN IMPORTED)",
-                "add_library(GTest::GTest INTERFACE IMPORTED)",
-                "target_link_libraries(GTest::GTest INTERFACE GTest::gtest)",
-                "add_library(GTest::Main INTERFACE IMPORTED)",
-                "target_link_libraries(GTest::Main INTERFACE GTest::gtest_main)",
-            ]
-        )
+        "set(GTest_FOUND TRUE)\n"
+        "set(GTEST_FOUND TRUE)\n"
+        'set(GTEST_INCLUDE_DIR "/usr/include")\n'
+        'set(GTEST_LIBRARIES "/usr/lib/libgtest.a")\n'
+        'set(GTEST_MAIN_LIBRARIES "/usr/lib/libgtest_main.a")\n'
+        "add_library(GTest::gtest UNKNOWN IMPORTED)\n"
+        "add_library(GTest::gtest_main UNKNOWN IMPORTED)\n"
+        "add_library(GTest::GTest INTERFACE IMPORTED)\n"
+        "target_link_libraries(GTest::GTest INTERFACE GTest::gtest)\n"
+        "add_library(GTest::Main INTERFACE IMPORTED)\n"
+        "target_link_libraries(GTest::Main INTERFACE GTest::gtest_main)\n"
     )
 
     ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
@@ -284,12 +274,8 @@ def test_find_package_gtest_required_failure_from_module(tmp_path: Path) -> None
     module_dir.mkdir(parents=True)
     find_gtest = module_dir / "FindGTest.cmake"
     find_gtest.write_text(
-        "\n".join(
-            [
-                'set(GTEST_LIBRARY "")',
-                "find_package_handle_standard_args(GTest DEFAULT_MSG GTEST_LIBRARY)",
-            ]
-        )
+        'set(GTEST_LIBRARY "")\n'
+        "find_package_handle_standard_args(GTest DEFAULT_MSG GTEST_LIBRARY)\n"
     )
 
     ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
@@ -492,7 +478,7 @@ def test_find_package_boost_required_component_missing(
     monkeypatch.setattr("cja.generator.subprocess.run", fake_run)
     # Keep a Boost install that happens to be present on this machine out of
     # the search, so the component really is missing.
-    monkeypatch.setattr("cja.find_package._default_boost_library_dirs", lambda: [])
+    monkeypatch.setattr("cja.find_package._default_boost_library_dirs", list)
 
     original_exists = Path.exists
 
@@ -617,7 +603,7 @@ def test_find_package_boost_header_only_component(
     monkeypatch.setattr("cja.generator.subprocess.run", fake_run)
     # Keep a Boost install that happens to be present on this machine out of
     # the search, so the header-only path is the only one available.
-    monkeypatch.setattr("cja.find_package._default_boost_library_dirs", lambda: [])
+    monkeypatch.setattr("cja.find_package._default_boost_library_dirs", list)
 
     # No library file exists for this component
     original_exists = Path.exists

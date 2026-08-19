@@ -1,6 +1,5 @@
 """CMake command processor and build context population."""
 
-from pathlib import Path
 import hashlib
 import os
 import shlex
@@ -11,24 +10,30 @@ import tarfile
 import typing
 import urllib.request
 import zipfile
+from contextlib import suppress
+from pathlib import Path
 
+from rich.progress import (
+    BarColumn,
+    DownloadColumn,
+    Progress,
+    TextColumn,
+    TimeRemainingColumn,
+    TransferSpeedColumn,
+)
 from termcolor import colored
 
-from .config_utils import (
-    build_foreach_info,
-    select_if_block,
-    _render_basic_package_version_file,
-    _render_package_init_block,
-)
-from .frame import Frame
 from .build_context import (
     BuildContext,
+    CustomCommand,
+    CustomTarget,
     TrackedDict,
 )
-from .parser import Command
 from .commands import (
     handle_add_executable,
     handle_add_library,
+    handle_cmake_dependent_option,
+    handle_cmake_parse_arguments,
     handle_configure_file,
     handle_file,
     handle_function,
@@ -37,8 +42,6 @@ from .commands import (
     handle_get_filename_component,
     handle_get_property,
     handle_include_directories,
-    handle_cmake_parse_arguments,
-    handle_cmake_dependent_option,
     handle_list,
     handle_macro,
     handle_math,
@@ -48,53 +51,48 @@ from .commands import (
     handle_set_target_properties,
     handle_string,
     handle_target_compile_definitions,
-    handle_target_compile_options,
     handle_target_compile_features,
+    handle_target_compile_options,
     handle_target_include_directories,
     handle_target_link_directories,
     handle_target_link_libraries,
     handle_target_sources,
     handle_unset,
 )
-from .syntax import (
-    FetchContentInfo,
-    SourceFileProperties,
-    Test,
+from .config_utils import (
+    _render_basic_package_version_file,
+    _render_package_init_block,
+    build_foreach_info,
+    select_if_block,
 )
-from .utils import (
-    is_truthy,
-    make_relative,
-    split_unquoted_list_args,
-    status_marker,
-    to_posix_path,
-    UNDEFINED_VAR_SENTINEL,
-)
-from .build_context import (
-    CustomCommand,
-    CustomTarget,
-)
-from rich.progress import (
-    Progress,
-    DownloadColumn,
-    TransferSpeedColumn,
-    BarColumn,
-    TextColumn,
-    TimeRemainingColumn,
-)
-from .targets import ImportedTarget, InstallTarget
-from .find_package import handle_builtin_find_package
 from .find_commands import (
     handle_find_file,
     handle_find_library,
     handle_find_path,
     handle_find_program,
 )
+from .find_package import handle_builtin_find_package
+from .frame import Frame
+from .parser import Command
+from .syntax import (
+    FetchContentInfo,
+    SourceFileProperties,
+    Test,
+)
+from .targets import ImportedTarget, InstallTarget
+from .utils import (
+    UNDEFINED_VAR_SENTINEL,
+    is_truthy,
+    make_relative,
+    split_unquoted_list_args,
+    status_marker,
+    to_posix_path,
+)
 
 
 class ReturnFromFunction(Exception):
     """Exception raised to exit early from a function."""
 
-    pass
 
 
 def _check_source_compiles(
@@ -181,8 +179,8 @@ def _check_source_compiles(
         cmd.extend(required_libraries)
 
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True)
-    except Exception:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    except OSError:
         shutil.rmtree(tmpdir, ignore_errors=True)
         return False
 
@@ -1206,6 +1204,7 @@ def process_commands(
                         [ctx.c_compiler, "-flto", "-o", temp_out, temp_src],
                         capture_output=True,
                         text=True,
+                        check=False,
                     )
                     if result.returncode == 0:
                         supported = True
@@ -1213,7 +1212,7 @@ def process_commands(
                     else:
                         error_msg = result.stderr
                     Path(temp_src).unlink(missing_ok=True)
-                except Exception as e:
+                except OSError as e:
                     error_msg = str(e)
 
                 if result_var:
@@ -1273,7 +1272,7 @@ def process_commands(
 
                     # Check if the C++ compiler accepts the flag
                     supported = False
-                    try:
+                    with suppress(OSError):
                         import tempfile
 
                         with tempfile.NamedTemporaryFile(
@@ -1286,6 +1285,7 @@ def process_commands(
                             [ctx.cxx_compiler, flag, "-c", "-o", temp_out, temp_src],
                             capture_output=True,
                             text=True,
+                            check=False,
                         )
                         # Check return code and that there are no warnings about unknown flags
                         if result.returncode == 0:
@@ -1298,9 +1298,6 @@ def process_commands(
                                 supported = True
                         Path(temp_out).unlink(missing_ok=True)
                         Path(temp_src).unlink(missing_ok=True)
-                    except Exception:
-                        pass
-
                     ctx.variables[result_var] = "1" if supported else ""
 
             case "cmake_push_check_state":
@@ -1345,7 +1342,7 @@ def process_commands(
 
                     # Check if the C compiler accepts the flag
                     supported = False
-                    try:
+                    with suppress(OSError):
                         import tempfile
 
                         with tempfile.NamedTemporaryFile(
@@ -1358,6 +1355,7 @@ def process_commands(
                             [ctx.c_compiler, flag, "-c", "-o", temp_out, temp_src],
                             capture_output=True,
                             text=True,
+                            check=False,
                         )
                         # Check return code and that there are no warnings about unknown flags
                         if result.returncode == 0:
@@ -1369,9 +1367,6 @@ def process_commands(
                                 supported = True
                         Path(temp_out).unlink(missing_ok=True)
                         Path(temp_src).unlink(missing_ok=True)
-                    except Exception:
-                        pass
-
                     ctx.variables[result_var] = "1" if supported else ""
 
             case "check_cxx_symbol_exists":
@@ -1388,7 +1383,7 @@ def process_commands(
 
                     # Check if the symbol exists by compiling a test program
                     found = False
-                    try:
+                    with suppress(OSError):
                         import tempfile
 
                         # Generate includes
@@ -1410,14 +1405,12 @@ int main() {{
                             [ctx.cxx_compiler, "-o", temp_out, temp_src],
                             capture_output=True,
                             text=True,
+                            check=False,
                         )
                         if result.returncode == 0:
                             found = True
                         Path(temp_out).unlink(missing_ok=True)
                         Path(temp_src).unlink(missing_ok=True)
-                    except Exception:
-                        pass
-
                     ctx.variables[variable] = "1" if found else ""
 
             case "try_compile":
@@ -1479,6 +1472,7 @@ int main() {{
                             [compiler, "-c", str(src_path), "-o", str(obj_path)],
                             capture_output=True,
                             text=True,
+                            check=False,
                         )
                         compile_output += result.stdout
                         compile_output += result.stderr
@@ -1581,7 +1575,7 @@ int main(void) {{
                     )
 
                     found = False
-                    try:
+                    with suppress(OSError):
                         import tempfile
 
                         includes = "\n".join(f"#include <{f}>" for f in files)
@@ -1601,14 +1595,12 @@ int main() {{
                             [ctx.c_compiler, "-o", temp_out, temp_src],
                             capture_output=True,
                             text=True,
+                            check=False,
                         )
                         if result.returncode == 0:
                             found = True
                         Path(temp_out).unlink(missing_ok=True)
                         Path(temp_src).unlink(missing_ok=True)
-                    except Exception:
-                        pass
-
                     ctx.variables[variable] = "1" if found else ""
                     if not check_quiet:
                         color = "green" if found else "red"
@@ -1642,7 +1634,7 @@ int main() {{
                     suffix = ".cpp" if language == "CXX" else ".c"
 
                     found = False
-                    try:
+                    with suppress(OSError):
                         import tempfile
 
                         includes = "\n".join(f"#include <{f}>" for f in files)
@@ -1657,14 +1649,12 @@ int main() {{
                             [compiler, "-o", temp_out, temp_src],
                             capture_output=True,
                             text=True,
+                            check=False,
                         )
                         if result.returncode == 0:
                             found = True
                         Path(temp_out).unlink(missing_ok=True)
                         Path(temp_src).unlink(missing_ok=True)
-                    except Exception:
-                        pass
-
                     ctx.variables[variable] = "1" if found else ""
 
             case "add_library":
@@ -1970,9 +1960,7 @@ int main() {{
                     if not expanded:
                         continue
                     definition = (
-                        expanded[2:]
-                        if expanded.startswith("-D")
-                        else expanded
+                        expanded.removeprefix("-D")
                     )
                     ctx.compile_definitions.append(definition)
                     try:
@@ -2794,11 +2782,13 @@ int main() {{
                         return str(p)
                     return str((ctx.current_source_dir / p).resolve())
 
-                def _bison_output_absolute(path_str: str) -> str:
+                def _bison_output_absolute(
+                    path_str: str, binary_dir: Path = bison_current_binary_dir
+                ) -> str:
                     p = Path(path_str)
                     if p.is_absolute():
                         return str(p)
-                    return str((bison_current_binary_dir / p).resolve())
+                    return str((binary_dir / p).resolve())
 
                 def _bison_output_cc(abs_path: str) -> str:
                     """Path for custom_command.outputs: relative to build_dir when
@@ -2932,6 +2922,7 @@ int main() {{
                                 result = subprocess.run(
                                     ["pkg-config", "--exists", exists_arg],
                                     capture_output=True,
+                                    check=False,
                                 )
                                 if result.returncode != 0:
                                     found_all = False
@@ -2941,6 +2932,7 @@ int main() {{
                                     ["pkg-config", "--cflags", mod_name],
                                     capture_output=True,
                                     text=True,
+                                    check=False,
                                 )
                                 cflags_out = cflags_res.stdout.strip()
                                 all_cflags.append(cflags_out)
@@ -2952,6 +2944,7 @@ int main() {{
                                     ["pkg-config", "--libs", mod_name],
                                     capture_output=True,
                                     text=True,
+                                    check=False,
                                 )
                                 libs_out = libs_res.stdout.strip()
                                 all_libs.append(libs_out)
@@ -2975,6 +2968,7 @@ int main() {{
                                         ],
                                         capture_output=True,
                                         text=True,
+                                        check=False,
                                     )
                                     if var_res.returncode == 0:
                                         val = var_res.stdout.strip()
@@ -3072,7 +3066,7 @@ int main() {{
 
             case "enable_testing":
                 assert len(args) == 0
-                pass  # stub
+                # stub
 
             case "mark_as_advanced":
                 pass  # not needed because we don't have a GUI (yet?)
@@ -3207,6 +3201,7 @@ int main() {{
                                 stderr=stderr_setting,
                                 text=True,
                                 cwd=working_directory,
+                                check=False,
                             )
                         except (FileNotFoundError, OSError):
                             # FileNotFoundError covers the usual missing-
@@ -3235,9 +3230,7 @@ int main() {{
                         if command_error_is_fatal:
                             fatal_kind = command_error_is_fatal.upper()
                             fatal_now = False
-                            if fatal_kind == "ANY" and result.returncode != 0:
-                                fatal_now = True
-                            elif (
+                            if fatal_kind == "ANY" and result.returncode != 0 or (
                                 fatal_kind == "LAST"
                                 and is_last
                                 and result.returncode != 0
@@ -3410,6 +3403,8 @@ int main() {{
                         saved_argn: str = saved_argn,
                         saved_argv_vars: dict[str, str] = saved_argv_vars,
                         saved_params: dict[str, str] = saved_params,
+                        n_args: int = len(args),
+                        macro_params: tuple[str, ...] = tuple(macro_def.params),
                     ) -> None:
                         if saved_argc:
                             ctx.variables["ARGC"] = saved_argc
@@ -3426,14 +3421,14 @@ int main() {{
                         else:
                             ctx.variables.pop("ARGN", None)
 
-                        for idx in range(len(args)):
+                        for idx in range(n_args):
                             key = f"ARGV{idx}"
                             if key in saved_argv_vars:
                                 ctx.variables[key] = saved_argv_vars[key]
                             else:
                                 ctx.variables.pop(key, None)
 
-                        for param in macro_def.params:
+                        for param in macro_params:
                             if param in saved_params:
                                 ctx.variables[param] = saved_params[param]
                             else:

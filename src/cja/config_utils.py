@@ -1,10 +1,11 @@
 import re
-from .parser import Command
+
 from .build_context import (
     BuildContext,
     find_matching_endforeach,
     find_matching_endif,
 )
+from .parser import Command
 from .syntax import evaluate_condition, find_else_or_elseif
 
 

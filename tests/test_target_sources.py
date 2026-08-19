@@ -143,14 +143,9 @@ def test_non_source_entries_not_compiled(tmp_path: Path) -> None:
     (source_dir / "lib.cpp").write_text("int f() { return 1; }\n")
     (source_dir / "README.rst").write_text("doc\n")
     (source_dir / "CMakeLists.txt").write_text(
-        "\n".join(
-            [
-                "cmake_minimum_required(VERSION 3.15)",
-                "project(non_source LANGUAGES CXX)",
-                "add_library(mylib STATIC lib.cpp README.rst docs)",
-            ]
-        )
-        + "\n"
+        "cmake_minimum_required(VERSION 3.15)\n"
+        "project(non_source LANGUAGES CXX)\n"
+        "add_library(mylib STATIC lib.cpp README.rst docs)\n"
     )
 
     from cja.generator import configure
@@ -185,15 +180,10 @@ def test_duplicate_target_source_generates_single_object_rule(tmp_path: Path) ->
     source_dir.mkdir()
     (source_dir / "main.cpp").write_text("int x() { return 0; }\n")
     (source_dir / "CMakeLists.txt").write_text(
-        "\n".join(
-            [
-                "cmake_minimum_required(VERSION 3.15)",
-                "project(dup_source LANGUAGES CXX)",
-                "add_library(mylib STATIC main.cpp)",
-                "target_sources(mylib PRIVATE main.cpp)",
-            ]
-        )
-        + "\n"
+        "cmake_minimum_required(VERSION 3.15)\n"
+        "project(dup_source LANGUAGES CXX)\n"
+        "add_library(mylib STATIC main.cpp)\n"
+        "target_sources(mylib PRIVATE main.cpp)\n"
     )
 
     from cja.generator import configure

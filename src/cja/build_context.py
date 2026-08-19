@@ -1,17 +1,17 @@
-from dataclasses import dataclass, field
 import os
-from pathlib import Path
 import platform
 import re
 import sys
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from termcolor import colored
 
 from .parser import Command
 from .syntax import FetchContentInfo, FunctionDef, MacroDef, SourceFileProperties, Test
-from .utils import UNDEFINED_VAR_SENTINEL, make_relative, resolve_cmake_path
 from .targets import Executable, ImportedTarget, InstallTarget, Library
+from .utils import UNDEFINED_VAR_SENTINEL, make_relative, resolve_cmake_path
 
 
 class TrackedDict(dict[str, str]):
@@ -137,7 +137,7 @@ class BuildContext:
     )  # User-defined functions
     macros: dict[str, MacroDef] = field(
         default_factory=dict
-    )  # User-defined macros  # noqa: F821
+    )  # User-defined macros
     tests: list[Test] = field(default_factory=list)  # Test definitions
     install_targets: list[InstallTarget] = field(
         default_factory=list

@@ -65,7 +65,7 @@ def cmd_configure(args: argparse.Namespace) -> int:
                 # Try to make path relative to current directory for cleaner output
                 p = Path(e.filename)
                 if p.is_absolute():
-                    rel_file = str(p.relative_to(Path(".").resolve()))
+                    rel_file = str(p.relative_to(Path.cwd()))
             except ValueError:
                 pass
             error_label = colored("error:", "red", attrs=["bold"])
@@ -118,7 +118,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 try:
                     p = Path(e.filename)
                     if p.is_absolute():
-                        rel_file = str(p.relative_to(Path(".").resolve()))
+                        rel_file = str(p.relative_to(Path.cwd()))
                 except ValueError:
                     pass
                 error_label = colored("error:", "red", attrs=["bold"])
@@ -135,7 +135,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     ninja_cmd = ["ninja", "-f", str(ninja_file), exe_path]
     sys.stdout.flush()
     sys.stderr.flush()
-    result = subprocess.run(ninja_cmd)
+    result = subprocess.run(ninja_cmd, check=False)
     if result.returncode != 0:
         return result.returncode
 
@@ -145,7 +145,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         exe_cmd.extend(args.ninja_args)
     sys.stdout.flush()
     sys.stderr.flush()
-    result = subprocess.run(exe_cmd)
+    result = subprocess.run(exe_cmd, check=False)
     return result.returncode
 
 
@@ -221,9 +221,12 @@ def cmd_command_mode(args: list[str]) -> int:
                 target = dest_path / src_path.name
             else:
                 target = dest_path
-            if cmd == "copy_if_different":
-                if target.exists() and target.read_bytes() == src_path.read_bytes():
-                    continue
+            if (
+                cmd == "copy_if_different"
+                and target.exists()
+                and target.read_bytes() == src_path.read_bytes()
+            ):
+                continue
             shutil.copy2(str(src_path), str(target))
         return 0
     else:
@@ -260,7 +263,7 @@ def _run_ninja(args: argparse.Namespace, target: str | None) -> int:
                 try:
                     p = Path(e.filename)
                     if p.is_absolute():
-                        rel_file = str(p.relative_to(Path(".").resolve()))
+                        rel_file = str(p.relative_to(Path.cwd()))
                 except ValueError:
                     pass
                 error_label = colored("error:", "red", attrs=["bold"])
@@ -278,7 +281,7 @@ def _run_ninja(args: argparse.Namespace, target: str | None) -> int:
         ninja_cmd.extend(args.ninja_args)
     sys.stdout.flush()
     sys.stderr.flush()
-    result = subprocess.run(ninja_cmd)
+    result = subprocess.run(ninja_cmd, check=False)
     return result.returncode
 
 

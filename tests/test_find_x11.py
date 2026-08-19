@@ -13,8 +13,9 @@ def has_x11() -> bool:
     """Check if pkg-config can find x11."""
     try:
         result = subprocess.run(
-            ["pkg-config", "--exists", "x11"], capture_output=True
-        )
+            ["pkg-config", "--exists", "x11"], capture_output=True,
+        check=False,
+    )
         if result.returncode == 0:
             return True
     except FileNotFoundError:

@@ -209,6 +209,7 @@ def test_file_glob_configure_depends_reconfigure_on_new_file(tmp_path: Path) -> 
         cwd=source_dir,
         capture_output=True,
         text=True,
+        check=False,
     )
     assert result.returncode == 0, result.stderr + result.stdout
     rebuilt = (source_dir / "build.ninja").read_text()
@@ -329,8 +330,8 @@ def test_file_generate_with_config_genex(tmp_path: Path) -> None:
             args=[
                 "GENERATE",
                 "OUTPUT",
-                "${SDL3_BINARY_DIR}/include-config-$<LOWER_CASE:$<CONFIG>>"
-                "/build_config/SDL_build_config.h",
+                ("${SDL3_BINARY_DIR}/include-config-$<LOWER_CASE:$<CONFIG>>"
+                "/build_config/SDL_build_config.h"),
                 "INPUT",
                 str(intermediate),
             ],

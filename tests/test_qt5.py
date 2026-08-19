@@ -1,7 +1,7 @@
 """Integration test for the Qt5 example."""
 
-import subprocess
 import platform
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -17,8 +17,9 @@ def has_qt5() -> bool:
     """Check if Qt5Core is available via pkg-config."""
     try:
         result = subprocess.run(
-            ["pkg-config", "--exists", "Qt5Core"], capture_output=True
-        )
+            ["pkg-config", "--exists", "Qt5Core"], capture_output=True,
+        check=False,
+    )
         return result.returncode == 0
     except FileNotFoundError:
         return False
@@ -40,6 +41,7 @@ def test_qt5_example(tmp_path: Path) -> None:
         cwd=source_dir,
         capture_output=True,
         text=True,
+        check=False,
     )
     assert result.returncode == 0, f"ninja failed: {result.stderr}"
 
@@ -51,6 +53,7 @@ def test_qt5_example(tmp_path: Path) -> None:
         [str(qt5_hello)],
         capture_output=True,
         text=True,
+        check=False,
     )
     assert result.returncode == 0
     assert "Hello from Qt" in result.stdout

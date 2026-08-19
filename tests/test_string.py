@@ -1,7 +1,7 @@
 """Tests for string() command."""
 
-from pathlib import Path
 import re
+from pathlib import Path
 
 from cja.generator import BuildContext, process_commands
 from cja.parser import Command

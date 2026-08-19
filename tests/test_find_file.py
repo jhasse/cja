@@ -1,6 +1,7 @@
 """Tests for find_file command."""
 
 from pathlib import Path
+
 import pytest
 
 from cja.generator import BuildContext, process_commands

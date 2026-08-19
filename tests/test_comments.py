@@ -1,6 +1,7 @@
 """Tests for CMake comments."""
 
 from pathlib import Path
+
 from cja.generator import configure
 from cja.parser import parse
 

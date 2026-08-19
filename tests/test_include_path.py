@@ -1,6 +1,7 @@
 """Tests for including .cmake files."""
 
 from pathlib import Path
+
 from cja.generator import configure
 
 
