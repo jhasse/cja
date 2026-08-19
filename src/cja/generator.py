@@ -598,9 +598,20 @@ def generate_ninja(
         n.newline()
 
         cmake_deps: list[str] = []
+        seen_deps: set[str] = set()
         for cmake_path in sorted(ctx.cmake_files, key=lambda p: str(p)):
             if cmake_path.name == "CMakeLists.txt" or cmake_path.suffix == ".cmake":
-                cmake_deps.append(make_relative(str(cmake_path), ctx.source_dir))
+                rel = make_relative(str(cmake_path), ctx.source_dir)
+                if rel not in seen_deps:
+                    cmake_deps.append(rel)
+                    seen_deps.add(rel)
+        # Directory mtimes (CONFIGURE_DEPENDS globs): ninja restats directories
+        # and rebuilds when entries are added, removed, or renamed.
+        for depend_path in sorted(ctx.configure_depends, key=lambda p: str(p)):
+            rel = make_relative(str(depend_path), ctx.source_dir)
+            if rel not in seen_deps:
+                cmake_deps.append(rel)
+                seen_deps.add(rel)
 
         if cmake_deps:
 

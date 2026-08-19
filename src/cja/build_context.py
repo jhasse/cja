@@ -159,6 +159,7 @@ class BuildContext:
     )  # Properties for directories
     parent_directory: str = ""  # Path to parent directory (if in subdirectory)
     cmake_files: set[Path] = field(default_factory=set)
+    configure_depends: set[Path] = field(default_factory=set)
     include_guarded_files: set[Path] = field(default_factory=set)
     c_compiler: str = field(default_factory=_default_c_compiler)
     cxx_compiler: str = field(default_factory=_default_cxx_compiler)
@@ -176,6 +177,14 @@ class BuildContext:
         except FileNotFoundError:
             resolved = path
         self.cmake_files.add(resolved)
+
+    def record_configure_depend(self, path: Path) -> None:
+        """Track a path whose mtime should trigger reconfigure (e.g. GLOB dirs)."""
+        try:
+            resolved = path.resolve()
+        except OSError:
+            resolved = path
+        self.configure_depends.add(resolved)
 
     def get_library(self, name: str) -> Library | None:
         for lib in self.libraries:

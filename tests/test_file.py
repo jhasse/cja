@@ -1,7 +1,10 @@
 """Tests for file command."""
 
+import subprocess
+import time
 from pathlib import Path
-from cja.generator import BuildContext, process_commands
+
+from cja.generator import BuildContext, configure, generate_ninja, process_commands
 from cja.parser import Command
 
 
@@ -92,6 +95,124 @@ def test_file_glob_recurse_finds_nested(tmp_path: Path) -> None:
     assert len(files) == 2
     assert any(f.endswith("SharedCode.cpp") for f in files)
     assert any(f.endswith("top.cpp") for f in files)
+
+
+def test_file_glob_configure_depends_records_dir(tmp_path: Path) -> None:
+    """file(GLOB ... CONFIGURE_DEPENDS src/*.cpp) watches the glob directory."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.cpp").touch()
+
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    process_commands(
+        [
+            Command(
+                name="file",
+                args=["GLOB", "SRC", "CONFIGURE_DEPENDS", "src/*.cpp"],
+                line=1,
+            )
+        ],
+        ctx,
+    )
+
+    assert src.resolve() in ctx.configure_depends
+    assert tmp_path.resolve() not in ctx.configure_depends
+
+
+def test_file_glob_without_configure_depends_does_not_record_dir(
+    tmp_path: Path,
+) -> None:
+    """file(GLOB ...) without CONFIGURE_DEPENDS does not watch directories."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.cpp").touch()
+
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    process_commands(
+        [Command(name="file", args=["GLOB", "SRC", "src/*.cpp"], line=1)],
+        ctx,
+    )
+
+    assert ctx.configure_depends == set()
+
+
+def test_file_glob_configure_depends_in_ninja(tmp_path: Path) -> None:
+    """CONFIGURE_DEPENDS glob directories are reconfigure inputs in build.ninja."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.cpp").touch()
+    (tmp_path / "CMakeLists.txt").touch()
+
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    process_commands(
+        [
+            Command(
+                name="file",
+                args=["GLOB", "SRC", "CONFIGURE_DEPENDS", "src/*.cpp"],
+                line=1,
+            )
+        ],
+        ctx,
+    )
+    ninja_path = tmp_path / "build.ninja"
+    generate_ninja(ctx, ninja_path, "build")
+
+    ninja = ninja_path.read_text()
+    assert "build build.ninja: reconfigure CMakeLists.txt src" in ninja
+
+
+def test_file_glob_recurse_configure_depends_records_subdirs(tmp_path: Path) -> None:
+    """GLOB_RECURSE CONFIGURE_DEPENDS watches nested directories too."""
+    nested = tmp_path / "src" / "nested"
+    nested.mkdir(parents=True)
+    (nested / "a.cpp").touch()
+
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    process_commands(
+        [
+            Command(
+                name="file",
+                args=["GLOB_RECURSE", "SRC", "CONFIGURE_DEPENDS", "src/*.cpp"],
+                line=1,
+            )
+        ],
+        ctx,
+    )
+
+    assert (tmp_path / "src").resolve() in ctx.configure_depends
+    assert nested.resolve() in ctx.configure_depends
+
+
+def test_file_glob_configure_depends_reconfigure_on_new_file(tmp_path: Path) -> None:
+    """Adding a file under a CONFIGURE_DEPENDS glob dir retriggers ninja reconfigure."""
+    source_dir = tmp_path / "proj"
+    src = source_dir / "src"
+    src.mkdir(parents=True)
+    (src / "main.cpp").write_text("int main() { return 0; }\n")
+    (source_dir / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.10)\n"
+        "project(glob_cfg)\n"
+        "file(GLOB SRC CONFIGURE_DEPENDS src/*.cpp)\n"
+        "add_executable(app ${SRC})\n"
+    )
+
+    configure(source_dir, "build")
+    ninja = (source_dir / "build.ninja").read_text()
+    assert "build build.ninja: reconfigure CMakeLists.txt src" in ninja
+    assert "extra.cpp" not in ninja
+
+    time.sleep(0.05)
+    (src / "extra.cpp").write_text("int extra() { return 1; }\n")
+
+    result = subprocess.run(
+        ["ninja"],
+        cwd=source_dir,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr + result.stdout
+    rebuilt = (source_dir / "build.ninja").read_text()
+    assert "extra.cpp" in rebuilt
 
 
 def test_file_glob_recurse_literal_path(tmp_path: Path) -> None:

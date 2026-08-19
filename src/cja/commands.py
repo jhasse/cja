@@ -2125,6 +2125,52 @@ def _pattern_has_wildcard(pattern: str) -> bool:
     return any(ch in pattern for ch in "*?[")
 
 
+def _glob_literal_dir(pattern: str, source_dir: Path) -> Path:
+    """Return the non-wildcard directory prefix of a glob pattern.
+
+    ``src/*.cpp`` → ``<source_dir>/src``; ``*.cpp`` → ``<source_dir>``.
+    """
+    path = Path(pattern)
+    parts = path.parts
+    prefix: list[str] = []
+    start = 0
+    if path.is_absolute() and parts:
+        prefix.append(parts[0])
+        start = 1
+    for part in parts[start:]:
+        if _pattern_has_wildcard(part):
+            break
+        prefix.append(part)
+    if path.is_absolute():
+        watch = Path(*prefix) if prefix else path.parent
+    elif not prefix:
+        watch = source_dir
+    else:
+        watch = source_dir.joinpath(*prefix)
+    if watch.is_file():
+        return watch.parent
+    return watch
+
+
+def _glob_configure_depend_dirs(
+    pattern: str, source_dir: Path, recursive: bool
+) -> list[Path]:
+    """Directories whose timestamps should trigger reconfigure for this glob.
+
+    Ninja restats directory mtimes, which update when entries are added,
+    removed, or renamed — enough to notice GLOB results changing.
+    """
+    watch = _glob_literal_dir(pattern, source_dir)
+    if not watch.is_dir():
+        return []
+    dirs = [watch]
+    if recursive:
+        for child in watch.rglob("*"):
+            if child.is_dir():
+                dirs.append(child)
+    return dirs
+
+
 def _cmake_glob_files(pattern: str, source_dir: Path, recursive: bool) -> list[str]:
     """Match files like CMake file(GLOB) / file(GLOB_RECURSE)."""
     if Path(pattern).is_absolute():
@@ -2208,6 +2254,7 @@ def handle_file(
             patterns: list[str] = []
             relative_base: Path | None = None
             list_directories: bool | None = None
+            configure_depends = False
 
             i = 2
             while i < len(args):
@@ -2221,6 +2268,7 @@ def handle_file(
                     i += 2
                     continue
                 if token_upper == "CONFIGURE_DEPENDS":
+                    configure_depends = True
                     i += 1
                     continue
                 if token_upper == "LIST_DIRECTORIES" and i + 1 < len(args):
@@ -2235,6 +2283,11 @@ def handle_file(
             matched_files: list[str] = []
             for pattern in patterns:
                 expanded_pattern = ctx.expand_variables(pattern, strict, cmd.line)
+                if configure_depends:
+                    for glob_dir in _glob_configure_depend_dirs(
+                        expanded_pattern, ctx.current_source_dir, recursive
+                    ):
+                        ctx.record_configure_depend(glob_dir)
                 matched = _cmake_glob_files(
                     expanded_pattern, ctx.current_source_dir, recursive
                 )
