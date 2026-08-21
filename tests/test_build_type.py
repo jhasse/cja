@@ -5,7 +5,6 @@ from pathlib import Path
 from cja.generator import configure
 from tests.helpers import copy_unignored_tree
 
-
 EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
 
 

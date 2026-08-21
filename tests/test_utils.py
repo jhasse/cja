@@ -3,9 +3,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-from cja.utils import make_relative
-from cja.utils import status_marker
-from cja.utils import strip_generator_expressions
+from cja.utils import make_relative, status_marker, strip_generator_expressions
 
 
 def test_make_relative_with_relative_root(tmp_path: Path, monkeypatch) -> None:

@@ -8,18 +8,36 @@ import shlex
 import shutil
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import cast
 
-from .utils import is_truthy, make_relative, strip_generator_expressions, to_posix_path
+from termcolor import colored
+
 from .build_context import (
     BuildContext,
 )
-from termcolor import colored
-
+from .configurator import process_commands
 from .ninja_syntax import Writer
 from .parser import Command
-from .configurator import process_commands
+from .utils import is_truthy, make_relative, strip_generator_expressions, to_posix_path
+
+
+def _quote_ninja_cmd_part(part: str) -> str:
+    """Quote one argv token for a Ninja rule command line.
+
+    On Windows, Ninja passes the command through cmd.exe, which does not treat
+    single quotes as quoting. shlex.quote uses single quotes there, so convert
+    paths to forward slashes and reserve double quotes for arguments with spaces.
+    """
+    if part == "$builddir":
+        return part
+    if platform.system() == "Windows":
+        normalized = part.replace("\\", "/")
+        if re.search(r'[\s"]', normalized):
+            escaped = normalized.replace('"', '\\"')
+            return f'"{escaped}"'
+        return normalized
+    return shlex.quote(part)
 
 
 def _infer_compiler_id(compiler: str) -> str:
@@ -34,7 +52,7 @@ def _infer_compiler_id(compiler: str) -> str:
 
     if base in ("clang", "clang++", "clang-cl") or "clang" in base:
         return "Clang"
-    if base in ("gcc", "g++") or base.startswith("gcc-") or base.startswith("g++-"):
+    if base in ("gcc", "g++") or base.startswith(("gcc-", "g++-")):
         return "GNU"
     if base in ("cl", "cl.exe"):
         return "MSVC"
@@ -129,7 +147,19 @@ def _resolve_cja_cmd() -> list[str]:
     cmd = ["cja"]
     absolute = shutil.which(cmd[0])
     if absolute is None:
-        cmd = [sys.executable, "-m", "cja"]
+        # cja isn't on PATH (e.g. the venv isn't sourced). Prefer the `cja`
+        # console script installed next to the running interpreter so the
+        # command stays a single token; `python -m cja` would be a multi-token
+        # command that breaks once it gets quoted into ninja rules.
+        bindir = Path(sys.executable).parent
+        script = next(
+            (s for s in (bindir / "cja", bindir / "cja.exe") if s.is_file()),
+            None,
+        )
+        if script is not None:
+            cmd = [str(script)]
+        else:
+            cmd = [sys.executable, "-m", "cja"]
     elif os.getenv("VIRTUAL_ENV") is not None:
         cmd = [absolute]
     if platform.system() == "Windows":
@@ -182,6 +212,25 @@ def is_compilable_source(filename: str) -> bool:
     return filename.endswith(source_extensions)
 
 
+def _obj_subdir(source_rel: PurePath) -> str:
+    """Return a $builddir-relative subdir for a source's object file.
+
+    Sources outside the project tree (absolute paths, e.g. dependencies
+    fetched onto another drive such as ``D:/cpm/...`` on Windows) must not be
+    joined verbatim under ``$builddir``: ``build/D:/cpm/...`` is not a valid
+    path and makes ninja fail. Strip any filesystem anchor (drive or root) and
+    neutralize ``..`` components so the result always stays relative to and
+    contained within ``$builddir``.
+    """
+    parent = source_rel.parent
+    parts = parent.parts
+    if parts and (parent.is_absolute() or parent.drive):
+        # parts[0] is the anchor, e.g. 'D:\\' or '/'.
+        parts = parts[1:]
+    cleaned = ["__up__" if part == ".." else part for part in parts]
+    return "/".join(cleaned)
+
+
 def _rc_manifest_deps(ctx: BuildContext, rc_path: str) -> list[str]:
     """Extract manifest file paths referenced by RT_MANIFEST in .rc file."""
     deps: list[str] = []
@@ -191,7 +240,7 @@ def _rc_manifest_deps(ctx: BuildContext, rc_path: str) -> list[str]:
     try:
         content = abs_path.read_text(encoding="utf-8", errors="replace")
         # Match RT_MANIFEST "filename" or RT_MANIFEST 'filename'
-        for match in re.finditer(r"RT_MANIFEST\s+[\"']([^\"']+)[\"']", content, re.I):
+        for match in re.finditer(r"RT_MANIFEST\s+[\"']([^\"']+)[\"']", content, re.IGNORECASE):
             manifest_ref = match.group(1)
             rc_dir = Path(rc_path).parent
             if rc_dir and rc_dir != Path("."):
@@ -336,6 +385,36 @@ def _ninja_flag_path(path: str, source_dir: Path) -> str:
         if sep:
             return f"{head}/{tail}"
     return path
+
+
+def _cd_prefix(working_dir: str, source_dir: Path) -> str:
+    """Return a ``cd <dir> && `` prefix for a custom command working directory.
+
+    Ninja runs from the source root. Absolute paths under that tree are rewritten
+    as source-relative paths (e.g. ``/proj/build/generated`` → ``build/generated``).
+    Paths already using ``$builddir`` are left unchanged. When the working
+    directory is the source root itself, no ``cd`` is emitted.
+    """
+    if not working_dir:
+        return ""
+    if working_dir == "$builddir" or working_dir.startswith("$builddir/"):
+        return f"cd {to_posix_path(working_dir)} && "
+
+    wd = Path(working_dir)
+    if not wd.is_absolute():
+        return f"cd {to_posix_path(working_dir)} && "
+
+    try:
+        source_resolved = source_dir.resolve()
+        wd_resolved = wd.resolve()
+        if wd_resolved == source_resolved:
+            return ""
+        if wd_resolved.is_relative_to(source_resolved):
+            rel = wd_resolved.relative_to(source_resolved)
+            return f"cd {to_posix_path(rel)} && "
+    except (OSError, RuntimeError, ValueError):
+        pass
+    return f"cd {to_posix_path(working_dir)} && "
 
 
 def handle_add_subdirectory(
@@ -519,9 +598,20 @@ def generate_ninja(
         n.newline()
 
         cmake_deps: list[str] = []
+        seen_deps: set[str] = set()
         for cmake_path in sorted(ctx.cmake_files, key=lambda p: str(p)):
             if cmake_path.name == "CMakeLists.txt" or cmake_path.suffix == ".cmake":
-                cmake_deps.append(make_relative(str(cmake_path), ctx.source_dir))
+                rel = make_relative(str(cmake_path), ctx.source_dir)
+                if rel not in seen_deps:
+                    cmake_deps.append(rel)
+                    seen_deps.add(rel)
+        # Directory mtimes (CONFIGURE_DEPENDS globs): ninja restats directories
+        # and rebuilds when entries are added, removed, or renamed.
+        for depend_path in sorted(ctx.configure_depends, key=lambda p: str(p)):
+            rel = make_relative(str(depend_path), ctx.source_dir)
+            if rel not in seen_deps:
+                cmake_deps.append(rel)
+                seen_deps.add(rel)
 
         if cmake_deps:
 
@@ -540,9 +630,7 @@ def generate_ninja(
                 )
 
             def quote_part(part: str) -> str:
-                if part == "$builddir":
-                    return part
-                return shlex.quote(part)
+                return _quote_ninja_cmd_part(part)
 
             reconfigure_cmd = " ".join(
                 quote_part(part) for part in reconfigure_cmd_parts
@@ -586,6 +674,7 @@ def generate_ninja(
                 "  ", " "
             ).strip(),
             depfile="$out.d",
+            deps="gcc",
             description="\x1b[32mCompiling $in\x1b[0m",
         )
         n.newline()
@@ -596,6 +685,18 @@ def generate_ninja(
                 "  ", " "
             ).strip(),
             depfile="$out.d",
+            deps="gcc",
+            description="\x1b[32mCompiling $in\x1b[0m",
+        )
+        n.newline()
+
+        # Assembly: compilers typically do not write a depfile for .s/.S, and a
+        # missing depfile makes ninja rebuild the object on every invocation.
+        n.rule(
+            "asm",
+            command=f"$cc {base_cflags} {c_flags} $cflags -c $in -o $out".replace(
+                "  ", " "
+            ).strip(),
             description="\x1b[32mCompiling $in\x1b[0m",
         )
         n.newline()
@@ -675,7 +776,7 @@ def generate_ninja(
             src_prefix = str(ctx.source_dir.resolve()) + "/"
             n.rule(
                 "clang_tidy",
-                command=f"$clang_tidy_cmd $in -- $cflags 2>/dev/null >$out.log; rv=$$?; sed 's|{src_prefix}||g' $out.log; rm -f $out.log; [ $$rv -eq 0 ] && touch $out || exit $$rv",
+                command=f"$clang_tidy_cmd $in -- $cflags >$out.log 2>&1; rv=$$?; sed 's|{src_prefix}||g' $out.log; rm -f $out.log; [ $$rv -eq 0 ] && touch $out || exit $$rv",
                 description="\x1b[35mAnalyzing $in\x1b[0m",
             )
             n.newline()
@@ -768,10 +869,59 @@ def generate_ninja(
                 arg, ctx.variables, target_file_dirs, target_files
             )
 
+        def _resolve_dependency(dep: str) -> str:
+            """Resolve a custom command/target dependency path for ninja.
+
+            ninja runs from the source root, so a relative dependency is the
+            source file when one exists there; otherwise, if it matches a build
+            artifact produced by another command, prefix it with $builddir.
+            Resolving the source case first avoids self-dependency cycles when a
+            copy command's source and output share the same relative path.
+            Bare target names (executables/libraries) resolve to their outputs.
+            """
+            d = _expand_genex(dep)
+            if not d or Path(d).is_absolute():
+                return d
+            if d in target_files:
+                return target_files[d]
+            if (ctx.source_dir / d).exists():
+                return d
+            if d in custom_command_outputs:
+                return f"$builddir/{d}"
+            return d
+
+        def _absolute_target_file(ninja_path: str) -> str:
+            """Convert a $builddir/... ninja path to an absolute filesystem path."""
+            if ninja_path.startswith("$builddir/"):
+                return to_posix_path(
+                    str(ctx.build_dir / ninja_path[len("$builddir/") :])
+                )
+            if ninja_path == "$builddir":
+                return to_posix_path(str(ctx.build_dir))
+            return ninja_path
+
+        def _format_command(command: list[str], *, verbatim: bool) -> str:
+            """Format one COMMAND argv, substituting target names with their files."""
+            expanded = [_expand_genex(c) for c in command]
+            if expanded and expanded[0] in target_files:
+                expanded[0] = _absolute_target_file(target_files[expanded[0]])
+            if verbatim:
+                parts = []
+                for arg in expanded:
+                    if arg in shell_operators:
+                        parts.append(str(arg))
+                    else:
+                        parts.append(shlex.quote(str(arg)))
+                return " ".join(parts)
+            return " ".join(str(c) for c in expanded)
+
         # Generate custom commands
         for custom_cmd in ctx.custom_commands:
             outputs = []
             for o in custom_cmd.outputs:
+                # Evaluate generator expressions (e.g. $<$<BOOL:..>:/$<CONFIG>>)
+                # so they don't leak into build.ninja output paths.
+                o = _expand_genex(o)
                 if not Path(o).is_absolute():
                     prefixed_o = f"$builddir/{o}"
                     outputs.append(prefixed_o)
@@ -780,43 +930,22 @@ def generate_ninja(
                     outputs.append(o)
 
             # Process multiple commands
-            cmd_parts: list[str] = []
-            for command in custom_cmd.commands:
-                if custom_cmd.verbatim:
-                    parts = []
-                    for arg in command:
-                        expanded = _expand_genex(arg)
-                        if expanded in shell_operators:
-                            parts.append(str(expanded))
-                        else:
-                            parts.append(shlex.quote(str(expanded)))
-                    cmd_parts.append(" ".join(parts))
-                else:
-                    cmd_parts.append(
-                        " ".join(str(_expand_genex(c)) for c in command)
-                    )
+            cmd_parts: list[str] = [
+                _format_command(command, verbatim=custom_cmd.verbatim)
+                for command in custom_cmd.commands
+            ]
 
             cmd_str = " && ".join(cmd_parts)
 
-            depends = [
-                f"$builddir/{d}"
-                if d in custom_command_outputs and not Path(d).is_absolute()
-                else d
-                for d in custom_cmd.depends
-            ]
+            depends = [_resolve_dependency(dep) for dep in custom_cmd.depends]
             main_dep = custom_cmd.main_dependency
             if main_dep:
-                if (
-                    main_dep in custom_command_outputs
-                    and not Path(main_dep).is_absolute()
-                ):
-                    main_dep = f"$builddir/{main_dep}"
-                depends.insert(0, main_dep)
+                depends.insert(0, _resolve_dependency(main_dep))
 
             working_dir = custom_cmd.working_directory
             if working_dir:
                 working_dir = _expand_genex(working_dir)
-                cmd_str = f"cd {to_posix_path(working_dir)} && {cmd_str}"
+                cmd_str = f"{_cd_prefix(working_dir, ctx.source_dir)}{cmd_str}"
 
             n.build(
                 outputs,
@@ -831,37 +960,35 @@ def generate_ninja(
         # Generate custom targets (phony targets)
         custom_target_all: list[str] = []
         for ct in ctx.custom_targets:
-            ct_depends = [
-                f"$builddir/{d}"
-                if d in custom_command_outputs and not Path(d).is_absolute()
-                else d
-                for d in ct.depends
-            ]
+            ct_depends = []
+            for raw in ct.depends:
+                # DEPENDS may carry generator expressions and arrive as a single
+                # ";"-joined list element (e.g. ${RESOURCE_FILES_BINDIR}).
+                for d in _expand_genex(raw).split(";"):
+                    if not d:
+                        continue
+                    if Path(d).is_absolute():
+                        rel = make_relative(d, ctx.build_dir)
+                        if rel != d:
+                            ct_depends.append(f"$builddir/{rel}")
+                        else:
+                            ct_depends.append(d)
+                    else:
+                        ct_depends.append(_resolve_dependency(d))
 
             ct_dep_order_only = _target_order_only(ct.dependencies)
 
             if ct.commands:
                 # Custom target with commands: use custom_command rule
-                ct_cmd_parts: list[str] = []
-                for command in ct.commands:
-                    if ct.verbatim:
-                        parts = []
-                        for arg in command:
-                            expanded = _expand_genex(arg)
-                            if expanded in shell_operators:
-                                parts.append(str(expanded))
-                            else:
-                                parts.append(shlex.quote(str(expanded)))
-                        ct_cmd_parts.append(" ".join(parts))
-                    else:
-                        ct_cmd_parts.append(
-                            " ".join(str(_expand_genex(c)) for c in command)
-                        )
+                ct_cmd_parts: list[str] = [
+                    _format_command(command, verbatim=ct.verbatim)
+                    for command in ct.commands
+                ]
 
                 ct_cmd_str = " && ".join(ct_cmd_parts)
                 if ct.working_directory:
                     ct_wd = _expand_genex(ct.working_directory)
-                    ct_cmd_str = f"cd {ct_wd} && {ct_cmd_str}"
+                    ct_cmd_str = f"{_cd_prefix(ct_wd, ctx.source_dir)}{ct_cmd_str}"
 
                 # Use a stamp file so ninja can track when the target last ran
                 stamp = f"$builddir/{ct.name}.stamp"
@@ -945,6 +1072,46 @@ def generate_ninja(
                     values.extend([p for p in raw.split(";") if p])
             return values
 
+        # Source-dir-relative prefix of the build dir (e.g. "build"), used to
+        # recognize sources written as "<build_rel>/<name>" (e.g. as emitted by
+        # FLEX_<Name>_OUTPUTS) that actually refer to a custom-command output.
+        try:
+            _build_rel_path = ctx.build_dir.relative_to(ctx.source_dir)
+            _build_rel: str | None = to_posix_path(str(_build_rel_path))
+            if _build_rel == ".":
+                _build_rel = None
+        except ValueError:
+            _build_rel = None
+
+        def _resolve_source(source: str) -> tuple[str, str]:
+            """Return (compile_input, obj_key) for a target source.
+
+            compile_input is the path used as the compile-rule input.
+            obj_key is the path used to derive the obj subdir and basename so a
+            source like "build/scanner.c" doesn't get an extra "build/" parent.
+            """
+            if source in custom_command_outputs:
+                return f"$builddir/{source}", source
+            if _build_rel is not None and source.startswith(f"{_build_rel}/"):
+                stripped = source[len(_build_rel) + 1 :]
+                if stripped in custom_command_outputs:
+                    return f"$builddir/{stripped}", stripped
+            return source, source
+
+        def _generated_source_deps(sources: list[str]) -> list[str]:
+            """Ninja nodes for custom-command outputs listed among target sources.
+
+            Generated headers (and other non-compiled outputs) still need to
+            exist before compiling the target, matching CMake's behavior when
+            generated files appear in a target's SOURCES.
+            """
+            deps: list[str] = []
+            for source in sources:
+                resolved, _ = _resolve_source(source)
+                if resolved.startswith("$builddir/") and resolved not in deps:
+                    deps.append(resolved)
+            return deps
+
         # Generate build statements for libraries
         for lib in ctx.libraries:
             if lib.is_alias:
@@ -961,15 +1128,35 @@ def generate_ninja(
                 if lib.defined_file is not None
                 else ctx.source_dir
             )
-            lib_compile_flags: list[str] = _collect_directory_property_chain(
+            dir_compile_options = _collect_directory_property_chain(
                 target_dir, "COMPILE_OPTIONS"
             )
+            lib_compile_flags: list[str] = []
+            # SHARED/MODULE default to POSITION_INDEPENDENT_CODE ON (like CMake).
+            pic = lib.properties.get("POSITION_INDEPENDENT_CODE", "")
+            if not pic:
+                if lib.lib_type in ("SHARED", "MODULE"):
+                    pic = "TRUE"
+                else:
+                    pic = ctx.variables.get("CMAKE_POSITION_INDEPENDENT_CODE", "")
+            if is_truthy(pic) and not is_truthy(ctx.variables.get("WIN32", "")):
+                lib_compile_flags.append("-fPIC")
+            for option in dir_compile_options:
+                opt = strip_generator_expressions(option)
+                if opt:
+                    lib_compile_flags.append(opt)
             for definition in _collect_directory_property_chain(
                 target_dir, "COMPILE_DEFINITIONS"
             ):
                 lib_compile_flags.append(_format_compile_definition_flag(definition))
             for definition in lib.compile_definitions:
                 lib_compile_flags.append(_format_compile_definition_flag(definition))
+            # Raw compile_options are kept for per-source evaluation so that
+            # $<COMPILE_LANGUAGE:...> can be evaluated against each source's
+            # language.  The target-level strip drops language-gated options.
+            lib_compile_options_raw: list[str] = list(dir_compile_options) + list(
+                lib.compile_options
+            )
             for option in lib.compile_options:
                 opt = strip_generator_expressions(option)
                 if opt:
@@ -1004,6 +1191,7 @@ def generate_ninja(
                         if def_flag not in lib_compile_flags:
                             lib_compile_flags.append(def_flag)
                     for option in dep_lib.public_compile_options:
+                        lib_compile_options_raw.append(option)
                         opt = strip_generator_expressions(option)
                         if opt and opt not in lib_compile_flags:
                             lib_compile_flags.append(opt)
@@ -1028,35 +1216,53 @@ def generate_ninja(
             c_clang_tidy = lib.properties.get("C_CLANG_TIDY")
 
             lib_dep_order_only = _target_order_only(lib.dependencies)
+            lib_generated_deps = _generated_source_deps(lib.sources)
+            lib_order_only = list(
+                dict.fromkeys([*lib_dep_order_only, *lib_generated_deps])
+            )
 
             for source in compileable_sources:
-                actual_source = source
-                if source in custom_command_outputs:
-                    actual_source = f"$builddir/{source}"
+                actual_source, obj_source = _resolve_source(source)
 
-                source_rel = Path(source)
-                obj_subdir = source_rel.parent.as_posix()
+                source_rel = Path(obj_source)
+                obj_subdir = _obj_subdir(source_rel)
                 obj_basename = f"{lib.name}_{source_rel.stem}.o"
-                if obj_subdir and obj_subdir != ".":
+                if obj_subdir:
                     obj_name = f"$builddir/{obj_subdir}/{obj_basename}"
                 else:
                     obj_name = f"$builddir/{obj_basename}"
                 register_output(obj_name, lib.defined_file, lib.defined_line)
                 objects.append(obj_name)
 
-                # Determine if C or C++
+                # Determine if C, C++, or assembly
                 is_cxx = source.endswith((".cpp", ".cxx", ".cc", ".C", ".mm", ".MM"))
-                if is_cxx:
+                is_asm = source.endswith((".s", ".S"))
+                if is_asm:
+                    rule = "asm"
+                    source_language = "ASM"
+                elif is_cxx:
                     rule = "cxx"
                     uses_cxx = True
+                    source_language = "CXX"
                 else:
                     rule = "cc"
+                    source_language = "C"
 
                 # Check for source file properties
                 abs_source = str(ctx.source_dir / source)
                 file_props = ctx.source_file_properties.get(abs_source)
 
                 source_compile_flags = list(lib_compile_flags)
+                for option in lib_compile_options_raw:
+                    opt = strip_generator_expressions(
+                        option,
+                        ctx.variables,
+                        compile_language=source_language,
+                    )
+                    for sub_opt in opt.split(";"):
+                        sub_opt = sub_opt.strip()
+                        if sub_opt and sub_opt not in source_compile_flags:
+                            source_compile_flags.append(sub_opt)
                 source_depends = []
 
                 if file_props:
@@ -1074,7 +1280,7 @@ def generate_ninja(
                         else:
                             source_depends.append(d)
 
-                if rule == "cc":
+                if rule in ("cc", "asm"):
                     source_compile_flags = [
                         flag
                         for flag in source_compile_flags
@@ -1108,7 +1314,7 @@ def generate_ninja(
                     )
 
                 # Generate clang-tidy validation node if applicable
-                tidy_cmd = cxx_clang_tidy if is_cxx else c_clang_tidy
+                tidy_cmd = None if is_asm else (cxx_clang_tidy if is_cxx else c_clang_tidy)
                 tidy_stamp: str | None = None
                 if tidy_cmd:
                     tidy_args = tidy_cmd.replace(";", " ")
@@ -1130,7 +1336,7 @@ def generate_ninja(
                     rule,
                     actual_source,
                     implicit=source_depends,
-                    order_only=lib_dep_order_only or None,
+                    order_only=lib_order_only or None,
                     variables=source_vars,
                     validation=tidy_stamp,
                 )
@@ -1200,15 +1406,25 @@ def generate_ninja(
                 if exe.defined_file is not None
                 else ctx.source_dir
             )
-            compile_flags: list[str] = _collect_directory_property_chain(
+            dir_compile_options = _collect_directory_property_chain(
                 target_dir, "COMPILE_OPTIONS"
             )
+            compile_flags: list[str] = []
+            for option in dir_compile_options:
+                opt = strip_generator_expressions(option)
+                if opt:
+                    compile_flags.append(opt)
             for definition in _collect_directory_property_chain(
                 target_dir, "COMPILE_DEFINITIONS"
             ):
                 compile_flags.append(_format_compile_definition_flag(definition))
             for definition in exe.compile_definitions:
                 compile_flags.append(_format_compile_definition_flag(definition))
+            # Keep raw compile_options so $<COMPILE_LANGUAGE:...> can be
+            # evaluated per source.  The target-level strip drops them.
+            exe_compile_options_raw: list[str] = list(dir_compile_options) + list(
+                exe.compile_options
+            )
             for option in exe.compile_options:
                 opt = strip_generator_expressions(option)
                 if opt:
@@ -1242,6 +1458,7 @@ def generate_ninja(
                         if def_flag not in compile_flags:
                             compile_flags.append(def_flag)
                     for option in linked_lib.public_compile_options:
+                        exe_compile_options_raw.append(option)
                         opt = strip_generator_expressions(option)
                         if opt and opt not in compile_flags:
                             compile_flags.append(opt)
@@ -1277,35 +1494,53 @@ def generate_ninja(
             c_clang_tidy = exe.properties.get("C_CLANG_TIDY")
 
             exe_dep_order_only = _target_order_only(exe.dependencies)
+            exe_generated_deps = _generated_source_deps(exe.sources)
+            exe_order_only = list(
+                dict.fromkeys([*exe_dep_order_only, *exe_generated_deps])
+            )
 
             for source in compileable_sources:
-                actual_source = source
-                if source in custom_command_outputs:
-                    actual_source = f"$builddir/{source}"
+                actual_source, obj_source = _resolve_source(source)
 
-                source_rel = Path(source)
-                obj_subdir = source_rel.parent.as_posix()
+                source_rel = Path(obj_source)
+                obj_subdir = _obj_subdir(source_rel)
                 obj_basename = f"{exe.name}_{source_rel.stem}.o"
-                if obj_subdir and obj_subdir != ".":
+                if obj_subdir:
                     obj_name = f"$builddir/{obj_subdir}/{obj_basename}"
                 else:
                     obj_name = f"$builddir/{obj_basename}"
                 register_output(obj_name, exe.defined_file, exe.defined_line)
                 objects.append(obj_name)
 
-                # Determine if C or C++
+                # Determine if C, C++, or assembly
                 is_cxx = source.endswith((".cpp", ".cxx", ".cc", ".C", ".mm", ".MM"))
-                if is_cxx:
+                is_asm = source.endswith((".s", ".S"))
+                if is_asm:
+                    rule = "asm"
+                    source_language = "ASM"
+                elif is_cxx:
                     rule = "cxx"
                     uses_cxx = True
+                    source_language = "CXX"
                 else:
                     rule = "cc"
+                    source_language = "C"
 
                 # Check for source file properties
                 abs_source = str(ctx.source_dir / source)
                 file_props = ctx.source_file_properties.get(abs_source)
 
                 source_compile_flags = list(compile_flags)
+                for option in exe_compile_options_raw:
+                    opt = strip_generator_expressions(
+                        option,
+                        ctx.variables,
+                        compile_language=source_language,
+                    )
+                    for sub_opt in opt.split(";"):
+                        sub_opt = sub_opt.strip()
+                        if sub_opt and sub_opt not in source_compile_flags:
+                            source_compile_flags.append(sub_opt)
                 source_depends = []
 
                 if file_props:
@@ -1323,7 +1558,7 @@ def generate_ninja(
                         else:
                             source_depends.append(d)
 
-                if rule == "cc":
+                if rule in ("cc", "asm"):
                     source_compile_flags = [
                         flag
                         for flag in source_compile_flags
@@ -1357,7 +1592,7 @@ def generate_ninja(
                     )
 
                 # Generate clang-tidy validation node if applicable
-                tidy_cmd = cxx_clang_tidy if is_cxx else c_clang_tidy
+                tidy_cmd = None if is_asm else (cxx_clang_tidy if is_cxx else c_clang_tidy)
                 tidy_stamp: str | None = None
                 if tidy_cmd:
                     tidy_args = tidy_cmd.replace(";", " ")
@@ -1379,7 +1614,7 @@ def generate_ninja(
                     rule,
                     actual_source,
                     implicit=source_depends,
-                    order_only=exe_dep_order_only or None,
+                    order_only=exe_order_only or None,
                     variables=source_vars,
                     validation=tidy_stamp,
                 )
@@ -1428,8 +1663,7 @@ def generate_ninja(
                 else:
                     # Generic library name or path
                     if (
-                        lib_name.startswith("-")
-                        or lib_name.startswith("$")
+                        lib_name.startswith(("-", "$"))
                         or "/" in lib_name
                         or lib_name.endswith(
                             (".a", ".so", ".dylib", ".lib", ".dll", ".o", ".obj")
@@ -1499,7 +1733,7 @@ def generate_ninja(
                 exe_name,
                 link_rule,
                 link_inputs,
-                order_only=exe_dep_order_only or None,
+                order_only=exe_order_only or None,
                 variables=variables if variables else None,
             )
             n.newline()
@@ -1719,6 +1953,75 @@ def generate_ninja(
             n.default(["all"])
 
 
+def run_script(
+    script_path: Path,
+    variables: dict[str, str] | None = None,
+    script_args: list[str] | None = None,
+    trace: bool = False,
+    strict: bool = False,
+) -> BuildContext:
+    """Run a CMake script file in ``cmake -P`` style script mode.
+
+    Args:
+        script_path: Path to the .cmake script file to execute.
+        variables: Optional dict of variables from ``-D`` flags.
+        script_args: Extra command-line arguments after the script path.
+            They become available as ``CMAKE_ARGV<n>``.
+        trace: If True, print each command as it's processed.
+        strict: If True, error on unsupported commands.
+    """
+    script_path = script_path.resolve()
+    if not script_path.exists():
+        raise FileNotFoundError(f"script not found: {script_path}")
+
+    from .parser import parse_file
+
+    cwd = Path.cwd()
+    ctx = BuildContext(source_dir=cwd, build_dir=cwd)
+    ctx.current_list_file = script_path
+    ctx.record_cmake_file(script_path)
+
+    if variables:
+        ctx.variables.update(variables)
+        ctx.cache_variables.update(variables.keys())
+        ctx.cli_variables = dict(variables)
+
+    ctx.variables["CMAKE_SOURCE_DIR"] = str(cwd)
+    ctx.variables["CMAKE_BINARY_DIR"] = str(cwd)
+    ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = str(cwd)
+    ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(cwd)
+    ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(script_path)
+    ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(script_path.parent)
+    ctx.variables["CMAKE_MODULE_PATH"] = ""
+    ctx.variables["CMAKE_SCRIPT_MODE_FILE"] = str(script_path)
+    ctx.variables["CMAKE_HOST_SYSTEM_PROCESSOR"] = _detect_host_system_processor()
+
+    host_system = platform.system()
+    ctx.variables["CMAKE_HOST_WIN32"] = "TRUE" if host_system == "Windows" else "FALSE"
+    if host_system == "Darwin":
+        ctx.variables["CMAKE_SYSTEM_NAME"] = "Darwin"
+        ctx.variables["UNIX"] = "TRUE"
+        ctx.variables["APPLE"] = "TRUE"
+    elif host_system == "Windows":
+        ctx.variables["CMAKE_SYSTEM_NAME"] = "Windows"
+        ctx.variables["WIN32"] = "TRUE"
+    else:
+        ctx.variables["CMAKE_SYSTEM_NAME"] = "Linux"
+        ctx.variables["UNIX"] = "TRUE"
+
+    cja_cmd = _resolve_cja_cmd()
+    ctx.variables["CMAKE_COMMAND"] = " ".join(cja_cmd)
+
+    argv = [cja_cmd[0], "-P", str(script_path), *(script_args or [])]
+    ctx.variables["CMAKE_ARGC"] = str(len(argv))
+    for i, value in enumerate(argv):
+        ctx.variables[f"CMAKE_ARGV{i}"] = value
+
+    commands = parse_file(script_path)
+    process_commands(commands, ctx, trace, strict)
+    return ctx
+
+
 def configure(
     source_dir: Path,
     build_dir: str,
@@ -1833,7 +2136,7 @@ def configure(
         # Ignore errors if ninja is not found or fails
         pass
 
-    # Don't cause unnecessary rebuilds when we the users runs cja explicitly:
+    # Don't cause unnecessary regenerates on the next ninja invocation when the user runs cja explicitly:
     if not regenerate_during_build and manifest_existed:
         restat_cmd = [
             "ninja",
@@ -1852,9 +2155,7 @@ def configure(
 
     if not quiet and ctx.cli_variables:
         unused = sorted(
-            name
-            for name in ctx.cli_variables
-            if name not in ctx.variables._tracker
+            name for name in ctx.cli_variables if name not in ctx.variables._tracker
         )
         if unused:
             warning_label = colored("warning:", "magenta", attrs=["bold"])

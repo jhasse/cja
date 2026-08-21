@@ -142,18 +142,13 @@ def test_highest_inherited_cxx_std_wins(tmp_path: Path) -> None:
     )
     (source_dir / "lib.cpp").write_text("int f() { return 1; }\n")
     (source_dir / "CMakeLists.txt").write_text(
-        "\n".join(
-            [
-                "cmake_minimum_required(VERSION 3.10)",
-                "project(stdwin LANGUAGES CXX)",
-                "add_library(mylib STATIC lib.cpp)",
-                "target_compile_features(mylib PUBLIC cxx_std_11)",
-                "add_executable(app main.cpp)",
-                "target_compile_features(app PRIVATE cxx_std_20)",
-                "target_link_libraries(app PRIVATE mylib)",
-            ]
-        )
-        + "\n"
+        "cmake_minimum_required(VERSION 3.10)\n"
+        "project(stdwin LANGUAGES CXX)\n"
+        "add_library(mylib STATIC lib.cpp)\n"
+        "target_compile_features(mylib PUBLIC cxx_std_11)\n"
+        "add_executable(app main.cpp)\n"
+        "target_compile_features(app PRIVATE cxx_std_20)\n"
+        "target_link_libraries(app PRIVATE mylib)\n"
     )
 
     from cja.generator import configure

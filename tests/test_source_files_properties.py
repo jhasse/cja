@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from cja.generator import BuildContext, process_commands, generate_ninja
+from cja.generator import BuildContext, generate_ninja, process_commands
 from cja.parser import Command
 
 

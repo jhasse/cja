@@ -1,17 +1,17 @@
-from dataclasses import dataclass, field
 import os
-from pathlib import Path
 import platform
 import re
 import sys
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from termcolor import colored
 
 from .parser import Command
 from .syntax import FetchContentInfo, FunctionDef, MacroDef, SourceFileProperties, Test
-from .utils import UNDEFINED_VAR_SENTINEL, make_relative, resolve_cmake_path
 from .targets import Executable, ImportedTarget, InstallTarget, Library
+from .utils import UNDEFINED_VAR_SENTINEL, make_relative, resolve_cmake_path
 
 
 class TrackedDict(dict[str, str]):
@@ -137,7 +137,7 @@ class BuildContext:
     )  # User-defined functions
     macros: dict[str, MacroDef] = field(
         default_factory=dict
-    )  # User-defined macros  # noqa: F821
+    )  # User-defined macros
     tests: list[Test] = field(default_factory=list)  # Test definitions
     install_targets: list[InstallTarget] = field(
         default_factory=list
@@ -159,6 +159,8 @@ class BuildContext:
     )  # Properties for directories
     parent_directory: str = ""  # Path to parent directory (if in subdirectory)
     cmake_files: set[Path] = field(default_factory=set)
+    configure_depends: set[Path] = field(default_factory=set)
+    include_guarded_files: set[Path] = field(default_factory=set)
     c_compiler: str = field(default_factory=_default_c_compiler)
     cxx_compiler: str = field(default_factory=_default_cxx_compiler)
     quiet: bool = False
@@ -175,6 +177,14 @@ class BuildContext:
         except FileNotFoundError:
             resolved = path
         self.cmake_files.add(resolved)
+
+    def record_configure_depend(self, path: Path) -> None:
+        """Track a path whose mtime should trigger reconfigure (e.g. GLOB dirs)."""
+        try:
+            resolved = path.resolve()
+        except OSError:
+            resolved = path
+        self.configure_depends.add(resolved)
 
     def get_library(self, name: str) -> Library | None:
         for lib in self.libraries:
@@ -248,10 +258,10 @@ class BuildContext:
                         f"undefined variable referenced: {var_name}", line
                     )
                     return ""
-                level = self.print_error if strict else self.print_warning
-                level(f"undefined variable referenced: {var_name}", line)
                 if strict:
-                    sys.exit(1)
+                    self.print_warning(
+                        f"undefined variable referenced: {var_name}", line
+                    )
                 return ""
             value = self.variables.get(var_name, "")
             if value == UNDEFINED_VAR_SENTINEL:

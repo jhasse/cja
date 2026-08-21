@@ -1,9 +1,12 @@
 """Tests for add_custom_command support."""
 
+import platform
 from pathlib import Path
 
 from cja.generator import BuildContext, process_commands
 from cja.parser import Command
+
+EXE_EXT = ".exe" if platform.system() == "Windows" else ""
 
 
 def test_add_custom_command_minimal() -> None:
@@ -68,6 +71,7 @@ def test_add_custom_command_multiple_outputs() -> None:
 def test_add_custom_command_integration() -> None:
     """Integration test: verify custom command generates build.ninja correctly."""
     import tempfile
+
     from cja.generator import configure
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -225,6 +229,33 @@ add_custom_command(
     )
 
 
+def test_add_custom_command_working_dir_under_source_is_relative(
+    tmp_path: Path,
+) -> None:
+    """Absolute WORKING_DIRECTORY under the source tree becomes a relative cd."""
+    from cja.generator import configure
+
+    source_dir = tmp_path
+    cmake_content = """\
+cmake_minimum_required(VERSION 3.10)
+project(WorkDirRelTest)
+
+add_custom_command(
+    OUTPUT out.txt
+    COMMAND echo hello
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/generated
+    VERBATIM
+)
+"""
+    (source_dir / "CMakeLists.txt").write_text(cmake_content)
+
+    configure(source_dir, "build")
+
+    ninja_content = (source_dir / "build.ninja").read_text()
+    assert "cd build/generated && echo hello" in ninja_content
+    assert f"cd {source_dir.as_posix()}/build/generated" not in ninja_content
+
+
 def test_add_custom_command_multiple_commands(tmp_path: Path) -> None:
     """Test that multiple COMMAND sections are correctly joined with &&."""
     from cja.generator import configure
@@ -380,6 +411,61 @@ add_custom_command(TARGET audioplayer POST_BUILD
     assert "'/fake/python3 -m cja'" not in ninja_content
     assert "/fake/python3" in ninja_content
     assert "-m" in ninja_content
+def test_add_custom_command_output_strips_generator_expressions(
+    tmp_path: Path,
+) -> None:
+    """Generator expressions in OUTPUT must be evaluated rather than emitted
+    verbatim, which would produce an invalid $-escape in build.ninja."""
+    from cja.generator import configure
+
+    source_dir = tmp_path
+    cmake_content = """\
+cmake_minimum_required(VERSION 3.10)
+project(GenexOutputTest)
+
+add_custom_command(
+    OUTPUT out$<$<BOOL:0>:_dbg>.txt
+    COMMAND echo hi
+)
+add_custom_target(gen ALL DEPENDS out$<$<BOOL:0>:_dbg>.txt)
+"""
+    (source_dir / "CMakeLists.txt").write_text(cmake_content)
+
+    configure(source_dir, "build")
+
+    ninja_content = (source_dir / "build.ninja").read_text()
+    assert "build $builddir/out.txt: custom_command" in ninja_content
+    assert "$<" not in ninja_content
+
+
+def test_add_custom_command_source_dependency_no_cycle(tmp_path: Path) -> None:
+    """A relative DEPENDS that names an existing source file must resolve to the
+    source (no $builddir prefix), even when an output shares that name, so we
+    don't create a self-dependency cycle."""
+    from cja.generator import configure
+
+    source_dir = tmp_path
+    cmake_content = """\
+cmake_minimum_required(VERSION 3.10)
+project(CopyCycleTest)
+
+add_custom_command(
+    OUTPUT data.bin
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/data.bin data.bin
+    DEPENDS data.bin
+)
+add_custom_target(copydata ALL DEPENDS data.bin)
+"""
+    (source_dir / "CMakeLists.txt").write_text(cmake_content)
+    (source_dir / "data.bin").write_text("payload")
+
+    configure(source_dir, "build")
+
+    ninja_content = (source_dir / "build.ninja").read_text()
+    # Output is in $builddir, but the source dependency stays unprefixed so the
+    # build edge does not depend on itself.
+    assert "build $builddir/data.bin: custom_command data.bin" in ninja_content
+    assert "custom_command $builddir/data.bin" not in ninja_content
 
 
 def test_add_custom_command_target_post_build_depends_on_exe(tmp_path: Path) -> None:
@@ -406,3 +492,70 @@ add_custom_command(TARGET myapp POST_BUILD COMMAND echo done)
     assert "myapp.post_build" in ninja_content
     # The executable itself should appear as a dependency of the stamp
     assert "$builddir/myapp" in ninja_content
+
+
+def test_add_custom_command_comment_not_in_depends(tmp_path: Path) -> None:
+    """COMMENT keyword and its value must not appear as dependencies."""
+    from cja.generator import configure
+
+    source_dir = tmp_path
+    cmake_content = """\
+cmake_minimum_required(VERSION 3.10)
+project(CommentTest)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/out.txt
+    COMMAND echo hello
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/input.txt
+    COMMENT "Generating out.txt"
+    VERBATIM
+)
+"""
+    (source_dir / "CMakeLists.txt").write_text(cmake_content)
+    (source_dir / "input.txt").write_text("")
+
+    configure(source_dir, "build")
+
+    ninja_content = (source_dir / "build.ninja").read_text()
+
+    assert "COMMENT" not in ninja_content
+    assert "Generating" not in ninja_content
+    assert "input.txt" in ninja_content
+
+
+def test_add_custom_command_depends_on_executable_target(tmp_path: Path) -> None:
+    """DEPENDS on an executable target name resolves to the built binary."""
+    from cja.generator import configure
+
+    source_dir = tmp_path
+    cmake_content = """\
+cmake_minimum_required(VERSION 3.10)
+project(TargetDepTest)
+
+add_executable(tool tool.c)
+
+add_custom_command(
+    OUTPUT generated.txt
+    COMMAND tool ARGS --write generated.txt
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    DEPENDS tool
+)
+"""
+    (source_dir / "CMakeLists.txt").write_text(cmake_content)
+    (source_dir / "tool.c").write_text("int main() { return 0; }\n")
+
+    configure(source_dir, "build")
+
+    ninja_content = (source_dir / "build.ninja").read_text()
+
+    # DEPENDS should reference the build output, not a source-relative path.
+    assert (
+        f"build $builddir/generated.txt: custom_command $builddir/tool{EXE_EXT}"
+        in ninja_content
+    )
+    # ARGS must not appear in the shell command.
+    assert " ARGS " not in ninja_content
+    # COMMAND tool is substituted with an absolute path to the built binary.
+    expected_tool = (tmp_path / "build" / f"tool{EXE_EXT}").as_posix()
+    assert expected_tool in ninja_content
+    assert "&& tool --write" not in ninja_content

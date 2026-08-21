@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from cja.build_context import BuildContext
-from cja.generator import configure, process_commands, generate_ninja
+from cja.generator import configure, generate_ninja, process_commands
 from cja.parser import Command
 from tests.helpers import copy_unignored_tree
 
@@ -143,6 +143,7 @@ def test_clang_tidy_example(tmp_path: Path) -> None:
         cwd=source_dir,
         capture_output=True,
         text=True,
+        check=False,
     )
     assert result.returncode != 0, "Build should fail due to clang-tidy error"
     assert "modernize-use-nullptr" in result.stdout

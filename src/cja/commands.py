@@ -1,23 +1,25 @@
 import glob as py_glob
 import hashlib
 import os
-from pathlib import Path
 import re
 import shlex
 import shutil
 import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
 from .build_context import (
     BuildContext,
     find_matching_endfunction,
     find_matching_endmacro,
 )
+from .parser import Command
 from .syntax import (
     FunctionDef,
     MacroDef,
     SourceFileProperties,
     evaluate_condition,
 )
-from .parser import Command
 from .targets import Executable, ImportedTarget, Library
 from .utils import (
     UNDEFINED_VAR_SENTINEL,
@@ -172,6 +174,20 @@ def handle_include_directories(
     else:
         ctx.directory_properties[abs_dir]["INCLUDE_DIRECTORIES"] = ";".join(dirs)
 
+    # Directory-level include dirs apply to all targets defined in this
+    # directory, including ones created before this call (matching CMake's
+    # generate-time directory property behavior).
+    for lib in ctx.libraries:
+        if lib.defined_file is not None and lib.defined_file.parent == ctx.current_source_dir:
+            for d in dirs:
+                if d not in lib.include_directories:
+                    lib.include_directories.append(d)
+    for exe in ctx.executables:
+        if exe.defined_file is not None and exe.defined_file.parent == ctx.current_source_dir:
+            for d in dirs:
+                if d not in exe.include_directories:
+                    exe.include_directories.append(d)
+
 
 def handle_target_link_libraries(
     ctx: BuildContext,
@@ -183,15 +199,16 @@ def handle_target_link_libraries(
         target_name = args[0]
         # Parse libraries with visibility keywords
         # CMake supports: target_link_libraries(<target> <PRIVATE|PUBLIC|INTERFACE> <item>...)
+        # Legacy keywords LINK_PUBLIC / LINK_PRIVATE are still used by some projects.
         visibility = "PUBLIC"  # Default visibility
         for arg in args[1:]:
             if len(arg) == 0:
                 continue  # Argument might be an empty variable, skip
-            if arg == "PUBLIC":
+            if arg in ("PUBLIC", "LINK_PUBLIC"):
                 visibility = "PUBLIC"
-            elif arg == "INTERFACE":
+            elif arg in ("INTERFACE", "LINK_INTERFACE_LIBRARIES"):
                 visibility = "INTERFACE"
-            elif arg == "PRIVATE":
+            elif arg in ("PRIVATE", "LINK_PRIVATE"):
                 visibility = "PRIVATE"
             else:
                 # It's a library name (may be a semicolon-separated list from
@@ -383,24 +400,29 @@ def handle_target_include_directories(
                 # Expand variables and resolve relative paths
                 expanded = ctx.expand_variables(arg, strict, cmd.line)
                 expanded = strip_generator_expressions(expanded, ctx.variables)
-                if "$<" in expanded:
-                    if not _is_supported_include_dir_genex(expanded):
-                        ctx.print_warning(
-                            f"generator expressions in target_include_directories are not yet supported: {arg}",
-                            cmd.line,
-                        )
+                if "$<" in expanded and not _is_supported_include_dir_genex(
+                    expanded
+                ):
+                    ctx.print_warning(
+                        f"generator expressions in target_include_directories are not yet supported: {arg}",
+                        cmd.line,
+                    )
                 if not expanded:
                     continue
-                expanded = resolve_cmake_path(expanded, ctx.current_source_dir)
-                if Path(expanded).is_absolute():
-                    expanded = str(Path(expanded).resolve())
-                if visibility == "PUBLIC":
-                    public_dirs.append(expanded)
-                    target_dirs.append(expanded)
-                elif visibility == "INTERFACE":
-                    public_dirs.append(expanded)
-                else:
-                    target_dirs.append(expanded)
+                for piece in expanded.split(";"):
+                    piece = piece.strip()
+                    if not piece:
+                        continue
+                    piece = resolve_cmake_path(piece, ctx.current_source_dir)
+                    if Path(piece).is_absolute():
+                        piece = str(Path(piece).resolve())
+                    if visibility == "PUBLIC":
+                        public_dirs.append(piece)
+                        target_dirs.append(piece)
+                    elif visibility == "INTERFACE":
+                        public_dirs.append(piece)
+                    else:
+                        target_dirs.append(piece)
         # Add directories to library or executable
         lib = ctx.get_library(target_name)
         if lib:
@@ -501,12 +523,9 @@ def handle_target_compile_options(
                 pass
             else:
                 expanded = ctx.expand_variables(arg, strict, cmd.line)
-                expanded = strip_generator_expressions(expanded, ctx.variables)
-                if "$<" in expanded:
-                    ctx.print_warning(
-                        f"generator expressions in target_compile_options are not yet supported: {arg}",
-                        cmd.line,
-                    )
+                # Keep generator expressions intact: $<COMPILE_LANGUAGE:...>
+                # and similar predicates are evaluated per-source at ninja
+                # generation time.
                 if not expanded:
                     continue
                 if visibility == "PUBLIC":
@@ -554,9 +573,7 @@ def handle_set_target_properties(
 
             for prop_name, prop_value in properties.items():
                 if imported_target is not None:
-                    if prop_name.startswith("IMPORTED_LOCATION") or prop_name.startswith(
-                        "IMPORTED_IMPLIB"
-                    ):
+                    if prop_name.startswith(("IMPORTED_LOCATION", "IMPORTED_IMPLIB")):
                         current = shlex.split(imported_target.libs) if imported_target.libs else []
                         current.append(prop_value)
                         imported_target.libs = " ".join(dict.fromkeys(current))
@@ -607,6 +624,12 @@ def handle_set_target_properties(
                             lib.public_include_directories.append(expanded)
                         elif exe:
                             exe.include_directories.append(expanded)
+                elif prop_name == "COMPILE_DEFINITIONS":
+                    defs = [d for d in prop_value.split(";") if d]
+                    if lib:
+                        lib.compile_definitions.extend(defs)
+                    elif exe:
+                        exe.compile_definitions.extend(defs)
                 else:
                     if lib:
                         lib.properties[prop_name] = prop_value
@@ -713,8 +736,10 @@ def handle_set_property(
                     else:
                         lib.compile_definitions = list(prop_values)
                 elif exe:
-                    # Executables don't have compile_definitions directly yet
-                    pass
+                    if append_mode:
+                        exe.compile_definitions.extend(prop_values)
+                    else:
+                        exe.compile_definitions = list(prop_values)
             else:
                 value = ";".join(prop_values)
                 if lib:
@@ -860,8 +885,7 @@ def handle_get_property(
             ctx.variables[var_name] = (
                 "1"
                 if (
-                    prop_name in ctx.global_properties
-                    and ctx.global_properties[prop_name]
+                    ctx.global_properties.get(prop_name)
                 )
                 else "0"
             )
@@ -881,9 +905,7 @@ def handle_get_property(
             elif prop_name == "COMPILE_DEFINITIONS" and lib:
                 value = ";".join(lib.compile_definitions)
 
-            if query_type == "DEFINED":
-                ctx.variables[var_name] = "1" if value else "0"
-            elif query_type == "SET":
+            if query_type == "DEFINED" or query_type == "SET":
                 ctx.variables[var_name] = "1" if value else "0"
             else:
                 ctx.variables[var_name] = value
@@ -907,9 +929,7 @@ def handle_get_property(
                 elif prop_name == "OBJECT_DEPENDS":
                     value = ";".join(file_props.object_depends)
 
-            if query_type == "DEFINED":
-                ctx.variables[var_name] = "1" if value else "0"
-            elif query_type == "SET":
+            if query_type == "DEFINED" or query_type == "SET":
                 ctx.variables[var_name] = "1" if value else "0"
             else:
                 ctx.variables[var_name] = value
@@ -1771,7 +1791,14 @@ def handle_math(
                 ctx.variables[var_name] = hex(int(result))
             else:
                 ctx.variables[var_name] = str(int(result))
-        except Exception as e:
+        except (
+            SyntaxError,
+            TypeError,
+            ValueError,
+            ZeroDivisionError,
+            OverflowError,
+            NameError,
+        ) as e:
             if strict:
                 ctx.print_error(
                     f"math(EXPR) failed to evaluate '{expr}': {e}", cmd.line
@@ -1909,19 +1936,20 @@ def handle_string(
                         for m in re.finditer(cmake_regex_to_python(pattern), full_input)
                     ]
                     ctx.variables[out_var] = ";".join(matches)
-            elif regex_sub == "REPLACE":
+            elif regex_sub == "REPLACE" and len(args) >= 6:
                 # string(REGEX REPLACE <regex> <replace_string> <out_var> <input> [<input>...])
-                if len(args) >= 6:
-                    pattern = args[2]
-                    replace_str = args[3]
-                    out_var = args[4]
-                    inputs = args[5:]
-                    full_input = "".join(inputs)
+                pattern = args[2]
+                replace_str = args[3]
+                out_var = args[4]
+                inputs = args[5:]
+                full_input = "".join(inputs)
 
-                    # CMake uses \1, \2 etc for backreferences, Python uses \1, \2
-                    # but also supports \g<1> which is safer.
-                    # Actually CMake's REGEX REPLACE is a bit different.
-                    ctx.variables[out_var] = re.sub(cmake_regex_to_python(pattern), replace_str, full_input)
+                # CMake uses \1, \2 etc for backreferences, Python uses \1, \2
+                # but also supports \g<1> which is safer.
+                # Actually CMake's REGEX REPLACE is a bit different.
+                ctx.variables[out_var] = re.sub(
+                    cmake_regex_to_python(pattern), replace_str, full_input
+                )
 
     elif subcommand == "SUBSTRING":
         # string(SUBSTRING <string> <begin> <length> <out_var>)
@@ -2035,6 +2063,138 @@ def handle_string(
                 result = "_" + result
             ctx.variables[out_var] = result
 
+    elif subcommand == "TIMESTAMP":
+        # string(TIMESTAMP <out_var> [<format string>] [UTC])
+        if len(args) >= 2:
+            out_var = args[1]
+            rest = args[2:]
+            use_utc = bool(rest) and rest[-1] == "UTC"
+            if use_utc:
+                rest = rest[:-1]
+            fmt = rest[0] if rest else None
+
+            # Honor SOURCE_DATE_EPOCH for reproducible builds, like CMake does.
+            source_date_epoch = os.environ.get("SOURCE_DATE_EPOCH")
+            if source_date_epoch is not None:
+                try:
+                    now = datetime.fromtimestamp(
+                        int(source_date_epoch), tz=timezone.utc
+                    )
+                    use_utc = True
+                except ValueError:
+                    now = datetime.now(timezone.utc if use_utc else None)
+            else:
+                now = datetime.now(timezone.utc if use_utc else None)
+
+            ctx.variables[out_var] = _cmake_timestamp_format(now, fmt, use_utc)
+
+    else:
+        if strict:
+            ctx.print_error(f"string() unknown subcommand: {subcommand}", cmd.line)
+            sys.exit(1)
+        else:
+            ctx.print_warning(
+                f"string() unknown subcommand: {subcommand}", cmd.line
+            )
+
+
+def _cmake_timestamp_format(
+    now: datetime, fmt: "str | None", use_utc: bool
+) -> str:
+    """Format a datetime using CMake's string(TIMESTAMP) format specifiers."""
+    if fmt is None:
+        fmt = "%Y-%m-%dT%H:%M:%SZ" if use_utc else "%Y-%m-%dT%H:%M:%S"
+
+    # %s (seconds since the UNIX epoch) is not portable via strftime, so handle
+    # it explicitly. Everything else CMake supports maps onto strftime.
+    result: list[str] = []
+    i = 0
+    while i < len(fmt):
+        ch = fmt[i]
+        if ch == "%" and i + 1 < len(fmt):
+            spec = fmt[i + 1]
+            if spec == "s":
+                result.append(str(int(now.timestamp())))
+            else:
+                result.append(now.strftime("%" + spec))
+            i += 2
+        else:
+            result.append(ch)
+            i += 1
+    return "".join(result)
+
+
+def _pattern_has_wildcard(pattern: str) -> bool:
+    return any(ch in pattern for ch in "*?[")
+
+
+def _glob_literal_dir(pattern: str, source_dir: Path) -> Path:
+    """Return the non-wildcard directory prefix of a glob pattern.
+
+    ``src/*.cpp`` → ``<source_dir>/src``; ``*.cpp`` → ``<source_dir>``.
+    """
+    path = Path(pattern)
+    parts = path.parts
+    prefix: list[str] = []
+    start = 0
+    if path.is_absolute() and parts:
+        prefix.append(parts[0])
+        start = 1
+    for part in parts[start:]:
+        if _pattern_has_wildcard(part):
+            break
+        prefix.append(part)
+    if path.is_absolute():
+        watch = Path(*prefix) if prefix else path.parent
+    elif not prefix:
+        watch = source_dir
+    else:
+        watch = source_dir.joinpath(*prefix)
+    if watch.is_file():
+        return watch.parent
+    return watch
+
+
+def _glob_configure_depend_dirs(
+    pattern: str, source_dir: Path, recursive: bool
+) -> list[Path]:
+    """Directories whose timestamps should trigger reconfigure for this glob.
+
+    Ninja restats directory mtimes, which update when entries are added,
+    removed, or renamed — enough to notice GLOB results changing.
+    """
+    watch = _glob_literal_dir(pattern, source_dir)
+    if not watch.is_dir():
+        return []
+    dirs = [watch]
+    if recursive:
+        for child in watch.rglob("*"):
+            if child.is_dir():
+                dirs.append(child)
+    return dirs
+
+
+def _cmake_glob_files(pattern: str, source_dir: Path, recursive: bool) -> list[str]:
+    """Match files like CMake file(GLOB) / file(GLOB_RECURSE)."""
+    if Path(pattern).is_absolute():
+        if not recursive or not _pattern_has_wildcard(pattern):
+            return py_glob.glob(pattern)
+        abs_parent = Path(pattern).parent
+        name = Path(pattern).name
+        return py_glob.glob(str(abs_parent / "**" / name), recursive=True)
+
+    full_pattern = str(source_dir / pattern)
+    if not recursive or not _pattern_has_wildcard(pattern):
+        return py_glob.glob(full_pattern)
+
+    parts = Path(pattern).parts
+    if len(parts) == 1:
+        return py_glob.glob(str(source_dir / "**" / pattern), recursive=True)
+
+    parent = Path(*parts[:-1])
+    name = parts[-1]
+    return py_glob.glob(str(source_dir / parent / "**" / name), recursive=True)
+
 
 def handle_file(
     ctx: BuildContext,
@@ -2062,17 +2222,13 @@ def handle_file(
             assert len(str(ctx.build_dir)) > 1
             # check that build_dir is below cwd:
             assert str(ctx.build_dir).startswith(str(Path.cwd()))
-            if strict:
-                # check that only writing to files below build_dir:
-                if not str(Path(filename).resolve()).startswith(
-                    str(ctx.build_dir.resolve())
-                ):
-                    ctx.print_warning(
-                        "writing to files ({}) outside of build directory ({}) is not allowed".format(
-                            filename, str(ctx.build_dir)
-                        ),
-                        cmd.line,
-                    )
+            if strict and not str(Path(filename).resolve()).startswith(
+                str(ctx.build_dir.resolve())
+            ):
+                ctx.print_warning(
+                    f"writing to files ({filename}) outside of build directory ({ctx.build_dir!s}) is not allowed",
+                    cmd.line,
+                )
             Path(filename).parent.mkdir(parents=True, exist_ok=True)
             with open(filename, mode) as f:
                 f.write(content)
@@ -2090,12 +2246,14 @@ def handle_file(
             else:
                 ctx.variables[var_name] = ""
 
-    elif subcommand == "GLOB":
+    elif subcommand in ("GLOB", "GLOB_RECURSE"):
         if len(args) >= 3:
+            recursive = subcommand == "GLOB_RECURSE"
             var_name = args[1]
             patterns: list[str] = []
             relative_base: Path | None = None
             list_directories: bool | None = None
+            configure_depends = False
 
             i = 2
             while i < len(args):
@@ -2109,6 +2267,7 @@ def handle_file(
                     i += 2
                     continue
                 if token_upper == "CONFIGURE_DEPENDS":
+                    configure_depends = True
                     i += 1
                     continue
                 if token_upper == "LIST_DIRECTORIES" and i + 1 < len(args):
@@ -2123,12 +2282,14 @@ def handle_file(
             matched_files: list[str] = []
             for pattern in patterns:
                 expanded_pattern = ctx.expand_variables(pattern, strict, cmd.line)
-                if Path(expanded_pattern).is_absolute():
-                    matched = py_glob.glob(expanded_pattern)
-                else:
-                    matched = py_glob.glob(
-                        str(ctx.current_source_dir / expanded_pattern)
-                    )
+                if configure_depends:
+                    for glob_dir in _glob_configure_depend_dirs(
+                        expanded_pattern, ctx.current_source_dir, recursive
+                    ):
+                        ctx.record_configure_depend(glob_dir)
+                matched = _cmake_glob_files(
+                    expanded_pattern, ctx.current_source_dir, recursive
+                )
                 if list_directories is False:
                     matched = [m for m in matched if not Path(m).is_dir()]
                 matched.sort()
@@ -2232,6 +2393,80 @@ def handle_file(
         # Stub for now, just succeeds
         pass
 
+    elif subcommand == "GENERATE":
+        # file(GENERATE OUTPUT <output> [INPUT <input> | CONTENT <content>]
+        #   [CONDITION <expr>] [TARGET <target>] [NEWLINE_STYLE ...] ...)
+        # CMake defers this to generation time, but cja evaluates commands
+        # sequentially so by the time we get here any INPUT produced by an
+        # earlier configure_file() already exists on disk.
+        output_path: str | None = None
+        input_path: str | None = None
+        content_val: str | None = None
+        condition_val: str | None = None
+        i = 1
+        while i < len(args):
+            token = args[i].upper()
+            if token == "OUTPUT" and i + 1 < len(args):
+                output_path = args[i + 1]
+                i += 2
+            elif token == "INPUT" and i + 1 < len(args):
+                input_path = args[i + 1]
+                i += 2
+            elif token == "CONTENT" and i + 1 < len(args):
+                content_val = args[i + 1]
+                i += 2
+            elif token == "CONDITION" and i + 1 < len(args):
+                condition_val = args[i + 1]
+                i += 2
+            else:
+                i += 1
+
+        if output_path is None:
+            if strict:
+                ctx.print_error("file(GENERATE) requires OUTPUT", cmd.line)
+                sys.exit(1)
+            return
+
+        if condition_val is not None:
+            condition_val = strip_generator_expressions(condition_val, ctx.variables)
+            if not is_truthy(condition_val):
+                return
+
+        # Generator expressions in the OUTPUT path (e.g. $<CONFIG>,
+        # $<LOWER_CASE:$<CONFIG>>) must resolve identically to how they are
+        # resolved in include directories so the generated header is found.
+        output_path = strip_generator_expressions(output_path, ctx.variables)
+        if not Path(output_path).is_absolute():
+            current_binary_dir = Path(
+                ctx.variables.get("CMAKE_CURRENT_BINARY_DIR", str(ctx.build_dir))
+            )
+            output_path = str(current_binary_dir / output_path)
+
+        if content_val is not None:
+            generated = strip_generator_expressions(content_val, ctx.variables)
+        elif input_path is not None:
+            input_path = strip_generator_expressions(input_path, ctx.variables)
+            src = Path(input_path)
+            if not src.is_absolute():
+                src = ctx.current_source_dir / src
+            if not src.exists():
+                if strict:
+                    ctx.print_error(
+                        f"file(GENERATE) input does not exist: {src}", cmd.line
+                    )
+                    sys.exit(1)
+                return
+            generated = src.read_text()
+        else:
+            if strict:
+                ctx.print_error("file(GENERATE) requires INPUT or CONTENT", cmd.line)
+                sys.exit(1)
+            return
+
+        dst = Path(output_path)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(generated)
+
 
 def handle_configure_file(
     ctx: BuildContext,
@@ -2318,9 +2553,7 @@ def handle_configure_file(
         def replace_at_var(match: re.Match[str]) -> str:
             var_name = match.group(1)
             value = ctx.variables.get(var_name, "")
-            if value == "" and var_name not in ctx.variables:
-                # In config templates, undefined vars are replaced with empty strings,
-                # even in strict mode; emit a warning for visibility.
+            if value == "" and var_name not in ctx.variables and strict:
                 ctx.print_warning(
                     f"undefined variable referenced: {var_name}", cmd.line
                 )
@@ -2330,11 +2563,251 @@ def handle_configure_file(
 
         # ${VAR} replacement (unless @ONLY)
         if not at_only:
-            # For template content, undefined ${VAR} should warn, not fail, in strict mode.
-            content = ctx.expand_variables(content, False, cmd.line)
+            content = ctx.expand_variables(content, strict, cmd.line)
 
         if escape_quotes:
             content = content.replace('"', '\\"')
 
     dst.parent.mkdir(parents=True, exist_ok=True)
     dst.write_text(content)
+
+
+def _make_c_identifier(value: str) -> str:
+    """Mirror CMake string(MAKE_C_IDENTIFIER)."""
+    result = re.sub(r"[^a-zA-Z0-9_]", "_", value)
+    if result and result[0].isdigit():
+        result = "_" + result
+    return result
+
+
+_EXPORT_HEADER_TEMPLATE = """
+#ifndef {include_guard_name}
+#define {include_guard_name}
+
+#ifdef {static_define}
+#  define {export_macro_name}
+#  define {no_export_macro_name}
+#else
+#  ifndef {export_macro_name}
+#    ifdef {export_import_condition}
+        /* We are building this library */
+#      define {export_macro_name} {define_export}
+#    else
+        /* We are using this library */
+#      define {export_macro_name} {define_import}
+#    endif
+#  endif
+
+#  ifndef {no_export_macro_name}
+#    define {no_export_macro_name} {define_no_export}
+#  endif
+#endif
+
+#ifndef {deprecated_macro_name}
+#  define {deprecated_macro_name} {define_deprecated}
+#endif
+
+#ifndef {deprecated_macro_name}_EXPORT
+#  define {deprecated_macro_name}_EXPORT {export_macro_name} {deprecated_macro_name}
+#endif
+
+#ifndef {deprecated_macro_name}_NO_EXPORT
+#  define {deprecated_macro_name}_NO_EXPORT {no_export_macro_name} {deprecated_macro_name}
+#endif
+
+/* NOLINTNEXTLINE(readability-avoid-unconditional-preprocessor-if) */
+#if {define_no_deprecated} /* DEFINE_NO_DEPRECATED */
+#  ifndef {no_deprecated_macro_name}
+#    define {no_deprecated_macro_name}
+#  endif
+#endif
+{custom_content}
+#endif /* {include_guard_name} */
+"""
+
+
+def handle_generate_export_header(
+    ctx: BuildContext,
+    cmd: Command,
+    args: list[str],
+    strict: bool,
+) -> None:
+    """Handle generate_export_header() from the GenerateExportHeader module."""
+    if not args:
+        if strict:
+            ctx.print_error("generate_export_header requires a target", cmd.line)
+            sys.exit(1)
+        return
+
+    target_name = args[0]
+    lib = ctx.get_library(target_name)
+    if lib is None:
+        if strict:
+            ctx.print_error(
+                f"generate_export_header given unknown target: {target_name}",
+                cmd.line,
+            )
+            sys.exit(1)
+        return
+
+    if lib.lib_type not in ("STATIC", "SHARED", "OBJECT", "MODULE"):
+        print(
+            f"CMake Warning at {ctx.current_list_file}:{cmd.line} "
+            f"(generate_export_header):\n"
+            f"  This macro can only be used with libraries"
+        )
+        return
+
+    options = {"DEFINE_NO_DEPRECATED"}
+    one_value = {
+        "PREFIX_NAME",
+        "BASE_NAME",
+        "EXPORT_MACRO_NAME",
+        "EXPORT_FILE_NAME",
+        "DEPRECATED_MACRO_NAME",
+        "NO_EXPORT_MACRO_NAME",
+        "STATIC_DEFINE",
+        "NO_DEPRECATED_MACRO_NAME",
+        "CUSTOM_CONTENT_FROM_VARIABLE",
+        "INCLUDE_GUARD_NAME",
+    }
+    parsed: dict[str, str | bool] = {}
+    i = 1
+    while i < len(args):
+        token = args[i]
+        if token in options:
+            parsed[token] = True
+            i += 1
+            continue
+        if token in one_value:
+            if i + 1 >= len(args):
+                if strict:
+                    ctx.print_error(
+                        f"generate_export_header missing value for {token}",
+                        cmd.line,
+                    )
+                    sys.exit(1)
+                return
+            parsed[token] = args[i + 1]
+            i += 2
+            continue
+        if strict:
+            ctx.print_error(
+                f'Unknown keywords given to generate_export_header(): "{token}"',
+                cmd.line,
+            )
+            sys.exit(1)
+        return
+
+    prefix_name = str(parsed.get("PREFIX_NAME", ""))
+    base_name = str(parsed.get("BASE_NAME", target_name))
+    base_upper = base_name.upper()
+    base_lower = base_name.lower()
+
+    export_macro_name = str(
+        parsed.get("EXPORT_MACRO_NAME", f"{prefix_name}{base_upper}_EXPORT")
+    )
+    if "EXPORT_MACRO_NAME" in parsed:
+        export_macro_name = f"{prefix_name}{export_macro_name}"
+    export_macro_name = _make_c_identifier(export_macro_name)
+
+    no_export_macro_name = str(
+        parsed.get("NO_EXPORT_MACRO_NAME", f"{prefix_name}{base_upper}_NO_EXPORT")
+    )
+    if "NO_EXPORT_MACRO_NAME" in parsed:
+        no_export_macro_name = f"{prefix_name}{no_export_macro_name}"
+    no_export_macro_name = _make_c_identifier(no_export_macro_name)
+
+    deprecated_macro_name = str(
+        parsed.get("DEPRECATED_MACRO_NAME", f"{prefix_name}{base_upper}_DEPRECATED")
+    )
+    if "DEPRECATED_MACRO_NAME" in parsed:
+        deprecated_macro_name = f"{prefix_name}{deprecated_macro_name}"
+    deprecated_macro_name = _make_c_identifier(deprecated_macro_name)
+
+    static_define = str(
+        parsed.get("STATIC_DEFINE", f"{prefix_name}{base_upper}_STATIC_DEFINE")
+    )
+    if "STATIC_DEFINE" in parsed:
+        static_define = f"{prefix_name}{static_define}"
+    static_define = _make_c_identifier(static_define)
+
+    no_deprecated_macro_name = str(
+        parsed.get(
+            "NO_DEPRECATED_MACRO_NAME", f"{prefix_name}{base_upper}_NO_DEPRECATED"
+        )
+    )
+    if "NO_DEPRECATED_MACRO_NAME" in parsed:
+        no_deprecated_macro_name = f"{prefix_name}{no_deprecated_macro_name}"
+    no_deprecated_macro_name = _make_c_identifier(no_deprecated_macro_name)
+
+    include_guard_name = str(
+        parsed.get("INCLUDE_GUARD_NAME", f"{export_macro_name}_H")
+    )
+
+    current_binary_dir = Path(
+        ctx.variables.get("CMAKE_CURRENT_BINARY_DIR", str(ctx.build_dir))
+    )
+    if "EXPORT_FILE_NAME" in parsed:
+        export_file_name = Path(str(parsed["EXPORT_FILE_NAME"]))
+        if not export_file_name.is_absolute():
+            export_file_name = current_binary_dir / export_file_name
+    else:
+        export_file_name = current_binary_dir / f"{base_lower}_export.h"
+
+    export_import_condition = lib.properties.get("DEFINE_SYMBOL", "")
+    if not export_import_condition:
+        export_import_condition = f"{target_name}_EXPORTS"
+    export_import_condition = _make_c_identifier(export_import_condition)
+
+    define_export = ""
+    define_import = ""
+    define_no_export = ""
+    define_deprecated = ""
+
+    win32 = is_truthy(ctx.variables.get("WIN32", ""))
+    cygwin = is_truthy(ctx.variables.get("CYGWIN", ""))
+
+    if not win32:
+        define_deprecated = "__attribute__ ((__deprecated__))"
+    else:
+        define_deprecated = "__declspec(deprecated)"
+
+    if lib.lib_type != "STATIC":
+        if win32 or cygwin:
+            define_export = "__declspec(dllexport)"
+            define_import = "__declspec(dllimport)"
+        else:
+            # Assume modern GCC/Clang hidden-visibility support (matches CMake
+            # on Linux/macOS after CheckCompilerFlag succeeds).
+            define_export = '__attribute__((visibility("default")))'
+            define_import = '__attribute__((visibility("default")))'
+            define_no_export = '__attribute__((visibility("hidden")))'
+
+    custom_content = ""
+    if "CUSTOM_CONTENT_FROM_VARIABLE" in parsed:
+        var_name = str(parsed["CUSTOM_CONTENT_FROM_VARIABLE"])
+        if var_name in ctx.variables:
+            custom_content = ctx.variables[var_name]
+
+    define_no_deprecated = "1" if parsed.get("DEFINE_NO_DEPRECATED") else "0"
+
+    content = _EXPORT_HEADER_TEMPLATE.format(
+        include_guard_name=include_guard_name,
+        static_define=static_define,
+        export_macro_name=export_macro_name,
+        no_export_macro_name=no_export_macro_name,
+        export_import_condition=export_import_condition,
+        define_export=define_export,
+        define_import=define_import,
+        define_no_export=define_no_export,
+        deprecated_macro_name=deprecated_macro_name,
+        define_deprecated=define_deprecated,
+        define_no_deprecated=define_no_deprecated,
+        no_deprecated_macro_name=no_deprecated_macro_name,
+        custom_content=custom_content,
+    )
+
+    export_file_name.parent.mkdir(parents=True, exist_ok=True)
+    if not export_file_name.exists() or export_file_name.read_text() != content:
+        export_file_name.write_text(content)

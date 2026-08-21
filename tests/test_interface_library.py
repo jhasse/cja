@@ -11,17 +11,12 @@ def test_interface_library_not_linked_as_l_flag(tmp_path: Path) -> None:
     source_dir.mkdir()
     (source_dir / "main.cpp").write_text("int main() { return 0; }\n")
     (source_dir / "CMakeLists.txt").write_text(
-        "\n".join(
-            [
-                "cmake_minimum_required(VERSION 3.15)",
-                "project(interface_link LANGUAGES CXX)",
-                "add_library(mylib INTERFACE)",
-                "target_include_directories(mylib INTERFACE include)",
-                "add_executable(app main.cpp)",
-                "target_link_libraries(app PRIVATE mylib)",
-            ]
-        )
-        + "\n"
+        "cmake_minimum_required(VERSION 3.15)\n"
+        "project(interface_link LANGUAGES CXX)\n"
+        "add_library(mylib INTERFACE)\n"
+        "target_include_directories(mylib INTERFACE include)\n"
+        "add_executable(app main.cpp)\n"
+        "target_link_libraries(app PRIVATE mylib)\n"
     )
 
     configure(source_dir, "build")

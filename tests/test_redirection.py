@@ -1,6 +1,7 @@
 """Test for shell redirection in add_custom_command."""
 
 from pathlib import Path
+
 from cja.generator import configure
 
 

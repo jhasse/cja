@@ -1,17 +1,16 @@
 """Tests for CLI argument handling."""
 
 import importlib.metadata
-import subprocess
 import platform
-from pathlib import Path
+import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
 from cja.cli import parse_define
-from cja.generator import configure
+from cja.generator import _quote_ninja_cmd_part, configure
 from tests.helpers import copy_unignored_tree
-
 
 EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
 EXE_EXT = ".exe" if platform.system() == "Windows" else ""
@@ -37,9 +36,10 @@ def test_parse_define_with_equals_in_value() -> None:
 def test_cli_version_flag() -> None:
     """Test cja CLI --version flag."""
     result = subprocess.run(
-        ["uv", "run", "cja", "--version"],
+        [sys.executable, "-m", "cja", "--version"],
         capture_output=True,
         text=True,
+        check=False,
     )
 
     assert result.returncode == 0
@@ -66,10 +66,11 @@ def test_cli_d_flag(tmp_path: Path) -> None:
     copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
 
     result = subprocess.run(
-        ["uv", "run", "cja", "-DCMAKE_BUILD_TYPE=Debug"],
+        [sys.executable, "-m", "cja", "-DCMAKE_BUILD_TYPE=Debug"],
         capture_output=True,
         text=True,
         cwd=source_dir,
+        check=False,
     )
     assert result.returncode == 0
 
@@ -86,8 +87,8 @@ def test_cli_multiple_d_flags(tmp_path: Path) -> None:
 
     result = subprocess.run(
         [
-            "uv",
-            "run",
+            sys.executable,
+            "-m",
             "cja",
             "-DCMAKE_BUILD_TYPE=Release",
             "-DENABLE_TESTS=ON",
@@ -95,6 +96,7 @@ def test_cli_multiple_d_flags(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
         cwd=source_dir,
+        check=False,
     )
     assert result.returncode == 0
 
@@ -146,10 +148,11 @@ def test_build_subcommand(tmp_path: Path) -> None:
     copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
 
     result = subprocess.run(
-        ["uv", "run", "cja", "build"],
+        [sys.executable, "-m", "cja", "build"],
         capture_output=True,
         text=True,
         cwd=source_dir,
+        check=False,
     )
     assert result.returncode == 0
 
@@ -164,10 +167,11 @@ def test_build_subcommand_release(tmp_path: Path) -> None:
     copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
 
     result = subprocess.run(
-        ["uv", "run", "cja", "build", "--release"],
+        [sys.executable, "-m", "cja", "build", "--release"],
         capture_output=True,
         text=True,
         cwd=source_dir,
+        check=False,
     )
     assert result.returncode == 0
 
@@ -188,20 +192,22 @@ def test_build_subcommand_skips_configure_if_ninja_exists(tmp_path: Path) -> Non
 
     # First build - should configure
     result1 = subprocess.run(
-        ["uv", "run", "cja", "build"],
+        [sys.executable, "-m", "cja", "build"],
         capture_output=True,
         text=True,
         cwd=source_dir,
+        check=False,
     )
     assert result1.returncode == 0
     assert "Configured" in result1.stdout
 
     # Second build - should skip configure
     result2 = subprocess.run(
-        ["uv", "run", "cja", "build"],
+        [sys.executable, "-m", "cja", "build"],
         capture_output=True,
         text=True,
         cwd=source_dir,
+        check=False,
     )
     assert result2.returncode == 0
     assert "Configured" not in result2.stdout
@@ -222,10 +228,11 @@ add_test(NAME mytest COMMAND echo "Hello from test")
     )
 
     result = subprocess.run(
-        ["uv", "run", "cja", "test"],
+        [sys.executable, "-m", "cja", "test"],
         capture_output=True,
         text=True,
         cwd=source_dir,
+        check=False,
     )
     assert result.returncode == 0
     assert "Running mytest" in result.stdout
@@ -238,10 +245,11 @@ def test_cli_make_directory(tmp_path: Path) -> None:
     assert not dir_path.exists()
 
     result = subprocess.run(
-        ["uv", "run", "cja", "-E", "make_directory", str(dir_path)],
+        [sys.executable, "-m", "cja", "-E", "make_directory", str(dir_path)],
         capture_output=True,
         text=True,
         cwd=tmp_path,
+        check=False,
     )
     assert result.returncode == 0
     assert dir_path.exists()
@@ -254,10 +262,11 @@ def test_unused_d_variable_warning(tmp_path: Path) -> None:
     copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
 
     result = subprocess.run(
-        ["uv", "run", "cja", "-DUNUSED_FOO=1", "-DUNUSED_BAR=2"],
+        [sys.executable, "-m", "cja", "-DUNUSED_FOO=1", "-DUNUSED_BAR=2"],
         capture_output=True,
         text=True,
         cwd=source_dir,
+        check=False,
     )
     assert result.returncode == 0
     assert "Manually-specified variables were not used by the project" in result.stderr
@@ -281,10 +290,11 @@ add_executable(used_d main.c)
     )
 
     result = subprocess.run(
-        ["uv", "run", "cja", "-DMY_FLAG=ON"],
+        [sys.executable, "-m", "cja", "-DMY_FLAG=ON"],
         capture_output=True,
         text=True,
         cwd=source_dir,
+        check=False,
     )
     assert result.returncode == 0
     assert "Manually-specified variables were not used" not in result.stderr
@@ -296,10 +306,11 @@ def test_unused_d_variable_warning_suppressed_by_quiet(tmp_path: Path) -> None:
     copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
 
     result = subprocess.run(
-        ["uv", "run", "cja", "--quiet", "-DUNUSED_FOO=1"],
+        [sys.executable, "-m", "cja", "--quiet", "-DUNUSED_FOO=1"],
         capture_output=True,
         text=True,
         cwd=source_dir,
+        check=False,
     )
     assert result.returncode == 0
     assert result.stderr == ""
@@ -311,10 +322,11 @@ def test_quiet_flag_suppresses_output(tmp_path: Path) -> None:
     copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
 
     result = subprocess.run(
-        ["uv", "run", "cja", "--quiet"],
+        [sys.executable, "-m", "cja", "--quiet"],
         capture_output=True,
         text=True,
         cwd=source_dir,
+        check=False,
     )
     assert result.returncode == 0
     assert result.stdout == ""
@@ -327,7 +339,7 @@ def test_quiet_flag_via_api(tmp_path: Path) -> None:
     copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
 
     import io
-    from contextlib import redirect_stdout, redirect_stderr
+    from contextlib import redirect_stderr, redirect_stdout
 
     stdout = io.StringIO()
     stderr = io.StringIO()
@@ -336,6 +348,119 @@ def test_quiet_flag_via_api(tmp_path: Path) -> None:
 
     assert stdout.getvalue() == ""
     assert stderr.getvalue() == ""
+
+
+def test_script_mode_basic(tmp_path: Path) -> None:
+    """cja -P runs a script file and stops after processing it."""
+    script = tmp_path / "hello.cmake"
+    script.write_text('message("hello-from-cja")\n')
+
+    result = subprocess.run(
+        [sys.executable, "-m", "cja", "-P", str(script)],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        check=False,
+    )
+    assert result.returncode == 0
+    assert "hello-from-cja" in result.stdout
+    assert not (tmp_path / "build.ninja").exists()
+
+
+def test_script_mode_define_variable(tmp_path: Path) -> None:
+    """-D variables passed before -P are visible in the script."""
+    script = tmp_path / "show.cmake"
+    script.write_text('message("FOO=${FOO}")\n')
+
+    result = subprocess.run(
+        [sys.executable, "-m", "cja", "-DFOO=bar", "-P", str(script)],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        check=False,
+    )
+    assert result.returncode == 0
+    assert "FOO=bar" in result.stdout
+
+
+def test_script_mode_argv_and_script_mode_file(tmp_path: Path) -> None:
+    """Script-mode variables CMAKE_ARGC/ARGV and CMAKE_SCRIPT_MODE_FILE are set."""
+    script = tmp_path / "argv.cmake"
+    script.write_text(
+        'message("ARGC=${CMAKE_ARGC}")\n'
+        'message("ARG2=${CMAKE_ARGV2}")\n'
+        'message("ARG3=${CMAKE_ARGV3}")\n'
+        'message("ARG4=${CMAKE_ARGV4}")\n'
+        'message("SCRIPT=${CMAKE_SCRIPT_MODE_FILE}")\n'
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-m", "cja", "-P", str(script), "alpha", "beta"],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        check=False,
+    )
+    assert result.returncode == 0
+    assert "ARGC=5" in result.stdout
+    assert f"ARG2={script}" in result.stdout
+    assert "ARG3=alpha" in result.stdout
+    assert "ARG4=beta" in result.stdout
+    assert f"SCRIPT={script}" in result.stdout
+
+
+def test_script_mode_missing_script(tmp_path: Path) -> None:
+    """cja -P without a script argument fails cleanly."""
+    result = subprocess.run(
+        [sys.executable, "-m", "cja", "-P"],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "-P requires a script" in result.stderr
+
+
+def test_quote_ninja_cmd_part_windows_paths() -> None:
+    """Windows Ninja commands must not use shlex single quotes for -D flags."""
+    if platform.system() != "Windows":
+        pytest.skip("Windows-specific quoting behavior")
+
+    quoted = _quote_ninja_cmd_part("-DBoost_INCLUDE_DIR=C:\\local\\boost_1_83_0")
+    assert quoted == "-DBoost_INCLUDE_DIR=C:/local/boost_1_83_0"
+    assert not quoted.startswith("'")
+
+
+def test_regenerate_during_build_via_ninja(tmp_path: Path) -> None:
+    """Ninja reconfigure rule should re-run cja with preserved -D flags."""
+    source_dir = tmp_path / "hello"
+    copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
+
+    result = subprocess.run(
+        [sys.executable, "-m", "cja", "-DMY_FLAG=ON"],
+        capture_output=True,
+        text=True,
+        cwd=source_dir,
+        check=False,
+    )
+    assert result.returncode == 0
+
+    build_ninja = source_dir / "build.ninja"
+    assert "-DMY_FLAG=ON" in build_ninja.read_text()
+
+    cmake_file = source_dir / "CMakeLists.txt"
+    cmake_file.write_text(cmake_file.read_text() + "\n# touch\n")
+
+    ninja_cmd = ["ninja", "-f", "build.ninja"]
+    result = subprocess.run(
+        ninja_cmd,
+        capture_output=True,
+        text=True,
+        cwd=source_dir,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_run_subcommand(tmp_path: Path) -> None:
@@ -351,9 +476,10 @@ add_executable(myexe main.c)
     )
 
     result = subprocess.run(
-        ["uv", "run", "cja", "run"],
+        [sys.executable, "-m", "cja", "run"],
         capture_output=True,
         text=True,
         cwd=source_dir,
+        check=False,
     )
     assert result.returncode == 42

@@ -1,6 +1,7 @@
 """Tests for find_package(Foo) using CMAKE_MODULE_PATH."""
 
 from pathlib import Path
+
 import pytest
 
 from cja.generator import BuildContext, generate_ninja, process_commands

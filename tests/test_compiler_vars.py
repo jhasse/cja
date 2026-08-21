@@ -1,7 +1,8 @@
 """Tests for CMAKE_C_COMPILER and CMAKE_CXX_COMPILER."""
 
-from pathlib import Path
 import platform
+from pathlib import Path
+
 from cja.generator import configure
 
 

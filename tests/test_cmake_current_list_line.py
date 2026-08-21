@@ -1,6 +1,7 @@
 """Tests for CMAKE_CURRENT_LIST_LINE variable."""
 
 from pathlib import Path
+
 from cja.generator import configure
 
 

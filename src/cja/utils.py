@@ -1,7 +1,6 @@
-from pathlib import Path
 import re
 import sys
-
+from pathlib import Path
 
 _DRIVE_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
 _UNC_PATH_RE = re.compile(r"^[\\/]{2}[^\\/]+[\\/][^\\/]+")
@@ -106,7 +105,7 @@ def make_relative(path_str: str, root: Path) -> str:
     try:
         path = Path(path_str)
         path_abs = path.resolve() if path.is_absolute() else path
-        root_abs = root.resolve() if root.is_absolute() else root.resolve()
+        root_abs = root.resolve()
         if path_abs.is_absolute() and path_abs.is_relative_to(root_abs):
             return to_posix_path(path_abs.relative_to(root_abs))
     except ValueError:
@@ -157,8 +156,16 @@ def strip_generator_expressions(
     variables: dict[str, str] | None = None,
     target_file_dirs: dict[str, str] | None = None,
     target_files: dict[str, str] | None = None,
+    compile_language: str | None = None,
 ) -> str:
-    """Strip or evaluate common CMake generator expressions."""
+    """Strip or evaluate common CMake generator expressions.
+
+    ``compile_language`` is the language being compiled (e.g. ``"C"``,
+    ``"CXX"``, ``"ASM"``).  When provided, ``$<COMPILE_LANGUAGE:LANG[,...]>``
+    is evaluated against it.  When ``None`` (target-level evaluation without
+    a specific source), language-gated expressions evaluate to false so they
+    do not leak into all sources.
+    """
     variables = variables or {}
 
     def split_top_level(text: str, sep: str, maxsplit: int = -1) -> list[str]:
@@ -210,6 +217,8 @@ def strip_generator_expressions(
             return expand_text(content[len("BUILD_INTERFACE:") :])
         if content.startswith("INSTALL_INTERFACE:"):
             return ""
+        if content == "SEMICOLON":
+            return ";"
         if content.startswith("BOOL:"):
             arg = expand_text(content[len("BOOL:") :])
             return "1" if is_truthy(arg) else "0"
@@ -258,18 +267,40 @@ def strip_generator_expressions(
             current = variables.get("CMAKE_C_COMPILER_ID", "")
             return "1" if current and current in args else "0"
         if content.startswith("TARGET_FILE_DIR:"):
-            target_name = expand_text(content[len("TARGET_FILE_DIR:"):])
+            target_name = expand_text(content[len("TARGET_FILE_DIR:") :])
             if target_file_dirs and target_name in target_file_dirs:
                 return target_file_dirs[target_name]
             return ""
         if content.startswith("TARGET_FILE:"):
-            target_name = expand_text(content[len("TARGET_FILE:"):])
+            target_name = expand_text(content[len("TARGET_FILE:") :])
             if target_files and target_name in target_files:
                 return target_files[target_name]
             return ""
         if content.startswith("TARGET_PROPERTY:"):
             # No property lookup support in generator expressions yet.
             return ""
+        if content == "CONFIG":
+            return variables.get("CMAKE_BUILD_TYPE", "")
+        if content.startswith("CONFIG:"):
+            current = variables.get("CMAKE_BUILD_TYPE", "")
+            cfgs = [
+                expand_text(a) for a in split_top_level(content[len("CONFIG:") :], ",")
+            ]
+            return "1" if any(c and current.lower() == c.lower() for c in cfgs) else "0"
+        if content.startswith("LOWER_CASE:"):
+            return expand_text(content[len("LOWER_CASE:") :]).lower()
+        if content.startswith("UPPER_CASE:"):
+            return expand_text(content[len("UPPER_CASE:") :]).upper()
+        if content == "COMPILE_LANGUAGE":
+            return compile_language or ""
+        if content.startswith("COMPILE_LANGUAGE:"):
+            if compile_language is None:
+                return "0"
+            langs = [
+                expand_text(a)
+                for a in split_top_level(content[len("COMPILE_LANGUAGE:") :], ",")
+            ]
+            return "1" if compile_language in langs else "0"
 
         # Generic conditional form: $<condition:string>
         cond_parts = split_top_level(content, ":", maxsplit=1)
@@ -299,5 +330,39 @@ def strip_generator_expressions(
 
     result = expand_text(value)
     if "\n" in result:
-        result = " ".join(result.split())
+        # Multi-line generator-expression output represents a CMake list;
+        # convert internal whitespace to ';' so callers can split it like
+        # any other list value.
+        result = ";".join(result.split())
+    return result
+
+
+def split_unquoted_list_args(value: str) -> list[str]:
+    """Split list arguments on semicolons outside generator expressions."""
+    if ";" not in value:
+        return [value]
+    result: list[str] = []
+    current: list[str] = []
+    genex_depth = 0
+    i = 0
+    while i < len(value):
+        if value.startswith("$<", i):
+            genex_depth += 1
+            current.append("$<")
+            i += 2
+            continue
+        ch = value[i]
+        if ch == ">" and genex_depth > 0:
+            genex_depth -= 1
+            current.append(ch)
+            i += 1
+            continue
+        if ch == ";" and genex_depth == 0:
+            result.append("".join(current))
+            current = []
+            i += 1
+            continue
+        current.append(ch)
+        i += 1
+    result.append("".join(current))
     return result

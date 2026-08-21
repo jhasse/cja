@@ -18,6 +18,7 @@ def has_pkg_config_gtest() -> bool:
         result = subprocess.run(
             ["pkg-config", "--exists", "gtest"],
             capture_output=True,
+            check=False,
         )
         return result.returncode == 0
     except FileNotFoundError:
@@ -31,6 +32,7 @@ def has_pkg_config_webp() -> bool:
             result = subprocess.run(
                 ["pkg-config", "--exists", candidate],
                 capture_output=True,
+                check=False,
             )
             if result.returncode == 0:
                 return True
@@ -108,12 +110,8 @@ def test_find_package_no_module_does_not_clear_required_in_module(
     module_dir = tmp_path / "cmake"
     module_dir.mkdir(parents=True)
     (module_dir / "FindLoopPkg.cmake").write_text(
-        "\n".join(
-            [
-                "find_package(LoopPkg QUIET NO_MODULE)",
-                "find_package_handle_standard_args(LoopPkg DEFAULT_MSG LOOPPKG_LIB)",
-            ]
-        )
+        "find_package(LoopPkg QUIET NO_MODULE)\n"
+        "find_package_handle_standard_args(LoopPkg DEFAULT_MSG LOOPPKG_LIB)\n"
     )
 
     ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
@@ -159,6 +157,22 @@ def test_gtest_imported_target_fallback_link_flags(tmp_path: Path) -> None:
     assert "/opt/lib/libgtest.a" in ninja_content
 
 
+def test_find_package_gtest_bundled_module_loads_googletest() -> None:
+    """Bundled FindGTest.cmake includes GoogleTest.cmake without errors.
+
+    FindGTest.cmake ends with `include(${CMAKE_CURRENT_LIST_DIR}/GoogleTest.cmake)`;
+    both files must ship together so strict-mode configures don't trip the
+    `include() could not find file` error.
+    """
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [Command(name="find_package", args=["GTest"], line=1)]
+
+    process_commands(commands, ctx, strict=True)
+
+    bundled_dir = Path(__file__).parent.parent / "src" / "cja" / "cmake" / "Modules"
+    assert (bundled_dir / "GoogleTest.cmake").exists()
+
+
 def test_find_package_gtest_with_if() -> None:
     """Test find_package(GTest) used in if condition."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
@@ -187,18 +201,14 @@ def test_find_package_gtest_alias_imported_targets(
     module_dir.mkdir(parents=True)
     find_gtest = module_dir / "FindGTest.cmake"
     find_gtest.write_text(
-        "\n".join(
-            [
-                "set(GTest_FOUND TRUE)",
-                "set(GTEST_FOUND TRUE)",
-                "add_library(GTest::gtest UNKNOWN IMPORTED)",
-                "add_library(GTest::gtest_main UNKNOWN IMPORTED)",
-                "add_library(GTest::GTest INTERFACE IMPORTED)",
-                "target_link_libraries(GTest::GTest INTERFACE GTest::gtest)",
-                "add_library(GTest::Main INTERFACE IMPORTED)",
-                "target_link_libraries(GTest::Main INTERFACE GTest::gtest_main)",
-            ]
-        )
+        "set(GTest_FOUND TRUE)\n"
+        "set(GTEST_FOUND TRUE)\n"
+        "add_library(GTest::gtest UNKNOWN IMPORTED)\n"
+        "add_library(GTest::gtest_main UNKNOWN IMPORTED)\n"
+        "add_library(GTest::GTest INTERFACE IMPORTED)\n"
+        "target_link_libraries(GTest::GTest INTERFACE GTest::gtest)\n"
+        "add_library(GTest::Main INTERFACE IMPORTED)\n"
+        "target_link_libraries(GTest::Main INTERFACE GTest::gtest_main)\n"
     )
 
     ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
@@ -229,21 +239,17 @@ def test_find_package_gtest_from_module_path(tmp_path: Path) -> None:
     module_dir.mkdir(parents=True)
     find_gtest = module_dir / "FindGTest.cmake"
     find_gtest.write_text(
-        "\n".join(
-            [
-                "set(GTest_FOUND TRUE)",
-                "set(GTEST_FOUND TRUE)",
-                'set(GTEST_INCLUDE_DIR "/usr/include")',
-                'set(GTEST_LIBRARIES "/usr/lib/libgtest.a")',
-                'set(GTEST_MAIN_LIBRARIES "/usr/lib/libgtest_main.a")',
-                "add_library(GTest::gtest UNKNOWN IMPORTED)",
-                "add_library(GTest::gtest_main UNKNOWN IMPORTED)",
-                "add_library(GTest::GTest INTERFACE IMPORTED)",
-                "target_link_libraries(GTest::GTest INTERFACE GTest::gtest)",
-                "add_library(GTest::Main INTERFACE IMPORTED)",
-                "target_link_libraries(GTest::Main INTERFACE GTest::gtest_main)",
-            ]
-        )
+        "set(GTest_FOUND TRUE)\n"
+        "set(GTEST_FOUND TRUE)\n"
+        'set(GTEST_INCLUDE_DIR "/usr/include")\n'
+        'set(GTEST_LIBRARIES "/usr/lib/libgtest.a")\n'
+        'set(GTEST_MAIN_LIBRARIES "/usr/lib/libgtest_main.a")\n'
+        "add_library(GTest::gtest UNKNOWN IMPORTED)\n"
+        "add_library(GTest::gtest_main UNKNOWN IMPORTED)\n"
+        "add_library(GTest::GTest INTERFACE IMPORTED)\n"
+        "target_link_libraries(GTest::GTest INTERFACE GTest::gtest)\n"
+        "add_library(GTest::Main INTERFACE IMPORTED)\n"
+        "target_link_libraries(GTest::Main INTERFACE GTest::gtest_main)\n"
     )
 
     ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
@@ -268,12 +274,8 @@ def test_find_package_gtest_required_failure_from_module(tmp_path: Path) -> None
     module_dir.mkdir(parents=True)
     find_gtest = module_dir / "FindGTest.cmake"
     find_gtest.write_text(
-        "\n".join(
-            [
-                'set(GTEST_LIBRARY "")',
-                "find_package_handle_standard_args(GTest DEFAULT_MSG GTEST_LIBRARY)",
-            ]
-        )
+        'set(GTEST_LIBRARY "")\n'
+        "find_package_handle_standard_args(GTest DEFAULT_MSG GTEST_LIBRARY)\n"
     )
 
     ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
@@ -408,8 +410,54 @@ def test_find_package_boost_found_via_pkg_config(
     assert "Boost::boost" in ctx.imported_targets
 
 
+def test_find_package_boost_component_library_variable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """find_package(Boost COMPONENTS ...) should set Boost_<COMPONENT>_LIBRARY,
+    matching CMake's FindBoost (e.g. Boost_UNIT_TEST_FRAMEWORK_LIBRARY)."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+
+    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        if cmd == ["pkg-config", "--exists", "boost"]:
+            return subprocess.CompletedProcess(cmd, 0)
+        if cmd == ["pkg-config", "--cflags", "boost"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="-I/usr/include")
+        if cmd == ["pkg-config", "--libs", "boost"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="")
+        if cmd == ["pkg-config", "--modversion", "boost"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="1.84.0")
+        if cmd == ["pkg-config", "--exists", "boost_unit_test_framework"]:
+            return subprocess.CompletedProcess(cmd, 0)
+        if cmd == ["pkg-config", "--cflags", "boost_unit_test_framework"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="")
+        if cmd == ["pkg-config", "--libs", "boost_unit_test_framework"]:
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout="-lboost_unit_test_framework"
+            )
+        return subprocess.CompletedProcess(cmd, 1)
+
+    monkeypatch.setattr("cja.generator.subprocess.run", fake_run)
+
+    commands = [
+        Command(
+            name="find_package",
+            args=["Boost", "REQUIRED", "COMPONENTS", "unit_test_framework"],
+            line=1,
+        )
+    ]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["Boost_FOUND"] == "TRUE"
+    assert ctx.variables["Boost_unit_test_framework_FOUND"] == "TRUE"
+    assert (
+        ctx.variables["Boost_UNIT_TEST_FRAMEWORK_LIBRARY"]
+        == "-lboost_unit_test_framework"
+    )
+
+
 def test_find_package_boost_required_component_missing(
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Test find_package(Boost REQUIRED COMPONENTS filesystem) failure."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
@@ -428,6 +476,9 @@ def test_find_package_boost_required_component_missing(
         return subprocess.CompletedProcess(cmd, 1)
 
     monkeypatch.setattr("cja.generator.subprocess.run", fake_run)
+    # Keep a Boost install that happens to be present on this machine out of
+    # the search, so the component really is missing.
+    monkeypatch.setattr("cja.find_package._default_boost_library_dirs", list)
 
     original_exists = Path.exists
 
@@ -448,6 +499,11 @@ def test_find_package_boost_required_component_missing(
     with pytest.raises(SystemExit) as exc_info:
         process_commands(commands, ctx)
     assert exc_info.value.code == 1
+
+    captured = capsys.readouterr()
+    assert "Boost not found. Checked the following locations:" in captured.err
+    assert "Missing components: filesystem" in captured.err
+    assert "Libraries:" in captured.err
 
 
 def test_find_package_boost_component_library_fallback(
@@ -515,7 +571,11 @@ def test_find_package_boost_component_library_fallback(
     assert ctx.variables["Boost_FOUND"] == "TRUE"
     assert ctx.variables["Boost_thread_FOUND"] == "TRUE"
     assert "Boost::thread" in ctx.imported_targets
-    assert ctx.imported_targets["Boost::thread"].libs == "-lboost_thread"
+    if platform.system() == "Windows":
+        # MSVC-style libraries are linked by path, not with a -l flag.
+        assert ctx.imported_targets["Boost::thread"].libs == str(fake_lib)
+    else:
+        assert ctx.imported_targets["Boost::thread"].libs == "-lboost_thread"
 
 
 def test_find_package_boost_header_only_component(
@@ -541,6 +601,9 @@ def test_find_package_boost_header_only_component(
         return subprocess.CompletedProcess(cmd, 1)
 
     monkeypatch.setattr("cja.generator.subprocess.run", fake_run)
+    # Keep a Boost install that happens to be present on this machine out of
+    # the search, so the header-only path is the only one available.
+    monkeypatch.setattr("cja.find_package._default_boost_library_dirs", list)
 
     # No library file exists for this component
     original_exists = Path.exists
@@ -603,6 +666,335 @@ def test_find_package_boost_targets_registered_without_components(
     assert "Boost::boost" in ctx.imported_targets
 
 
+def _pkg_config_misses_boost(cmd: list[str], **kwargs):  # type: ignore[no-untyped-def]
+    """Fake subprocess.run that reports Boost is unavailable via pkg-config."""
+    return subprocess.CompletedProcess(cmd, 1)
+
+
+def _clear_boost_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Remove environment hints so only the default search paths are used."""
+    for var in (
+        "BOOST_ROOT",
+        "BOOSTROOT",
+        "Boost_ROOT",
+        "BOOST_INCLUDEDIR",
+        "Boost_INCLUDEDIR",
+        "BOOST_INCLUDE_DIR",
+        "Boost_INCLUDE_DIR",
+        "BOOST_LIBRARYDIR",
+        "Boost_LIBRARYDIR",
+        "BOOST_LIBRARY_DIR",
+        "Boost_LIBRARY_DIR",
+        "CMAKE_PREFIX_PATH",
+    ):
+        monkeypatch.delenv(var, raising=False)
+
+
+def test_find_package_boost_found_via_boost_root(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Test find_package(Boost) via BOOST_ROOT environment variable."""
+    root = tmp_path / "boost_install"
+    inc = root / "include"
+    (inc / "boost").mkdir(parents=True)
+    (inc / "boost" / "version.hpp").write_text(
+        '#define BOOST_LIB_VERSION "1_84"\n',
+        encoding="utf-8",
+    )
+
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    monkeypatch.setattr("cja.generator.subprocess.run", _pkg_config_misses_boost)
+    monkeypatch.setenv("BOOST_ROOT", str(root))
+
+    commands = [Command(name="find_package", args=["Boost"], line=1)]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["Boost_FOUND"] == "TRUE"
+    assert ctx.variables["Boost_INCLUDE_DIR"] == str(inc)
+    assert "Boost::headers" in ctx.imported_targets
+
+
+def test_find_package_boost_found_via_boost_includedir(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Test find_package(Boost) via BOOST_INCLUDEDIR environment variable."""
+    inc = tmp_path / "include"
+    (inc / "boost").mkdir(parents=True)
+    (inc / "boost" / "version.hpp").write_text(
+        '#define BOOST_LIB_VERSION "1_84"\n',
+        encoding="utf-8",
+    )
+
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    monkeypatch.setattr("cja.generator.subprocess.run", _pkg_config_misses_boost)
+    monkeypatch.setenv("BOOST_INCLUDEDIR", str(inc))
+
+    commands = [Command(name="find_package", args=["Boost"], line=1)]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["Boost_FOUND"] == "TRUE"
+    assert ctx.variables["Boost_INCLUDE_DIR"] == str(inc)
+
+
+def test_find_package_boost_not_found_prints_search_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """When Boost is not found, print the header paths that were searched."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    # Avoid picking up a system Boost install via pkg-config or /usr/include.
+    monkeypatch.setattr("cja.find_package.subprocess.run", _pkg_config_misses_boost)
+    empty_include = tmp_path / "include"
+    empty_include.mkdir()
+    monkeypatch.setattr(
+        "cja.find_package._default_boost_include_dirs",
+        lambda: [empty_include],
+    )
+    monkeypatch.setattr(
+        "cja.find_package._default_boost_library_dirs",
+        lambda: [tmp_path / "lib"],
+    )
+    for var in (
+        "BOOST_ROOT",
+        "BOOSTROOT",
+        "Boost_ROOT",
+        "BOOST_INCLUDEDIR",
+        "Boost_INCLUDEDIR",
+        "BOOST_INCLUDE_DIR",
+        "Boost_INCLUDE_DIR",
+        "BOOST_LIBRARYDIR",
+        "Boost_LIBRARYDIR",
+        "CMAKE_PREFIX_PATH",
+    ):
+        monkeypatch.delenv(var, raising=False)
+
+    commands = [Command(name="find_package", args=["Boost"], line=1)]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["Boost_FOUND"] == "FALSE"
+    captured = capsys.readouterr()
+    assert "Boost not found. Checked the following locations:" in captured.err
+    assert "Headers (boost/version.hpp):" in captured.err
+    assert "boost\\version.hpp" in captured.err or "boost/version.hpp" in captured.err
+
+
+def test_boost_default_include_dirs_on_windows(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """On Windows the defaults must be the installer prefixes, not unix paths."""
+    from cja import find_package as find_package_module
+
+    local = tmp_path / "local"
+    (local / "boost_1_84_0").mkdir(parents=True)
+    (local / "boost_1_85_0").mkdir(parents=True)
+
+    monkeypatch.setattr("cja.find_package.platform.system", lambda: "Windows")
+    monkeypatch.setattr(
+        "cja.find_package._windows_boost_root_parents",
+        lambda: [local],
+    )
+
+    dirs = find_package_module._default_boost_include_dirs()
+
+    assert Path("/usr/include") not in dirs
+    assert Path("/usr/local/include") not in dirs
+    assert Path("/opt/homebrew/include") not in dirs
+    # The installers put the headers directly into the versioned prefix, and
+    # the newest install must win.
+    assert local / "boost_1_85_0" in dirs
+    assert dirs.index(local / "boost_1_85_0") < dirs.index(local / "boost_1_84_0")
+
+
+def test_boost_default_library_dirs_on_windows(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Windows library defaults must cover the toolset-specific directories."""
+    from cja import find_package as find_package_module
+
+    local = tmp_path / "local"
+    root = local / "boost_1_85_0"
+    (root / "lib64-msvc-14.3").mkdir(parents=True)
+    (root / "lib32-msvc-14.3").mkdir(parents=True)
+
+    monkeypatch.setattr("cja.find_package.platform.system", lambda: "Windows")
+    monkeypatch.setattr(
+        "cja.find_package._windows_boost_root_parents",
+        lambda: [local],
+    )
+
+    dirs = find_package_module._default_boost_library_dirs()
+
+    assert Path("/usr/lib") not in dirs
+    assert dirs.index(root / "lib64-msvc-14.3") < dirs.index(root / "lib32-msvc-14.3")
+    assert root / "lib" in dirs
+
+
+def test_find_package_boost_windows_installer_layout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """find_package(Boost) must find the layout produced by the Windows installer:
+    headers in the prefix itself and MSVC-suffixed libraries in lib64-msvc-*."""
+    root = tmp_path / "boost_1_85_0"
+    (root / "boost").mkdir(parents=True)
+    (root / "boost" / "version.hpp").write_text(
+        '#define BOOST_LIB_VERSION "1_85"\n',
+        encoding="utf-8",
+    )
+    lib_dir = root / "lib64-msvc-14.3"
+    lib_dir.mkdir()
+    release_lib = lib_dir / "boost_thread-vc143-mt-x64-1_85.lib"
+    release_lib.write_text("")
+    (lib_dir / "boost_thread-vc143-mt-gd-x64-1_85.lib").write_text("")
+
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    monkeypatch.setattr("cja.find_package.subprocess.run", _pkg_config_misses_boost)
+    monkeypatch.setattr("cja.find_package.platform.system", lambda: "Windows")
+    monkeypatch.setattr(
+        "cja.find_package._windows_boost_root_parents",
+        lambda: [tmp_path],
+    )
+    monkeypatch.setattr("cja.find_package._WINDOWS_BOOST_FIXED_ROOTS", ())
+    _clear_boost_env(monkeypatch)
+
+    commands = [
+        Command(
+            name="find_package",
+            args=["Boost", "REQUIRED", "COMPONENTS", "thread"],
+            line=1,
+        )
+    ]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["Boost_FOUND"] == "TRUE"
+    assert ctx.variables["Boost_INCLUDE_DIR"] == str(root)
+    assert ctx.variables["Boost_VERSION"] == "1.85"
+    # The debug variant must not be preferred over the release one.
+    assert ctx.imported_targets["Boost::thread"].libs == str(release_lib)
+
+
+def test_find_package_boost_not_found_lists_windows_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """The failure diagnostics must show Windows paths, including the installer
+    glob, instead of unix paths that can never exist on Windows."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    monkeypatch.setattr("cja.find_package.subprocess.run", _pkg_config_misses_boost)
+    monkeypatch.setattr("cja.find_package.platform.system", lambda: "Windows")
+    monkeypatch.setattr(
+        "cja.find_package._windows_boost_root_parents",
+        lambda: [tmp_path / "local"],
+    )
+    monkeypatch.setattr("cja.find_package._WINDOWS_BOOST_FIXED_ROOTS", ())
+    _clear_boost_env(monkeypatch)
+
+    commands = [Command(name="find_package", args=["Boost"], line=1)]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["Boost_FOUND"] == "FALSE"
+    captured = capsys.readouterr()
+    assert str(tmp_path / "local" / "boost_*") in captured.err
+    assert "/usr/include" not in captured.err
+    assert "usr\\include" not in captured.err
+    assert "homebrew" not in captured.err
+
+
+def test_find_package_boost_found_via_boost_include_dir_variable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Test find_package(Boost) via -DBoost_INCLUDE_DIR (CMake cache variable)."""
+    inc = tmp_path / "boost_root"
+    (inc / "boost").mkdir(parents=True)
+    (inc / "boost" / "version.hpp").write_text(
+        '#define BOOST_LIB_VERSION "1_83"\n',
+        encoding="utf-8",
+    )
+
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    ctx.variables["Boost_INCLUDE_DIR"] = str(inc)
+    monkeypatch.setattr("cja.generator.subprocess.run", _pkg_config_misses_boost)
+
+    commands = [Command(name="find_package", args=["Boost"], line=1)]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["Boost_FOUND"] == "TRUE"
+    assert ctx.variables["Boost_INCLUDE_DIR"] == str(inc)
+
+
+def test_find_package_boost_component_via_boost_librarydir(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Test find_package(Boost COMPONENTS ...) via BOOST_LIBRARYDIR."""
+    root = tmp_path / "boost_install"
+    inc = root / "include"
+    lib_dir = root / "lib"
+    (inc / "boost").mkdir(parents=True)
+    (inc / "boost" / "version.hpp").write_text(
+        '#define BOOST_LIB_VERSION "1_84"\n',
+        encoding="utf-8",
+    )
+    lib_dir.mkdir()
+    if platform.system() == "Windows":
+        lib_name = "boost_thread.lib"
+    elif platform.system() == "Darwin":
+        lib_name = "libboost_thread.dylib"
+    else:
+        lib_name = "libboost_thread.so"
+    (lib_dir / lib_name).write_text("")
+
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    monkeypatch.setattr("cja.generator.subprocess.run", _pkg_config_misses_boost)
+    monkeypatch.setenv("BOOST_ROOT", str(root))
+    monkeypatch.setenv("BOOST_INCLUDEDIR", str(inc))
+    monkeypatch.setenv("BOOST_LIBRARYDIR", str(lib_dir))
+
+    commands = [
+        Command(
+            name="find_package",
+            args=["Boost", "REQUIRED", "COMPONENTS", "thread"],
+            line=1,
+        )
+    ]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["Boost_FOUND"] == "TRUE"
+    assert ctx.variables["Boost_thread_FOUND"] == "TRUE"
+    assert "Boost::thread" in ctx.imported_targets
+
+
+def test_find_package_boost_found_via_cmake_prefix_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Test find_package(Boost) via CMAKE_PREFIX_PATH."""
+    prefix = tmp_path / "prefix"
+    inc = prefix / "include"
+    (inc / "boost").mkdir(parents=True)
+    (inc / "boost" / "version.hpp").write_text(
+        '#define BOOST_LIB_VERSION "1_84"\n',
+        encoding="utf-8",
+    )
+
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    ctx.variables["CMAKE_PREFIX_PATH"] = str(prefix)
+    monkeypatch.setattr("cja.generator.subprocess.run", _pkg_config_misses_boost)
+
+    commands = [Command(name="find_package", args=["Boost"], line=1)]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["Boost_FOUND"] == "TRUE"
+    assert ctx.variables["Boost_INCLUDE_DIR"] == str(inc)
+
+
 def test_find_package_png_found_via_pkg_config(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -655,3 +1047,101 @@ def test_find_package_png_required_missing(
     with pytest.raises(SystemExit) as exc_info:
         process_commands(commands, ctx)
     assert exc_info.value.code == 1
+
+
+def has_vulkan_headers() -> bool:
+    """Check if Vulkan headers are present on the system."""
+    import os
+
+    for inc in ("/usr/include", "/usr/local/include", "/opt/homebrew/include"):
+        if (Path(inc) / "vulkan" / "vulkan.h").exists():
+            return True
+    if os.environ.get("VULKAN_SDK"):
+        sdk_inc = Path(os.environ["VULKAN_SDK"]) / "include" / "vulkan" / "vulkan.h"
+        if sdk_inc.exists():
+            return True
+    return False
+
+
+def test_find_package_vulkan_found_via_pkg_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test find_package(Vulkan) when vulkan is available via pkg-config."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+
+    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        if cmd == ["pkg-config", "--exists", "vulkan"]:
+            return subprocess.CompletedProcess(cmd, 0)
+        if cmd == ["pkg-config", "--cflags", "vulkan"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="-I/usr/include")
+        if cmd == ["pkg-config", "--libs", "vulkan"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="-lvulkan")
+        if cmd == ["pkg-config", "--modversion", "vulkan"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="1.3.261")
+        return subprocess.CompletedProcess(cmd, 1)
+
+    monkeypatch.setattr("cja.generator.subprocess.run", fake_run)
+
+    commands = [Command(name="find_package", args=["Vulkan"], line=1)]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["Vulkan_FOUND"] == "TRUE"
+    assert ctx.variables["VULKAN_FOUND"] == "TRUE"
+    assert ctx.variables["Vulkan_LIBRARIES"] == "-lvulkan"
+    assert ctx.variables["Vulkan_LIBRARY"] == "-lvulkan"
+    assert ctx.variables["Vulkan_INCLUDE_DIRS"] == "/usr/include"
+    assert ctx.variables["Vulkan_INCLUDE_DIR"] == "/usr/include"
+    assert ctx.variables["Vulkan_VERSION"] == "1.3.261"
+    assert "Vulkan::Vulkan" in ctx.imported_targets
+
+
+def test_find_package_vulkan_required_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test find_package(Vulkan REQUIRED) failure when Vulkan is not found."""
+    if has_vulkan_headers():
+        pytest.skip("Vulkan headers present on system, can't test missing case")
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+
+    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        if cmd == ["pkg-config", "--exists", "vulkan"]:
+            return subprocess.CompletedProcess(cmd, 1)
+        return subprocess.CompletedProcess(cmd, 1)
+
+    monkeypatch.setattr("cja.generator.subprocess.run", fake_run)
+    monkeypatch.delenv("VULKAN_SDK", raising=False)
+
+    commands = [Command(name="find_package", args=["Vulkan", "REQUIRED"], line=1)]
+    with pytest.raises(SystemExit) as exc_info:
+        process_commands(commands, ctx)
+    assert exc_info.value.code == 1
+
+
+def test_find_package_vulkan_found_via_vulkan_sdk(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Test find_package(Vulkan) via VULKAN_SDK environment variable."""
+    sdk = tmp_path / "vulkan_sdk"
+    inc = sdk / "include" / "vulkan"
+    inc.mkdir(parents=True)
+    (inc / "vulkan.h").write_text("")
+    lib_dir = sdk / "lib"
+    lib_dir.mkdir()
+    (lib_dir / "libvulkan.so").write_text("")
+
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+
+    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        if cmd == ["pkg-config", "--exists", "vulkan"]:
+            return subprocess.CompletedProcess(cmd, 1)
+        return subprocess.CompletedProcess(cmd, 1)
+
+    monkeypatch.setattr("cja.generator.subprocess.run", fake_run)
+    monkeypatch.setenv("VULKAN_SDK", str(sdk))
+
+    commands = [Command(name="find_package", args=["Vulkan"], line=1)]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["Vulkan_FOUND"] == "TRUE"
+    assert "Vulkan::Vulkan" in ctx.imported_targets

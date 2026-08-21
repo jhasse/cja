@@ -1,6 +1,7 @@
 """Tests for CMAKE_C_FLAGS and CMAKE_CXX_FLAGS."""
 
 from pathlib import Path
+
 from cja.generator import configure
 
 

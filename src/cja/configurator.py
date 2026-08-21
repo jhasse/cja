@@ -1,9 +1,7 @@
 """CMake command processor and build context population."""
 
-from pathlib import Path
 import hashlib
 import os
-import platform
 import shlex
 import shutil
 import subprocess
@@ -12,33 +10,38 @@ import tarfile
 import typing
 import urllib.request
 import zipfile
+from contextlib import suppress
+from pathlib import Path
 
+from rich.progress import (
+    BarColumn,
+    DownloadColumn,
+    Progress,
+    TextColumn,
+    TimeRemainingColumn,
+    TransferSpeedColumn,
+)
 from termcolor import colored
 
-from .config_utils import (
-    build_foreach_info,
-    select_if_block,
-    _render_basic_package_version_file,
-    _render_package_init_block,
-)
-from .frame import Frame
 from .build_context import (
     BuildContext,
+    CustomCommand,
+    CustomTarget,
     TrackedDict,
 )
-from .parser import Command
 from .commands import (
     handle_add_executable,
     handle_add_library,
+    handle_cmake_dependent_option,
+    handle_cmake_parse_arguments,
     handle_configure_file,
     handle_file,
     handle_function,
+    handle_generate_export_header,
     handle_get_directory_property,
     handle_get_filename_component,
     handle_get_property,
     handle_include_directories,
-    handle_cmake_parse_arguments,
-    handle_cmake_dependent_option,
     handle_list,
     handle_macro,
     handle_math,
@@ -48,45 +51,170 @@ from .commands import (
     handle_set_target_properties,
     handle_string,
     handle_target_compile_definitions,
-    handle_target_compile_options,
     handle_target_compile_features,
+    handle_target_compile_options,
     handle_target_include_directories,
     handle_target_link_directories,
     handle_target_link_libraries,
     handle_target_sources,
     handle_unset,
 )
+from .config_utils import (
+    _render_basic_package_version_file,
+    _render_package_init_block,
+    build_foreach_info,
+    select_if_block,
+)
+from .find_commands import (
+    handle_find_file,
+    handle_find_library,
+    handle_find_path,
+    handle_find_program,
+)
+from .find_package import handle_builtin_find_package
+from .frame import Frame
+from .parser import Command
 from .syntax import (
     FetchContentInfo,
     SourceFileProperties,
     Test,
 )
+from .targets import ImportedTarget, InstallTarget
 from .utils import (
+    UNDEFINED_VAR_SENTINEL,
+    is_truthy,
     make_relative,
+    split_unquoted_list_args,
     status_marker,
     to_posix_path,
-    UNDEFINED_VAR_SENTINEL,
 )
-from .build_context import (
-    CustomCommand,
-    CustomTarget,
-)
-from rich.progress import (
-    Progress,
-    DownloadColumn,
-    TransferSpeedColumn,
-    BarColumn,
-    TextColumn,
-    TimeRemainingColumn,
-)
-from .targets import ImportedTarget, InstallTarget
-from .find_package import handle_builtin_find_package
 
 
 class ReturnFromFunction(Exception):
     """Exception raised to exit early from a function."""
 
-    pass
+
+
+def _check_source_compiles(
+    ctx: "BuildContext",
+    code: str,
+    language: str,
+    fail_regexes: list[str],
+) -> bool:
+    """Compile (and, unless CMAKE_TRY_COMPILE_TARGET_TYPE is STATIC_LIBRARY,
+    link) a snippet of source code, honoring the CMAKE_REQUIRED_* variables.
+
+    Mirrors the bits of CheckCSourceCompiles/CheckCXXSourceCompiles that real
+    projects rely on (flags, defs, includes, libraries, link options and
+    FAIL_REGEX).
+    """
+    import re
+    import tempfile
+
+    compiler = ctx.cxx_compiler if language == "CXX" else ctx.c_compiler
+    suffix = ".cpp" if language == "CXX" else ".c"
+
+    def _as_list(name: str) -> list[str]:
+        raw = ctx.variables.get(name, "")
+        if not raw:
+            return []
+        # CMAKE_REQUIRED_* are CMake lists (";"-separated); flags may also use
+        # spaces, which shlex handles.
+        items: list[str] = []
+        for part in raw.split(";"):
+            part = part.strip()
+            if part:
+                items.extend(shlex.split(part))
+        return items
+
+    required_flags = _as_list("CMAKE_REQUIRED_FLAGS")
+    required_defs = _as_list("CMAKE_REQUIRED_DEFINITIONS")
+    required_includes = _as_list("CMAKE_REQUIRED_INCLUDES")
+    required_link_options = _as_list("CMAKE_REQUIRED_LINK_OPTIONS")
+    required_libraries = _as_list("CMAKE_REQUIRED_LIBRARIES")
+    compiler_name = Path(compiler).name.lower()
+    msvc_like = compiler_name in {"cl", "cl.exe"} or compiler_name.startswith(
+        "clang-cl"
+    )
+    if not msvc_like:
+        # GNU-like command lines take libraries as -lfoo or as file paths.
+        # CMAKE_REQUIRED_LIBRARIES entries may be bare names ("dl", "m"),
+        # ".lib" names (on Windows), file paths, or already-formed flags;
+        # translate the first two while leaving the rest untouched.
+        translated_libraries: list[str] = []
+        for lib in required_libraries:
+            if lib.startswith("-") or "/" in lib or os.sep in lib:
+                translated_libraries.append(lib)
+            elif lib.lower().endswith(".lib") and Path(lib).name == lib:
+                translated_libraries.append(f"-l{lib[:-4]}")
+            elif Path(lib).exists() or lib.endswith(
+                (".a", ".so", ".dylib", ".o")
+            ):
+                translated_libraries.append(lib)
+            else:
+                translated_libraries.append(f"-l{lib}")
+        required_libraries = translated_libraries
+
+    # STATIC_LIBRARY means "compile only" (no linking), matching CMake's
+    # CMAKE_TRY_COMPILE_TARGET_TYPE handling.
+    compile_only = (
+        ctx.variables.get("CMAKE_TRY_COMPILE_TARGET_TYPE", "") == "STATIC_LIBRARY"
+    )
+
+    tmpdir = Path(tempfile.mkdtemp())
+    src_path = tmpdir / f"src{suffix}"
+    src_path.write_text(code, encoding="utf-8")
+    out_path = tmpdir / ("out.o" if compile_only else "out")
+
+    cmd: list[str] = [compiler]
+    cmd.extend(required_flags)
+    cmd.extend(required_defs)
+    for inc in required_includes:
+        cmd.append(f"-I{inc}")
+    if compile_only:
+        cmd.append("-c")
+    cmd.extend(["-o", str(out_path), str(src_path)])
+    if not compile_only:
+        cmd.extend(required_link_options)
+        cmd.extend(required_libraries)
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    except OSError:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        return False
+
+    output = (result.stdout or "") + (result.stderr or "")
+    shutil.rmtree(tmpdir, ignore_errors=True)
+
+    success = result.returncode == 0
+    if success and fail_regexes:
+        for pattern in fail_regexes:
+            try:
+                if re.search(pattern, output):
+                    success = False
+                    break
+            except re.error:
+                continue
+    return success
+
+
+def _parse_source_check_args(args: list[str]) -> tuple[str, str, list[str]]:
+    """Parse check_(c|cxx)_source_compiles(<code> <var> [FAIL_REGEX <re>...])."""
+    code = args[0]
+    result_var = args[1]
+    fail_regexes: list[str] = []
+    i = 2
+    while i < len(args):
+        if args[i] == "FAIL_REGEX":
+            i += 1
+            while i < len(args) and args[i] not in ("SRC_EXT",):
+                # FAIL_REGEX may be a single ";"-separated list or several args.
+                fail_regexes.extend(p for p in args[i].split(";") if p)
+                i += 1
+            continue
+        i += 1
+    return code, result_var, fail_regexes
 
 
 def process_commands(
@@ -99,109 +227,18 @@ def process_commands(
     ctx.variables["CMAKE_VERSION"] = "3.28.0"
     stack: list[Frame] = [Frame(commands=commands, pc=0, kind="commands")]
 
-    def split_unquoted_list_args(value: str) -> list[str]:
-        """Split list arguments on semicolons outside generator expressions."""
-        if ";" not in value:
-            return [value]
-        result: list[str] = []
-        current: list[str] = []
-        genex_depth = 0
-        i = 0
-        while i < len(value):
-            if value.startswith("$<", i):
-                genex_depth += 1
-                current.append("$<")
-                i += 2
-                continue
-            ch = value[i]
-            if ch == ">" and genex_depth > 0:
-                genex_depth -= 1
-                current.append(ch)
-                i += 1
-                continue
-            if ch == ";" and genex_depth == 0:
-                result.append("".join(current))
-                current = []
-                i += 1
-                continue
-            current.append(ch)
-            i += 1
-        result.append("".join(current))
-        return result
-
-    def _search_dirs_with_defaults(
-        kind: str, hints: list[str], paths: list[str]
-    ) -> list[str]:
-        """Build search dirs in CMake-like order: hints, paths, then defaults."""
-        dirs: list[str] = []
-        seen: set[str] = set()
-
-        def add_dir(candidate: str) -> None:
-            if not candidate:
-                return
-            path = candidate.strip()
-            if not path:
-                return
-            # Expand user-home paths to align with shell/env behavior.
-            path = os.path.expanduser(path)
-            if path in seen:
-                return
-            seen.add(path)
-            dirs.append(path)
-
-        for d in hints:
-            add_dir(d)
-        for d in paths:
-            add_dir(d)
-
-        cmake_prefix_path = ctx.variables.get("CMAKE_PREFIX_PATH", "")
-        for prefix in (
-            split_unquoted_list_args(cmake_prefix_path) if cmake_prefix_path else []
-        ):
-            if kind == "path":
-                add_dir(str(Path(prefix) / "include"))
-                add_dir(prefix)
-            else:
-                add_dir(str(Path(prefix) / "lib"))
-                add_dir(str(Path(prefix) / "lib64"))
-                add_dir(prefix)
-
-        env_prefix_path = os.environ.get("CMAKE_PREFIX_PATH", "")
-        for prefix in env_prefix_path.split(os.pathsep) if env_prefix_path else []:
-            if kind == "path":
-                add_dir(str(Path(prefix) / "include"))
-                add_dir(prefix)
-            else:
-                add_dir(str(Path(prefix) / "lib"))
-                add_dir(str(Path(prefix) / "lib64"))
-                add_dir(prefix)
-
-        if platform.system() == "Windows":
-            windows_roots = ["C:/Program Files", "C:/Program Files (x86)"]
-            for root in windows_roots:
-                if kind == "path":
-                    add_dir(str(Path(root) / "include"))
-                else:
-                    add_dir(str(Path(root) / "lib"))
-                add_dir(root)
-        else:
-            unix_defaults = ["/usr/local", "/usr"]
-            if platform.system() == "Darwin" and Path("/opt/homebrew").is_dir():
-                unix_defaults.insert(0, "/opt/homebrew")
-            for root in unix_defaults:
-                if kind == "path":
-                    add_dir(str(Path(root) / "include"))
-                else:
-                    add_dir(str(Path(root) / "lib"))
-                    add_dir(str(Path(root) / "lib64"))
-                    add_dir(str(Path(root) / "lib/x86_64-linux-gnu"))
-                    add_dir(str(Path(root) / "lib/aarch64-linux-gnu"))
-                add_dir(root)
-            if kind == "lib":
-                add_dir("/lib")
-                add_dir("/lib64")
-
-        return dirs
+    # State saved/restored by cmake_push_check_state()/cmake_pop_check_state().
+    check_state_vars = (
+        "CMAKE_REQUIRED_FLAGS",
+        "CMAKE_REQUIRED_DEFINITIONS",
+        "CMAKE_REQUIRED_LINK_OPTIONS",
+        "CMAKE_REQUIRED_LIBRARIES",
+        "CMAKE_REQUIRED_INCLUDES",
+        "CMAKE_REQUIRED_LINK_DIRECTORIES",
+        "CMAKE_REQUIRED_QUIET",
+        "CMAKE_EXTRA_INCLUDE_FILES",
+    )
+    check_state_stack: list[dict[str, str]] = []
 
     while stack:
         frame = stack[-1]
@@ -464,6 +501,12 @@ def process_commands(
         ctx.variables["CMAKE_CURRENT_LIST_LINE"] = str(cmd.line)
         expanded_args: list[str] = []
         for idx, arg in enumerate(cmd.args):
+            is_bracket = cmd.is_bracket[idx] if idx < len(cmd.is_bracket) else False
+            if is_bracket:
+                # Bracket arguments ([[...]] / [==[...]==]) are literal: no
+                # variable expansion and no list splitting.
+                expanded_args.append(arg)
+                continue
             allow_undefined = False
             allow_undefined_warning = "${${" in arg
             is_exact_var = (
@@ -573,7 +616,19 @@ def process_commands(
                             popped.on_exit()
                     continue
 
-                raise ReturnFromFunction()
+                # Directory-level return(): stop the current list file. For
+                # add_subdirectory(), pop back to the parent; for the top-level
+                # file, drain the remaining commands in the current frame.
+                exited_subdirectory = False
+                while len(stack) > 1:
+                    popped = stack.pop()
+                    if popped.on_exit:
+                        popped.on_exit()
+                    if popped.on_exit is not None:
+                        exited_subdirectory = True
+                        break
+                if not exited_subdirectory and stack and stack[-1].commands is not None:
+                    stack[-1].pc = len(stack[-1].commands)
                 continue
 
             case "break":
@@ -921,11 +976,14 @@ def process_commands(
                         "CheckCXXSymbolExists",
                         "CheckSymbolExists",
                         "CheckIncludeFiles",
+                        "CheckLibraryExists",
+                        "CheckFunctionExists",
                         "CheckTypeSize",
                         "CMakeDependentOption",
                         "CPack",
                         "FetchContent",
                         "FindPackageHandleStandardArgs",
+                        "GenerateExportHeader",
                         "GNUInstallDirs",
                     }
                     if module_name == "CTest":
@@ -1076,6 +1134,38 @@ def process_commands(
                             ctx.print_error(f"unknown module: {module_name}", cmd.line)
                             sys.exit(1)
 
+            case "include_guard":
+                scope = args[0].upper() if args else "DIRECTORY"
+                if scope not in ("DIRECTORY", "GLOBAL"):
+                    if strict:
+                        ctx.print_error(
+                            f"include_guard given unknown scope: {scope}", cmd.line
+                        )
+                        sys.exit(1)
+                    scope = "DIRECTORY"
+
+                guarded_file = ctx.current_list_file.resolve()
+                if guarded_file in ctx.include_guarded_files:
+                    scope_index = next(
+                        (
+                            i
+                            for i in range(len(stack) - 1, -1, -1)
+                            if stack[i].kind == "include"
+                        ),
+                        None,
+                    )
+                    if scope_index is not None:
+                        while len(stack) > scope_index:
+                            popped = stack.pop()
+                            if popped.on_exit:
+                                popped.on_exit()
+                        continue
+                    frame.pc = len(current_commands)
+                    continue
+                ctx.include_guarded_files.add(guarded_file)
+                frame.pc += 1
+                continue
+
             case "check_ipo_supported":
                 # check_ipo_supported(RESULT <var> [OUTPUT <var>] [LANGUAGES <lang>...])
                 result_var = None
@@ -1114,6 +1204,7 @@ def process_commands(
                         [ctx.c_compiler, "-flto", "-o", temp_out, temp_src],
                         capture_output=True,
                         text=True,
+                        check=False,
                     )
                     if result.returncode == 0:
                         supported = True
@@ -1121,7 +1212,7 @@ def process_commands(
                     else:
                         error_msg = result.stderr
                     Path(temp_src).unlink(missing_ok=True)
-                except Exception as e:
+                except OSError as e:
                     error_msg = str(e)
 
                 if result_var:
@@ -1181,7 +1272,7 @@ def process_commands(
 
                     # Check if the C++ compiler accepts the flag
                     supported = False
-                    try:
+                    with suppress(OSError):
                         import tempfile
 
                         with tempfile.NamedTemporaryFile(
@@ -1194,6 +1285,7 @@ def process_commands(
                             [ctx.cxx_compiler, flag, "-c", "-o", temp_out, temp_src],
                             capture_output=True,
                             text=True,
+                            check=False,
                         )
                         # Check return code and that there are no warnings about unknown flags
                         if result.returncode == 0:
@@ -1206,10 +1298,41 @@ def process_commands(
                                 supported = True
                         Path(temp_out).unlink(missing_ok=True)
                         Path(temp_src).unlink(missing_ok=True)
-                    except Exception:
-                        pass
-
                     ctx.variables[result_var] = "1" if supported else ""
+
+            case "cmake_push_check_state":
+                # cmake_push_check_state([RESET]) - save CMAKE_REQUIRED_* state.
+                snapshot = {
+                    name: ctx.variables.get(name, "") for name in check_state_vars
+                }
+                check_state_stack.append(snapshot)
+                if args and args[0] == "RESET":
+                    for name in check_state_vars:
+                        ctx.variables[name] = ""
+
+            case "cmake_pop_check_state":
+                # cmake_pop_check_state() - restore CMAKE_REQUIRED_* state.
+                if check_state_stack:
+                    snapshot = check_state_stack.pop()
+                    for name in check_state_vars:
+                        ctx.variables[name] = snapshot[name]
+
+            case "cmake_reset_check_state":
+                # cmake_reset_check_state() - clear CMAKE_REQUIRED_* state.
+                for name in check_state_vars:
+                    ctx.variables[name] = ""
+
+            case "check_c_source_compiles" | "check_cxx_source_compiles":
+                # check_(c|cxx)_source_compiles(<code> <var> [FAIL_REGEX <re>...])
+                if len(args) >= 2:
+                    code, result_var, fail_regexes = _parse_source_check_args(args)
+                    language = (
+                        "CXX" if cmd.name == "check_cxx_source_compiles" else "C"
+                    )
+                    success = _check_source_compiles(
+                        ctx, code, language, fail_regexes
+                    )
+                    ctx.variables[result_var] = "1" if success else ""
 
             case "check_c_compiler_flag":
                 # check_c_compiler_flag(<flag> <var>)
@@ -1219,7 +1342,7 @@ def process_commands(
 
                     # Check if the C compiler accepts the flag
                     supported = False
-                    try:
+                    with suppress(OSError):
                         import tempfile
 
                         with tempfile.NamedTemporaryFile(
@@ -1232,6 +1355,7 @@ def process_commands(
                             [ctx.c_compiler, flag, "-c", "-o", temp_out, temp_src],
                             capture_output=True,
                             text=True,
+                            check=False,
                         )
                         # Check return code and that there are no warnings about unknown flags
                         if result.returncode == 0:
@@ -1243,9 +1367,6 @@ def process_commands(
                                 supported = True
                         Path(temp_out).unlink(missing_ok=True)
                         Path(temp_src).unlink(missing_ok=True)
-                    except Exception:
-                        pass
-
                     ctx.variables[result_var] = "1" if supported else ""
 
             case "check_cxx_symbol_exists":
@@ -1262,7 +1383,7 @@ def process_commands(
 
                     # Check if the symbol exists by compiling a test program
                     found = False
-                    try:
+                    with suppress(OSError):
                         import tempfile
 
                         # Generate includes
@@ -1284,14 +1405,12 @@ int main() {{
                             [ctx.cxx_compiler, "-o", temp_out, temp_src],
                             capture_output=True,
                             text=True,
+                            check=False,
                         )
                         if result.returncode == 0:
                             found = True
                         Path(temp_out).unlink(missing_ok=True)
                         Path(temp_src).unlink(missing_ok=True)
-                    except Exception:
-                        pass
-
                     ctx.variables[variable] = "1" if found else ""
 
             case "try_compile":
@@ -1353,6 +1472,7 @@ int main() {{
                             [compiler, "-c", str(src_path), "-o", str(obj_path)],
                             capture_output=True,
                             text=True,
+                            check=False,
                         )
                         compile_output += result.stdout
                         compile_output += result.stderr
@@ -1363,6 +1483,83 @@ int main() {{
                     if output_var:
                         ctx.variables[output_var] = compile_output.strip()
 
+            case "check_function_exists":
+                # check_function_exists(<function> <variable>)
+                if len(args) >= 2:
+                    function = args[0]
+                    variable = args[-1]
+
+                    check_quiet = ctx.quiet or is_truthy(
+                        ctx.variables.get("CMAKE_REQUIRED_QUIET", "")
+                    )
+
+                    # Declare the function ourselves and call it so the linker
+                    # has to resolve the symbol, mirroring CMake's
+                    # CheckFunctionExists module. Reuse _check_source_compiles so
+                    # the CMAKE_REQUIRED_* variables (libraries, flags, link
+                    # options) are honored.
+                    test_code = f"""#ifdef __cplusplus
+extern "C"
+#endif
+char {function}(void);
+int main(void) {{
+    return (int)(long){function}();
+}}
+"""
+                    found = _check_source_compiles(ctx, test_code, "C", [])
+
+                    ctx.variables[variable] = "1" if found else ""
+                    if not check_quiet:
+                        color = "green" if found else "red"
+                        print(
+                            f"{colored(status_marker(found), color)} {function}"
+                        )
+
+            case "check_library_exists":
+                # check_library_exists(<library> <function> <location> <variable>)
+                if len(args) >= 4:
+                    library = args[0]
+                    function = args[1]
+                    location = args[2]
+                    variable = args[3]
+
+                    check_quiet = ctx.quiet or is_truthy(
+                        ctx.variables.get("CMAKE_REQUIRED_QUIET", "")
+                    )
+
+                    saved_libraries = ctx.variables.get("CMAKE_REQUIRED_LIBRARIES", "")
+                    saved_flags = ctx.variables.get("CMAKE_REQUIRED_FLAGS", "")
+                    libs = [p for p in saved_libraries.split(";") if p]
+                    libs.append(library)
+                    ctx.variables["CMAKE_REQUIRED_LIBRARIES"] = ";".join(libs)
+                    if location:
+                        flags = saved_flags
+                        loc_flag = f"-L{location}"
+                        ctx.variables["CMAKE_REQUIRED_FLAGS"] = (
+                            f"{flags} {loc_flag}".strip()
+                        )
+
+                    test_code = f"""#ifdef __cplusplus
+extern "C"
+#endif
+char {function}(void);
+int main(void) {{
+    return (int)(long){function}();
+}}
+"""
+                    found = _check_source_compiles(ctx, test_code, "C", [])
+
+                    ctx.variables["CMAKE_REQUIRED_LIBRARIES"] = saved_libraries
+                    if location:
+                        ctx.variables["CMAKE_REQUIRED_FLAGS"] = saved_flags
+
+                    ctx.variables[variable] = "1" if found else ""
+                    if not check_quiet:
+                        color = "green" if found else "red"
+                        print(
+                            f"{colored(status_marker(found), color)} {library}"
+                        )
+
             case "check_symbol_exists":
                 # check_symbol_exists(<symbol> <files> <variable>)
                 if len(args) >= 3:
@@ -1371,9 +1568,14 @@ int main() {{
                     files = args[1:-1]
                     if len(files) == 1 and ";" in files[0]:
                         files = files[0].split(";")
+                    files = [f for f in files if f]
+
+                    check_quiet = ctx.quiet or is_truthy(
+                        ctx.variables.get("CMAKE_REQUIRED_QUIET", "")
+                    )
 
                     found = False
-                    try:
+                    with suppress(OSError):
                         import tempfile
 
                         includes = "\n".join(f"#include <{f}>" for f in files)
@@ -1393,15 +1595,18 @@ int main() {{
                             [ctx.c_compiler, "-o", temp_out, temp_src],
                             capture_output=True,
                             text=True,
+                            check=False,
                         )
                         if result.returncode == 0:
                             found = True
                         Path(temp_out).unlink(missing_ok=True)
                         Path(temp_src).unlink(missing_ok=True)
-                    except Exception:
-                        pass
-
                     ctx.variables[variable] = "1" if found else ""
+                    if not check_quiet:
+                        color = "green" if found else "red"
+                        print(
+                            f"{colored(status_marker(found), color)} {symbol}"
+                        )
 
             case "check_include_files":
                 # check_include_files(<includes> <variable> [LANGUAGE <language>])
@@ -1429,7 +1634,7 @@ int main() {{
                     suffix = ".cpp" if language == "CXX" else ".c"
 
                     found = False
-                    try:
+                    with suppress(OSError):
                         import tempfile
 
                         includes = "\n".join(f"#include <{f}>" for f in files)
@@ -1444,14 +1649,12 @@ int main() {{
                             [compiler, "-o", temp_out, temp_src],
                             capture_output=True,
                             text=True,
+                            check=False,
                         )
                         if result.returncode == 0:
                             found = True
                         Path(temp_out).unlink(missing_ok=True)
                         Path(temp_src).unlink(missing_ok=True)
-                    except Exception:
-                        pass
-
                     ctx.variables[variable] = "1" if found else ""
 
             case "add_library":
@@ -1488,6 +1691,7 @@ int main() {{
 
                     lib = ctx.get_library(target_name)
                     exe = ctx.get_executable(target_name)
+                    target = lib or exe
 
                     if prop_name == "TYPE":
                         if lib:
@@ -1496,6 +1700,24 @@ int main() {{
                             ctx.variables[var_name] = "EXECUTABLE"
                         else:
                             ctx.variables[var_name] = f"{var_name}-NOTFOUND"
+                    elif target is None:
+                        ctx.variables[var_name] = f"{var_name}-NOTFOUND"
+                    elif prop_name == "INCLUDE_DIRECTORIES":
+                        dirs = (
+                            lib.include_directories
+                            if lib is not None
+                            else exe.include_directories  # type: ignore[union-attr]
+                        )
+                        ctx.variables[var_name] = ";".join(dirs) if dirs else ""
+                    elif prop_name == "INTERFACE_INCLUDE_DIRECTORIES":
+                        if lib is not None:
+                            ctx.variables[var_name] = ";".join(
+                                lib.public_include_directories
+                            )
+                        else:
+                            ctx.variables[var_name] = ""
+                    elif prop_name in target.properties:
+                        ctx.variables[var_name] = target.properties[prop_name]
                     else:
                         ctx.variables[var_name] = f"{var_name}-NOTFOUND"
 
@@ -1585,6 +1807,9 @@ int main() {{
 
             case "configure_file":
                 handle_configure_file(ctx, cmd, args, strict)
+
+            case "generate_export_header":
+                handle_generate_export_header(ctx, cmd, args, strict)
 
             case "configure_package_config_file":
                 # configure_package_config_file(<input> <output> INSTALL_DESTINATION <path> [PATH_VARS ...]
@@ -1726,6 +1951,36 @@ int main() {{
                             expanded
                         )
 
+            case "add_definitions":
+                # Legacy form of add_compile_definitions. Arguments typically
+                # look like -DFOO or -DFOO=1; strip the -D prefix so the
+                # generator can re-add it uniformly.
+                for arg in args:
+                    expanded = ctx.expand_variables(arg, strict, cmd.line)
+                    if not expanded:
+                        continue
+                    definition = (
+                        expanded.removeprefix("-D")
+                    )
+                    ctx.compile_definitions.append(definition)
+                    try:
+                        abs_dir = str(ctx.current_source_dir.resolve())
+                    except FileNotFoundError:
+                        abs_dir = str(ctx.current_source_dir.absolute())
+                    if abs_dir not in ctx.directory_properties:
+                        ctx.directory_properties[abs_dir] = {}
+                    existing = ctx.directory_properties[abs_dir].get(
+                        "COMPILE_DEFINITIONS"
+                    )
+                    if existing:
+                        ctx.directory_properties[abs_dir]["COMPILE_DEFINITIONS"] = (
+                            existing + ";" + definition
+                        )
+                    else:
+                        ctx.directory_properties[abs_dir]["COMPILE_DEFINITIONS"] = (
+                            definition
+                        )
+
             case "add_custom_command":
                 # Support TARGET form: add_custom_command(TARGET <name> POST_BUILD|PRE_BUILD|PRE_LINK COMMAND ...)
                 if args and args[0] == "TARGET":
@@ -1779,8 +2034,17 @@ int main() {{
                                 command_list.append([])
                         elif arg == "VERBATIM":
                             verbatim = True
+                            current_section = None
+                        elif arg == "ARGS":
+                            # Legacy CMake keyword; ignored.
+                            pass
+                        elif arg in ("COMMENT", "USES_TERMINAL", "COMMAND_EXPAND_LISTS", "DEPFILE", "JOB_POOL", "BYPRODUCTS"):
+                            current_section = arg  # values for these are ignored
                         else:
                             arg = ctx.expand_variables(arg, strict, cmd.line)
+                            if not arg:
+                                arg_idx += 1
+                                continue
                             if current_section == "OUTPUT":
                                 # Make relative to build_dir or source_dir
                                 rel = make_relative(arg, ctx.build_dir)
@@ -1790,11 +2054,21 @@ int main() {{
                             elif current_section == "COMMAND":
                                 command_list[-1].append(arg)
                             elif current_section == "DEPENDS":
-                                # Make relative to build_dir or source_dir
-                                rel = make_relative(arg, ctx.build_dir)
-                                if rel == arg:
-                                    rel = ctx.resolve_path(arg)
-                                depends.append(rel)
+                                # Target names stay bare so the generator can
+                                # map them to built artifacts. File paths are
+                                # resolved relative to build/source as usual.
+                                is_target = (
+                                    ctx.get_executable(arg) is not None
+                                    or ctx.get_library(arg) is not None
+                                    or any(ct.name == arg for ct in ctx.custom_targets)
+                                )
+                                if is_target:
+                                    depends.append(arg)
+                                else:
+                                    rel = make_relative(arg, ctx.build_dir)
+                                    if rel == arg:
+                                        rel = ctx.resolve_path(arg)
+                                    depends.append(rel)
                             elif current_section == "MAIN_DEPENDENCY":
                                 # Make relative to build_dir or source_dir
                                 rel = make_relative(arg, ctx.build_dir)
@@ -1844,17 +2118,31 @@ int main() {{
                         if arg == "VERBATIM":
                             ct_verbatim = True
                         ct_section = None
+                    elif arg == "ARGS":
+                        # Legacy CMake keyword; ignored.
+                        pass
                     elif arg == "SOURCES":
                         ct_section = "SOURCES"
                     else:
                         arg = ctx.expand_variables(arg, strict, cmd.line)
+                        if not arg:
+                            ct_idx += 1
+                            continue
                         if ct_section == "COMMAND":
                             ct_commands[-1].append(arg)
                         elif ct_section == "DEPENDS":
-                            rel = make_relative(arg, ctx.build_dir)
-                            if rel == arg:
-                                rel = ctx.resolve_path(arg)
-                            ct_depends.append(rel)
+                            is_target = (
+                                ctx.get_executable(arg) is not None
+                                or ctx.get_library(arg) is not None
+                                or any(ct.name == arg for ct in ctx.custom_targets)
+                            )
+                            if is_target:
+                                ct_depends.append(arg)
+                            else:
+                                rel = make_relative(arg, ctx.build_dir)
+                                if rel == arg:
+                                    rel = ctx.resolve_path(arg)
+                                ct_depends.append(rel)
                         elif ct_section == "WORKING_DIRECTORY":
                             ct_working_directory = arg
                         elif ct_section == "COMMENT":
@@ -2025,327 +2313,16 @@ int main() {{
                 pass
 
             case "find_program":
-                if len(args) >= 2:
-                    var_name = args[0]
-                    ctx.cache_variables.add(var_name)
-                    # Parse arguments: find_program(VAR name1 [name2...] [NAMES name1...] [REQUIRED])
-                    names: list[str] = []
-                    required = False
-                    arg_idx = 1
-                    while arg_idx < len(args):
-                        arg = args[arg_idx]
-                        if arg == "REQUIRED":
-                            required = True
-                        elif arg == "NAMES":
-                            # Collect names until next keyword or end
-                            arg_idx += 1
-                            while arg_idx < len(args) and args[arg_idx] not in (
-                                "REQUIRED",
-                                "PATHS",
-                                "HINTS",
-                                "DOC",
-                            ):
-                                names.append(args[arg_idx])
-                                arg_idx += 1
-                            continue
-                        elif arg not in ("PATHS", "HINTS", "DOC", "NO_CACHE"):
-                            names.append(arg)
-                        arg_idx += 1
-
-                    # Search for program
-                    found_path = None
-                    for name in names:
-                        found_path = shutil.which(name)
-                        if found_path:
-                            break
-
-                    if found_path:
-                        ctx.variables[var_name] = found_path
-                    else:
-                        ctx.variables[var_name] = f"{var_name}-NOTFOUND"
-                        if required:
-                            raise FileNotFoundError(
-                                f"Could not find program: {' or '.join(names)}"
-                            )
+                handle_find_program(ctx, cmd, args)
 
             case "find_path":
-                if len(args) >= 2:
-                    var_name = args[0]
-                    existing = ctx.variables.get(var_name, "")
-                    if var_name in ctx.cache_variables or (
-                        existing and not existing.endswith("-NOTFOUND")
-                    ):
-                        frame.pc += 1
-                        continue
-                    ctx.cache_variables.add(var_name)
-                    names: list[str] = []
-                    paths: list[str] = []
-                    hints: list[str] = []
-                    suffixes: list[str] = []
-                    required = False
+                handle_find_path(ctx, cmd, args)
 
-                    i = 1
-                    while i < len(args):
-                        arg = args[i]
-                        if arg == "NAMES":
-                            i += 1
-                            while i < len(args) and args[i] not in (
-                                "PATHS",
-                                "HINTS",
-                                "PATH_SUFFIXES",
-                                "REQUIRED",
-                            ):
-                                names.append(args[i])
-                                i += 1
-                            continue
-                        elif arg == "PATHS":
-                            i += 1
-                            while i < len(args) and args[i] not in (
-                                "NAMES",
-                                "HINTS",
-                                "PATH_SUFFIXES",
-                                "REQUIRED",
-                            ):
-                                if args[i] == "ENV" and i + 1 < len(args):
-                                    env_value = os.environ.get(args[i + 1], "")
-                                    if env_value:
-                                        paths.extend(
-                                            p for p in env_value.split(os.pathsep) if p
-                                        )
-                                    i += 2
-                                else:
-                                    paths.append(args[i])
-                                    i += 1
-                            continue
-                        elif arg == "HINTS":
-                            i += 1
-                            while i < len(args) and args[i] not in (
-                                "NAMES",
-                                "PATHS",
-                                "PATH_SUFFIXES",
-                                "REQUIRED",
-                            ):
-                                if args[i] == "ENV" and i + 1 < len(args):
-                                    env_value = os.environ.get(args[i + 1], "")
-                                    if env_value:
-                                        hints.extend(
-                                            p for p in env_value.split(os.pathsep) if p
-                                        )
-                                    i += 2
-                                else:
-                                    hints.append(args[i])
-                                    i += 1
-                            continue
-                        elif arg == "PATH_SUFFIXES":
-                            i += 1
-                            while i < len(args) and args[i] not in (
-                                "NAMES",
-                                "PATHS",
-                                "HINTS",
-                                "REQUIRED",
-                            ):
-                                suffixes.append(args[i])
-                                i += 1
-                            continue
-                        elif arg == "REQUIRED":
-                            required = True
-                        else:
-                            if not names:
-                                names.append(arg)
-                            else:
-                                paths.append(arg)
-                        i += 1
-
-                    search_dirs = _search_dirs_with_defaults("path", hints, paths)
-
-                    found_dir = None
-                    for name in names:
-                        # Check each search dir
-                        for d in search_dirs:
-                            # Try with suffixes
-                            for suffix in [""] + suffixes:
-                                base_path = Path(d) / suffix
-                                if (base_path / name).exists():
-                                    found_dir = str(base_path.absolute())
-                                    break
-                            if found_dir:
-                                break
-                        if found_dir:
-                            break
-
-                    if found_dir:
-                        ctx.variables[var_name] = found_dir
-                    else:
-                        ctx.variables[var_name] = f"{var_name}-NOTFOUND"
-                        if required:
-                            raise FileNotFoundError(
-                                f"Could not find path for: {', '.join(names)}"
-                            )
+            case "find_file":
+                handle_find_file(ctx, cmd, args)
 
             case "find_library":
-                if len(args) >= 2:
-                    var_name = args[0]
-                    existing = ctx.variables.get(var_name, "")
-                    if var_name in ctx.cache_variables or (
-                        existing and not existing.endswith("-NOTFOUND")
-                    ):
-                        frame.pc += 1
-                        continue
-                    ctx.cache_variables.add(var_name)
-                    names: list[str] = []
-                    paths: list[str] = []
-                    hints: list[str] = []
-                    suffixes: list[str] = []
-                    required = False
-
-                    j = 1
-                    while j < len(args):
-                        arg = args[j]
-                        if arg == "NAMES":
-                            j += 1
-                            while j < len(args) and args[j] not in (
-                                "PATHS",
-                                "HINTS",
-                                "PATH_SUFFIXES",
-                                "REQUIRED",
-                            ):
-                                names.append(args[j])
-                                j += 1
-                            continue
-                        elif arg == "PATHS":
-                            j += 1
-                            while j < len(args) and args[j] not in (
-                                "NAMES",
-                                "HINTS",
-                                "PATH_SUFFIXES",
-                                "REQUIRED",
-                            ):
-                                if args[j] == "ENV" and j + 1 < len(args):
-                                    env_value = os.environ.get(args[j + 1], "")
-                                    if env_value:
-                                        paths.extend(
-                                            p for p in env_value.split(os.pathsep) if p
-                                        )
-                                    j += 2
-                                else:
-                                    paths.append(args[j])
-                                    j += 1
-                            continue
-                        elif arg == "HINTS":
-                            j += 1
-                            while j < len(args) and args[j] not in (
-                                "NAMES",
-                                "PATHS",
-                                "PATH_SUFFIXES",
-                                "REQUIRED",
-                            ):
-                                if args[j] == "ENV" and j + 1 < len(args):
-                                    env_value = os.environ.get(args[j + 1], "")
-                                    if env_value:
-                                        hints.extend(
-                                            p for p in env_value.split(os.pathsep) if p
-                                        )
-                                    j += 2
-                                else:
-                                    hints.append(args[j])
-                                    j += 1
-                            continue
-                        elif arg == "PATH_SUFFIXES":
-                            j += 1
-                            while j < len(args) and args[j] not in (
-                                "NAMES",
-                                "PATHS",
-                                "HINTS",
-                                "REQUIRED",
-                            ):
-                                suffixes.append(args[j])
-                                j += 1
-                            continue
-                        elif arg == "REQUIRED":
-                            required = True
-                        else:
-                            if not names:
-                                names.append(arg)
-                            else:
-                                paths.append(arg)
-                        j += 1
-
-                    search_dirs = _search_dirs_with_defaults("lib", hints, paths)
-
-                    if platform.system() == "Darwin":
-                        default_framework_dirs = [
-                            "/System/Library/Frameworks",
-                            "/Library/Frameworks",
-                        ]
-                        for d in default_framework_dirs:
-                            if d not in search_dirs:
-                                search_dirs.append(d)
-
-                    # Standard library extensions
-                    if platform.system() == "Darwin":
-                        extensions = [".dylib", ".tbd", ".a"]
-                    elif platform.system() == "Windows":
-                        extensions = [".lib", ".dll.a", ".a"]
-                    else:
-                        extensions = [".so", ".a"]
-
-                    found_lib = None
-                    for name in names:
-                        if platform.system() == "Darwin":
-                            framework_name = (
-                                name
-                                if name.endswith(".framework")
-                                else f"{name}.framework"
-                            )
-                            for d in search_dirs:
-                                for suffix in [""] + suffixes:
-                                    base_path = Path(d) / suffix
-                                    framework_path = base_path / framework_name
-                                    if framework_path.exists():
-                                        found_lib = str(framework_path.absolute())
-                                        break
-                                if found_lib:
-                                    break
-                            if found_lib:
-                                break
-
-                        # Construct potential filenames
-                        lib_filenames = []
-                        if name.startswith("lib") and (
-                            name.endswith(".a")
-                            or name.endswith(".so")
-                            or name.endswith(".dylib")
-                        ):
-                            lib_filenames.append(name)
-                        else:
-                            for ext in extensions:
-                                lib_filenames.append(f"lib{name}{ext}")
-                                if platform.system() == "Windows":
-                                    lib_filenames.append(f"{name}{ext}")
-
-                        for d in search_dirs:
-                            for suffix in [""] + suffixes:
-                                base_path = Path(d) / suffix
-                                for filename in lib_filenames:
-                                    candidate = base_path / filename
-                                    if candidate.exists():
-                                        found_lib = str(candidate.absolute())
-                                        break
-                                if found_lib:
-                                    break
-                            if found_lib:
-                                break
-                        if found_lib:
-                            break
-
-                    if found_lib:
-                        ctx.variables[var_name] = found_lib
-                    else:
-                        ctx.variables[var_name] = f"{var_name}-NOTFOUND"
-                        if required:
-                            raise FileNotFoundError(
-                                f"Could not find library: {', '.join(names)}"
-                            )
+                handle_find_library(ctx, cmd, args)
 
             case "find_package_handle_standard_args":
                 # Minimal implementation modeled after CMake's
@@ -2645,6 +2622,256 @@ int main() {{
                                     f"{colored(status_marker(False), 'red')} {package_name}"
                                 )
 
+            case "flex_target":
+                # FLEX_TARGET(<Name> <FlexInput> <FlexOutput>
+                #             [COMPILE_FLAGS <flags>] [DEFINES_FILE <file>])
+                if len(args) < 3:
+                    if strict:
+                        ctx.print_error(
+                            "FLEX_TARGET requires Name, FlexInput, and FlexOutput",
+                            cmd.line,
+                        )
+                        sys.exit(1)
+                    frame.pc += 1
+                    continue
+
+                flex_name = args[0]
+                flex_input = args[1]
+                flex_output = args[2]
+                flex_compile_flags: list[str] = []
+                flex_defines_file: str | None = None
+
+                arg_idx = 3
+                while arg_idx < len(args):
+                    token = args[arg_idx]
+                    if token == "COMPILE_FLAGS" and arg_idx + 1 < len(args):
+                        flex_compile_flags = shlex.split(args[arg_idx + 1])
+                        arg_idx += 2
+                    elif token == "DEFINES_FILE" and arg_idx + 1 < len(args):
+                        flex_defines_file = args[arg_idx + 1]
+                        arg_idx += 2
+                    else:
+                        arg_idx += 1
+
+                flex_exe = ctx.variables.get("FLEX_EXECUTABLE", "") or "flex"
+                current_binary_dir = Path(
+                    ctx.variables.get(
+                        "CMAKE_CURRENT_BINARY_DIR", str(ctx.build_dir)
+                    )
+                )
+
+                def _absolute_against(path_str: str, base: Path) -> str:
+                    p = Path(path_str)
+                    if p.is_absolute():
+                        return str(p)
+                    return str((base / p).resolve())
+
+                def _build_relative_or_source_relative(abs_path: str) -> str:
+                    """Return path for custom_command.outputs: relative to build_dir
+                    when under it (so the generator adds `$builddir/`), else relative
+                    to source_dir."""
+                    rel = make_relative(abs_path, ctx.build_dir)
+                    if rel != abs_path:
+                        return rel
+                    return make_relative(abs_path, ctx.source_dir)
+
+                input_abs = _absolute_against(flex_input, ctx.current_source_dir)
+                input_rel = make_relative(input_abs, ctx.source_dir)
+
+                # Per CMake's FindFLEX: a relative FlexOutput is anchored to
+                # CMAKE_CURRENT_BINARY_DIR, and FLEX_<Name>_OUTPUTS is set to that
+                # full path. We store it relative to source_dir so it composes with
+                # the rest of cja's path conventions.
+                output_abs = _absolute_against(flex_output, current_binary_dir)
+                output_var = make_relative(output_abs, ctx.source_dir)
+                output_cc = _build_relative_or_source_relative(output_abs)
+
+                flex_outputs_var = [output_var]
+                flex_outputs_cc = [output_cc]
+                header_var: str | None = None
+                header_abs: str | None = None
+                if flex_defines_file:
+                    header_abs = _absolute_against(
+                        flex_defines_file, current_binary_dir
+                    )
+                    header_var = make_relative(header_abs, ctx.source_dir)
+                    header_cc = _build_relative_or_source_relative(header_abs)
+                    flex_outputs_var.append(header_var)
+                    flex_outputs_cc.append(header_cc)
+
+                flex_cmd = [flex_exe]
+                if header_var:
+                    flex_cmd.append(f"--header-file={header_var}")
+                flex_cmd.extend(flex_compile_flags)
+                flex_cmd.extend(["-o", output_var, input_rel])
+
+                ctx.custom_commands.append(
+                    CustomCommand(
+                        outputs=flex_outputs_cc,
+                        commands=[flex_cmd],
+                        depends=[input_rel],
+                        main_dependency=input_rel,
+                        working_directory=None,
+                        verbatim=False,
+                        defined_file=ctx.current_list_file,
+                        defined_line=cmd.line,
+                    )
+                )
+
+                ctx.variables[f"FLEX_{flex_name}_DEFINED"] = "TRUE"
+                ctx.variables[f"FLEX_{flex_name}_OUTPUTS"] = ";".join(
+                    flex_outputs_var
+                )
+                ctx.variables[f"FLEX_{flex_name}_INPUT"] = input_rel
+                ctx.variables[f"FLEX_{flex_name}_COMPILE_FLAGS"] = " ".join(
+                    flex_compile_flags
+                )
+                if header_var:
+                    ctx.variables[f"FLEX_{flex_name}_OUTPUT_HEADER"] = header_var
+
+            case "bison_target":
+                # BISON_TARGET(<Name> <BisonInput> <BisonOutput>
+                #              [COMPILE_FLAGS <flags>]
+                #              [DEFINES_FILE <file>]
+                #              [REPORT_FILE <file>]
+                #              [VERBOSE] [REPORT])
+                if len(args) < 3:
+                    if strict:
+                        ctx.print_error(
+                            "BISON_TARGET requires Name, BisonInput, and BisonOutput",
+                            cmd.line,
+                        )
+                        sys.exit(1)
+                    frame.pc += 1
+                    continue
+
+                bison_name = args[0]
+                bison_input = args[1]
+                bison_output = args[2]
+                bison_compile_flags: list[str] = []
+                bison_defines_file: str | None = None
+                bison_report_file: str | None = None
+
+                arg_idx = 3
+                while arg_idx < len(args):
+                    token = args[arg_idx]
+                    if token == "COMPILE_FLAGS" and arg_idx + 1 < len(args):
+                        bison_compile_flags = shlex.split(args[arg_idx + 1])
+                        arg_idx += 2
+                    elif token == "DEFINES_FILE" and arg_idx + 1 < len(args):
+                        bison_defines_file = args[arg_idx + 1]
+                        arg_idx += 2
+                    elif token == "REPORT_FILE" and arg_idx + 1 < len(args):
+                        bison_report_file = args[arg_idx + 1]
+                        arg_idx += 2
+                    elif token in ("VERBOSE", "REPORT"):
+                        arg_idx += 1
+                    else:
+                        arg_idx += 1
+
+                bison_exe = ctx.variables.get("BISON_EXECUTABLE", "") or "bison"
+                bison_current_binary_dir = Path(
+                    ctx.variables.get(
+                        "CMAKE_CURRENT_BINARY_DIR", str(ctx.build_dir)
+                    )
+                )
+
+                def _bison_input_absolute(path_str: str) -> str:
+                    p = Path(path_str)
+                    if p.is_absolute():
+                        return str(p)
+                    return str((ctx.current_source_dir / p).resolve())
+
+                def _bison_output_absolute(
+                    path_str: str, binary_dir: Path = bison_current_binary_dir
+                ) -> str:
+                    p = Path(path_str)
+                    if p.is_absolute():
+                        return str(p)
+                    return str((binary_dir / p).resolve())
+
+                def _bison_output_cc(abs_path: str) -> str:
+                    """Path for custom_command.outputs: relative to build_dir when
+                    under it (so the generator adds `$builddir/`), else relative to
+                    source_dir."""
+                    rel = make_relative(abs_path, ctx.build_dir)
+                    if rel != abs_path:
+                        return rel
+                    return make_relative(abs_path, ctx.source_dir)
+
+                # Per CMake's FindBISON: a relative BisonOutput is anchored to
+                # CMAKE_CURRENT_BINARY_DIR, and BISON_<Name>_OUTPUT_SOURCE /
+                # _OUTPUT_HEADER / _OUTPUTS reflect that full path.
+                input_abs = _bison_input_absolute(bison_input)
+                input_rel = make_relative(input_abs, ctx.source_dir)
+
+                output_abs = _bison_output_absolute(bison_output)
+                output_var = make_relative(output_abs, ctx.source_dir)
+                output_cc = _bison_output_cc(output_abs)
+
+                # Default header: replace source extension with .h/.hpp counterpart.
+                output_path = Path(bison_output)
+                header_default_ext = ".h"
+                if output_path.suffix in (".cpp", ".cxx", ".cc", ".C"):
+                    suffix_map = {
+                        ".cpp": ".hpp",
+                        ".cxx": ".hxx",
+                        ".cc": ".hh",
+                        ".C": ".H",
+                    }
+                    header_default_ext = suffix_map[output_path.suffix]
+                default_header = str(output_path.with_suffix(header_default_ext))
+                header_source = bison_defines_file or default_header
+
+                header_abs = _bison_output_absolute(header_source)
+                header_var = make_relative(header_abs, ctx.source_dir)
+                header_cc = _bison_output_cc(header_abs)
+
+                bison_outputs_var = [output_var, header_var]
+                bison_outputs_cc = [output_cc, header_cc]
+
+                report_var: str | None = None
+                report_abs: str | None = None
+                if bison_report_file:
+                    report_abs = _bison_output_absolute(bison_report_file)
+                    report_var = make_relative(report_abs, ctx.source_dir)
+                    report_cc = _bison_output_cc(report_abs)
+                    bison_outputs_var.append(report_var)
+                    bison_outputs_cc.append(report_cc)
+
+                bison_cmd = [bison_exe]
+                bison_cmd.append(f"--defines={header_var}")
+                if report_var:
+                    bison_cmd.append(f"--report-file={report_var}")
+                bison_cmd.extend(bison_compile_flags)
+                bison_cmd.extend(["-o", output_var, input_rel])
+
+                ctx.custom_commands.append(
+                    CustomCommand(
+                        outputs=bison_outputs_cc,
+                        commands=[bison_cmd],
+                        depends=[input_rel],
+                        main_dependency=input_rel,
+                        working_directory=None,
+                        verbatim=False,
+                        defined_file=ctx.current_list_file,
+                        defined_line=cmd.line,
+                    )
+                )
+
+                ctx.variables[f"BISON_{bison_name}_DEFINED"] = "TRUE"
+                ctx.variables[f"BISON_{bison_name}_INPUT"] = input_rel
+                ctx.variables[f"BISON_{bison_name}_OUTPUT_SOURCE"] = output_var
+                ctx.variables[f"BISON_{bison_name}_OUTPUT_HEADER"] = header_var
+                ctx.variables[f"BISON_{bison_name}_OUTPUTS"] = ";".join(
+                    bison_outputs_var
+                )
+                ctx.variables[f"BISON_{bison_name}_COMPILE_FLAGS"] = " ".join(
+                    bison_compile_flags
+                )
+                if report_var:
+                    ctx.variables[f"BISON_{bison_name}_REPORT_FILE"] = report_var
+
             case "pkg_check_modules":
                 if args:
                     prefix = args[0]
@@ -2695,6 +2922,7 @@ int main() {{
                                 result = subprocess.run(
                                     ["pkg-config", "--exists", exists_arg],
                                     capture_output=True,
+                                    check=False,
                                 )
                                 if result.returncode != 0:
                                     found_all = False
@@ -2704,6 +2932,7 @@ int main() {{
                                     ["pkg-config", "--cflags", mod_name],
                                     capture_output=True,
                                     text=True,
+                                    check=False,
                                 )
                                 cflags_out = cflags_res.stdout.strip()
                                 all_cflags.append(cflags_out)
@@ -2715,6 +2944,7 @@ int main() {{
                                     ["pkg-config", "--libs", mod_name],
                                     capture_output=True,
                                     text=True,
+                                    check=False,
                                 )
                                 libs_out = libs_res.stdout.strip()
                                 all_libs.append(libs_out)
@@ -2738,6 +2968,7 @@ int main() {{
                                         ],
                                         capture_output=True,
                                         text=True,
+                                        check=False,
                                     )
                                     if var_res.returncode == 0:
                                         val = var_res.stdout.strip()
@@ -2835,10 +3066,17 @@ int main() {{
 
             case "enable_testing":
                 assert len(args) == 0
-                pass  # stub
+                # stub
 
             case "mark_as_advanced":
                 pass  # not needed because we don't have a GUI (yet?)
+
+            case "block" | "endblock":
+                # Stubbed: cja treats all policies as NEW and does not model
+                # CMake's per-block scopes, so block(SCOPE_FOR POLICIES) is a
+                # no-op. SCOPE_FOR VARIABLES would technically leak — accepted
+                # as a practical compromise until a real scope frame is needed.
+                pass
 
             case "execute_process":
                 # Parse execute_process arguments
@@ -2963,6 +3201,7 @@ int main() {{
                                 stderr=stderr_setting,
                                 text=True,
                                 cwd=working_directory,
+                                check=False,
                             )
                         except (FileNotFoundError, OSError):
                             # FileNotFoundError covers the usual missing-
@@ -2991,9 +3230,7 @@ int main() {{
                         if command_error_is_fatal:
                             fatal_kind = command_error_is_fatal.upper()
                             fatal_now = False
-                            if fatal_kind == "ANY" and result.returncode != 0:
-                                fatal_now = True
-                            elif (
+                            if fatal_kind == "ANY" and result.returncode != 0 or (
                                 fatal_kind == "LAST"
                                 and is_last
                                 and result.returncode != 0
@@ -3166,6 +3403,8 @@ int main() {{
                         saved_argn: str = saved_argn,
                         saved_argv_vars: dict[str, str] = saved_argv_vars,
                         saved_params: dict[str, str] = saved_params,
+                        n_args: int = len(args),
+                        macro_params: tuple[str, ...] = tuple(macro_def.params),
                     ) -> None:
                         if saved_argc:
                             ctx.variables["ARGC"] = saved_argc
@@ -3182,14 +3421,14 @@ int main() {{
                         else:
                             ctx.variables.pop("ARGN", None)
 
-                        for idx in range(len(args)):
+                        for idx in range(n_args):
                             key = f"ARGV{idx}"
                             if key in saved_argv_vars:
                                 ctx.variables[key] = saved_argv_vars[key]
                             else:
                                 ctx.variables.pop(key, None)
 
-                        for param in macro_def.params:
+                        for param in macro_params:
                             if param in saved_params:
                                 ctx.variables[param] = saved_params[param]
                             else:

@@ -73,6 +73,112 @@ def test_target_compile_options_visibility(tmp_path: Path) -> None:
     assert "-Werror" not in exe_line_block
 
 
+def test_target_compile_options_compile_language(tmp_path: Path) -> None:
+    """$<COMPILE_LANGUAGE:...> gates options to matching source languages."""
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    (tmp_path / "main.cpp").write_text("int main() { return 0; }\n")
+    (tmp_path / "helper.c").write_text("void helper(void) {}\n")
+    (tmp_path / "boot.s").write_text("\n")
+    commands = [
+        Command(
+            name="add_library",
+            args=["mylib", "main.cpp", "helper.c", "boot.s"],
+            line=1,
+        ),
+        Command(
+            name="target_compile_options",
+            args=[
+                "mylib",
+                "PRIVATE",
+                "$<$<COMPILE_LANGUAGE:ASM>:-xassembler-with-cpp>",
+                "$<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>",
+                "$<$<COMPILE_LANGUAGE:C>:-fno-strict-aliasing>",
+            ],
+            line=2,
+        ),
+    ]
+    process_commands(commands, ctx)
+
+    ninja_path = tmp_path / "build.ninja"
+    generate_ninja(ctx, ninja_path, "build")
+    lines = ninja_path.read_text().splitlines()
+
+    def flags_for(source: str) -> str:
+        idx = next(i for i, line in enumerate(lines) if f" {source}" in line)
+        return "\n".join(lines[idx : idx + 2])
+
+    cpp_block = flags_for("main.cpp")
+    assert "-fno-rtti" in cpp_block
+    assert "-xassembler-with-cpp" not in cpp_block
+    assert "-fno-strict-aliasing" not in cpp_block
+
+    c_block = flags_for("helper.c")
+    assert "-fno-strict-aliasing" in c_block
+    assert "-fno-rtti" not in c_block
+    assert "-xassembler-with-cpp" not in c_block
+
+    asm_block = flags_for("boot.s")
+    assert "-xassembler-with-cpp" in asm_block
+    assert "-fno-rtti" not in asm_block
+    assert "-fno-strict-aliasing" not in asm_block
+
+
+def test_target_compile_options_multiline_genex(tmp_path: Path) -> None:
+    """Multi-line genex flag blocks expand to space-separated flags per source."""
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    ctx.variables["CMAKE_CXX_COMPILER_ID"] = "GNU"
+    (tmp_path / "main.cpp").write_text("int main() { return 0; }\n")
+    commands = [
+        Command(name="add_library", args=["mylib", "main.cpp"], line=1),
+        Command(
+            name="target_compile_options",
+            args=[
+                "mylib",
+                "PRIVATE",
+                ("$<$<CXX_COMPILER_ID:GNU>:\n"
+                "  -Wall -Wextra -Wno-unused-parameter -Wno-unused-variable>"),
+            ],
+            line=2,
+        ),
+    ]
+    process_commands(commands, ctx)
+
+    ninja_path = tmp_path / "build.ninja"
+    generate_ninja(ctx, ninja_path, "build")
+    content = ninja_path.read_text()
+    assert "-Wall -Wextra -Wno-unused-parameter -Wno-unused-variable" in content
+    assert "-Wall;-Wextra" not in content
+
+
+def test_add_library_multiline_genex_source_list(tmp_path: Path) -> None:
+    """Multi-line genex source blocks expand into separate sources."""
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    for name in ("a.c", "b.c", "c.c"):
+        (src_dir / name).write_text("int x;\n")
+
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    ctx.variables["FEATURE"] = "ON"
+    commands = [
+        Command(
+            name="add_library",
+            args=[
+                "mylib",
+                "src/a.c",
+                "$<$<BOOL:${FEATURE}>:\n  src/b.c\n  src/c.c\n>",
+            ],
+            line=1,
+        ),
+    ]
+    process_commands(commands, ctx)
+
+    lib = ctx.get_library("mylib")
+    assert lib is not None
+    assert "src/a.c" in lib.sources
+    assert "src/b.c" in lib.sources
+    assert "src/c.c" in lib.sources
+
+
 def test_windows_clang_upgrades_cxx11_in_target_compile_options(
     tmp_path: Path,
     monkeypatch,

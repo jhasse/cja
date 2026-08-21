@@ -1,7 +1,7 @@
 """Tests for find_program command."""
 
-from pathlib import Path
 import os
+from pathlib import Path
 
 import pytest
 

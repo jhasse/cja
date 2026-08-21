@@ -1,7 +1,7 @@
 """Tests for target_link_libraries edge cases."""
 
-from pathlib import Path
 import platform
+from pathlib import Path
 
 import pytest
 
@@ -23,6 +23,25 @@ def test_target_link_libraries_skips_empty_argument() -> None:
     exe = ctx.get_executable("myapp")
     assert exe is not None
     assert exe.link_libraries == ["m"]
+
+
+def test_target_link_libraries_link_public_keyword() -> None:
+    """Legacy LINK_PUBLIC should be treated like PUBLIC, not a library name."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="add_library", args=["mylib", "SHARED", "lib.c"], line=1),
+        Command(
+            name="target_link_libraries",
+            args=["mylib", "LINK_PUBLIC", "m", "dl"],
+            line=2,
+        ),
+    ]
+    process_commands(commands, ctx, strict=True)
+
+    lib = ctx.get_library("mylib")
+    assert lib is not None
+    assert lib.link_libraries == ["m", "dl"]
+    assert "LINK_PUBLIC" not in lib.link_libraries
 
 
 def test_add_library_empty_target_name_fails() -> None:
@@ -104,6 +123,22 @@ def test_alias_to_shared_library_is_linked_by_output(tmp_path: Path) -> None:
         else ".so"
     )
     assert f"$builddir/libcore{ext}" in content
+    if platform.system() != "Windows":
+        assert "-fPIC" in content
+
+
+def test_shared_library_compiles_with_fpic(tmp_path: Path) -> None:
+    """SHARED libraries should compile objects with -fPIC on non-Windows."""
+    (tmp_path / "lib.cpp").write_text("int x() { return 1; }\n")
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    ctx.variables["WIN32"] = "FALSE"
+    process_commands(
+        [Command(name="add_library", args=["mylib", "SHARED", "lib.cpp"], line=1)],
+        ctx,
+    )
+    ninja_file = tmp_path / "build.ninja"
+    generate_ninja(ctx, ninja_file, "build")
+    assert "-fPIC" in ninja_file.read_text()
 
 
 def test_alias_propagates_public_include_directories(tmp_path: Path) -> None:

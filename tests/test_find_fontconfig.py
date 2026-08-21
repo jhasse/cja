@@ -13,8 +13,9 @@ def has_pkg_config_fontconfig() -> bool:
     """Check if pkg-config can find fontconfig."""
     try:
         result = subprocess.run(
-            ["pkg-config", "--exists", "fontconfig"], capture_output=True
-        )
+            ["pkg-config", "--exists", "fontconfig"], capture_output=True,
+        check=False,
+    )
         return result.returncode == 0
     except FileNotFoundError:
         return False

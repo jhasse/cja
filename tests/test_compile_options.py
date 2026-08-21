@@ -44,6 +44,32 @@ def test_add_compile_options_in_ninja(tmp_path: Path) -> None:
     assert "-Wextra" in ninja_content
 
 
+def test_add_compile_options_strips_generator_expressions_in_ninja(
+    tmp_path: Path,
+) -> None:
+    """Directory-level compile options with generator expressions must be
+    evaluated (here: stripped for a non-MSVC compiler) instead of leaking the
+    raw "$<...>" text into build.ninja, which would be an invalid $-escape."""
+    source_dir = tmp_path / "hello"
+    copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
+
+    cmake_file = source_dir / "CMakeLists.txt"
+    content = cmake_file.read_text()
+    content = content.replace(
+        "project(hello)",
+        "project(hello)\nadd_compile_options($<$<C_COMPILER_ID:MSVC>:/utf-8> -Wall)",
+    )
+    cmake_file.write_text(content)
+
+    configure(source_dir, "build")
+
+    ninja_content = (source_dir / "build.ninja").read_text()
+    assert "-Wall" in ninja_content
+    # The unevaluated generator expression must not appear.
+    assert "C_COMPILER_ID" not in ninja_content
+    assert "/utf-8" not in ninja_content
+
+
 def test_add_compile_options_variable_expansion() -> None:
     """Test that add_compile_options expands variables."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))

@@ -1,19 +1,20 @@
 """Built-in find_package() handlers."""
 
-from pathlib import Path
+import os
 import platform
 import re
-import shutil
 import shlex
+import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 from termcolor import colored
 
 from .build_context import BuildContext
 from .parser import Command
 from .targets import ImportedTarget
-from .utils import status_marker
+from .utils import split_unquoted_list_args, status_marker
 
 
 def _unique_existing_dirs(candidates: list[Path]) -> list[Path]:
@@ -38,6 +39,361 @@ def _find_first_library(lib_dirs: list[Path], names: list[str]) -> str:
             if candidate.exists() and candidate.is_file():
                 return str(candidate)
     return ""
+
+
+def _var_or_env(ctx: BuildContext, *names: str) -> str:
+    """Return the first non-empty value from CMake variables or the environment."""
+    for name in names:
+        value = ctx.variables.get(name, "")
+        if value:
+            return value
+        env_value = os.environ.get(name, "")
+        if env_value:
+            return env_value
+    return ""
+
+
+def _prefix_path_entries(ctx: BuildContext) -> list[str]:
+    """Collect CMAKE_PREFIX_PATH entries from variables and the environment."""
+    entries: list[str] = []
+    seen: set[str] = set()
+
+    def add(entry: str) -> None:
+        path = os.path.expanduser(entry.strip())
+        if not path or path in seen:
+            return
+        seen.add(path)
+        entries.append(path)
+
+    cmake_prefix_path = ctx.variables.get("CMAKE_PREFIX_PATH", "")
+    for prefix in (
+        split_unquoted_list_args(cmake_prefix_path) if cmake_prefix_path else []
+    ):
+        add(prefix)
+
+    env_prefix_path = os.environ.get("CMAKE_PREFIX_PATH", "")
+    for prefix in env_prefix_path.split(os.pathsep) if env_prefix_path else []:
+        add(prefix)
+
+    return entries
+
+
+_WINDOWS_BOOST_ROOT_GLOB = "boost_*"
+
+# Where "b2 install" places Boost on Windows when no prefix is given.
+_WINDOWS_BOOST_FIXED_ROOTS = (Path("C:/Boost"),)
+
+# Prebuilt Windows Boost binaries ship their libraries in toolset- and
+# architecture-specific directories such as ``lib64-msvc-14.3``.
+_WINDOWS_BOOST_LIBRARY_GLOBS = (
+    "lib64-msvc-*",
+    "lib64-clang-*",
+    "lib32-msvc-*",
+    "lib32-clang-*",
+)
+
+
+def _version_sort_key(name: str) -> tuple[int, ...]:
+    """Return a numeric sort key from a versioned directory name."""
+    return tuple(int(part) for part in re.findall(r"\d+", name))
+
+
+def _sorted_versioned_dirs(parent: Path, pattern: str) -> list[Path]:
+    """Return directories in ``parent`` matching ``pattern``, newest first."""
+    try:
+        matches = [entry for entry in parent.glob(pattern) if entry.is_dir()]
+    except OSError:
+        return []
+    return sorted(
+        matches,
+        key=lambda entry: (_version_sort_key(entry.name), entry.name),
+        reverse=True,
+    )
+
+
+def _windows_boost_root_parents() -> list[Path]:
+    """Return directories that hold version-suffixed Boost installs on Windows."""
+    parents: list[Path] = []
+    seen: set[str] = set()
+    candidates = [Path("C:/local")]
+    for var in ("ProgramW6432", "ProgramFiles", "ProgramFiles(x86)"):
+        value = os.environ.get(var, "")
+        if value:
+            candidates.append(Path(value) / "boost")
+
+    for candidate in candidates:
+        # ProgramW6432 and ProgramFiles usually name the same directory.
+        normalized = str(candidate).casefold()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        parents.append(candidate)
+
+    return parents
+
+
+def _windows_boost_root_dirs() -> list[Path]:
+    """Return the default Boost install prefixes on Windows, newest version first.
+
+    The Windows installers unpack into a version-suffixed directory such as
+    ``C:/local/boost_1_85_0``, so those are globbed rather than hardcoded.
+    ``C:/Boost`` covers Boost built from source and installed with b2.
+    """
+    roots: list[Path] = []
+    seen: set[str] = set()
+
+    def add(root: Path) -> None:
+        normalized = str(root)
+        if normalized in seen:
+            return
+        seen.add(normalized)
+        roots.append(root)
+
+    for parent in _windows_boost_root_parents():
+        for root in _sorted_versioned_dirs(parent, _WINDOWS_BOOST_ROOT_GLOB):
+            add(root)
+    for root in _WINDOWS_BOOST_FIXED_ROOTS:
+        add(root)
+    return roots
+
+
+def _boost_root_include_dirs(root: Path) -> list[Path]:
+    """Return the header roots to search under a Boost install prefix."""
+    # A versioned suffix (include/boost-1_85) wins over a plain include/, and
+    # the Windows installers keep headers in the prefix itself.
+    dirs = _sorted_versioned_dirs(root / "include", "boost-*")
+    dirs.append(root / "include")
+    dirs.append(root)
+    return dirs
+
+
+def _boost_root_library_dirs(root: Path) -> list[Path]:
+    """Return the library dirs to search under a Boost install prefix."""
+    dirs: list[Path] = []
+    if platform.system() == "Windows":
+        for pattern in _WINDOWS_BOOST_LIBRARY_GLOBS:
+            dirs.extend(_sorted_versioned_dirs(root, pattern))
+    dirs.append(root / "lib")
+    dirs.append(root / "lib64")
+    dirs.append(root / "stage" / "lib")
+    return dirs
+
+
+def _boost_hint_include_dirs(ctx: BuildContext) -> list[Path]:
+    """Build Boost header search dirs from CMake/env hints (FindBoost-compatible)."""
+    dirs: list[Path] = []
+    seen: set[str] = set()
+
+    def add(candidate: str) -> None:
+        if not candidate:
+            return
+        path = os.path.expanduser(candidate.strip())
+        normalized = str(Path(path))
+        if normalized in seen:
+            return
+        seen.add(normalized)
+        dirs.append(Path(path))
+
+    for var in ("BOOST_INCLUDEDIR", "Boost_INCLUDEDIR", "BOOST_INCLUDE_DIR", "Boost_INCLUDE_DIR"):
+        add(_var_or_env(ctx, var))
+
+    root = _var_or_env(ctx, "BOOST_ROOT", "BOOSTROOT", "Boost_ROOT")
+    if root:
+        for include_dir in _boost_root_include_dirs(Path(root)):
+            add(str(include_dir))
+
+    for prefix in _prefix_path_entries(ctx):
+        for include_dir in _boost_root_include_dirs(Path(prefix)):
+            add(str(include_dir))
+
+    return dirs
+
+
+def _boost_hint_library_dirs(
+    ctx: BuildContext, include_dirs: list[str]
+) -> list[Path]:
+    """Build Boost library search dirs from CMake/env hints (FindBoost-compatible)."""
+    dirs: list[Path] = []
+    seen: set[str] = set()
+
+    def add(candidate: str) -> None:
+        if not candidate:
+            return
+        path = os.path.expanduser(candidate.strip())
+        normalized = str(Path(path))
+        if normalized in seen:
+            return
+        seen.add(normalized)
+        dirs.append(Path(path))
+
+    for var in ("BOOST_LIBRARYDIR", "Boost_LIBRARYDIR", "BOOST_LIBRARY_DIR", "Boost_LIBRARY_DIR"):
+        add(_var_or_env(ctx, var))
+
+    root = _var_or_env(ctx, "BOOST_ROOT", "BOOSTROOT", "Boost_ROOT")
+    if root:
+        for lib_dir in _boost_root_library_dirs(Path(root)):
+            add(str(lib_dir))
+
+    for include_dir in include_dirs:
+        include_path = Path(include_dir)
+        # Headers usually live in <prefix>/include, but the Windows installers
+        # put them in the prefix itself, so treat both as install prefixes.
+        for prefix_path in (include_path.parent, include_path):
+            for lib_dir in _boost_root_library_dirs(prefix_path):
+                add(str(lib_dir))
+
+    for prefix in _prefix_path_entries(ctx):
+        for lib_dir in _boost_root_library_dirs(Path(prefix)):
+            add(str(lib_dir))
+        add(prefix)
+
+    return dirs
+
+
+def _default_boost_include_dirs() -> list[Path]:
+    """Return the default system include directories searched for Boost headers."""
+    if platform.system() == "Windows":
+        dirs: list[Path] = []
+        for root in _windows_boost_root_dirs():
+            dirs.extend(_boost_root_include_dirs(root))
+        return dirs
+    return [
+        Path("/usr/include"),
+        Path("/usr/local/include"),
+        Path("/opt/homebrew/include"),
+    ]
+
+
+def _default_boost_library_dirs() -> list[Path]:
+    """Return the default system library directories searched for Boost libraries."""
+    if platform.system() == "Windows":
+        dirs: list[Path] = []
+        for root in _windows_boost_root_dirs():
+            dirs.extend(_boost_root_library_dirs(root))
+        return dirs
+    return [
+        Path("/usr/lib"),
+        Path("/usr/lib64"),
+        Path("/usr/local/lib"),
+        Path("/opt/homebrew/lib"),
+    ]
+
+
+def _default_boost_include_patterns() -> list[str]:
+    """Return the glob patterns searched for version-suffixed Boost installs."""
+    if platform.system() != "Windows":
+        return []
+    return [
+        str(parent / _WINDOWS_BOOST_ROOT_GLOB)
+        for parent in _windows_boost_root_parents()
+    ]
+
+
+def _find_windows_boost_component_library(
+    lib_dirs: list[Path], component: str
+) -> str:
+    """Find a Boost component library using the MSVC naming scheme.
+
+    Prebuilt Windows binaries carry toolset, architecture and version suffixes
+    (e.g. ``boost_thread-vc143-mt-x64-1_85.lib``), so the base name has to be
+    matched as a prefix. Debug variants (``-gd``) are a last resort.
+    """
+    base = f"boost_{component.lower()}"
+    patterns = (
+        f"{base}.lib",
+        f"{base}-*.lib",
+        f"lib{base}.lib",
+        f"lib{base}-*.lib",
+    )
+    for lib_dir in lib_dirs:
+        matches: list[Path] = []
+        for pattern in patterns:
+            try:
+                matches.extend(
+                    entry for entry in lib_dir.glob(pattern) if entry.is_file()
+                )
+            except OSError:
+                continue
+        if not matches:
+            continue
+        release = [match for match in matches if "-gd" not in match.stem]
+        return str(min(release or matches))
+    return ""
+
+
+def _print_boost_not_found_diagnostics(
+    *,
+    include_search_dirs: list[Path],
+    include_search_patterns: list[str],
+    lib_search_candidates: list[Path],
+    headers_found: bool,
+    missing_components: list[str],
+    pkg_config_checked: bool,
+    components_requested: bool,
+) -> None:
+    """Print Boost search locations when find_package(Boost) fails."""
+    print("Boost not found. Checked the following locations:", file=sys.stderr)
+
+    if pkg_config_checked:
+        print("  pkg-config: boost, boost_headers", file=sys.stderr)
+
+    if not headers_found:
+        print("  Headers (boost/version.hpp):", file=sys.stderr)
+        for pattern in include_search_patterns:
+            print(f"    {Path(pattern) / 'boost' / 'version.hpp'}", file=sys.stderr)
+        for include_root in include_search_dirs:
+            print(f"    {include_root / 'boost' / 'version.hpp'}", file=sys.stderr)
+
+    if missing_components:
+        print(f"  Missing components: {', '.join(missing_components)}", file=sys.stderr)
+
+    if missing_components or (not headers_found and components_requested):
+        print("  Libraries:", file=sys.stderr)
+        seen: set[str] = set()
+        for lib_dir in lib_search_candidates:
+            normalized = str(lib_dir)
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            print(f"    {lib_dir}", file=sys.stderr)
+
+
+def _pkg_config_info(pkg_name: str) -> tuple[bool, str, str, str]:
+    """Query pkg-config for a package.
+
+    Returns ``(found, cflags, libs, version)``. ``found`` is False when the
+    package is unknown to pkg-config or pkg-config is unavailable.
+    """
+    try:
+        result = subprocess.run(
+            ["pkg-config", "--exists", pkg_name],
+            capture_output=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        return False, "", "", ""
+    if result.returncode != 0:
+        return False, "", "", ""
+
+    cflags = subprocess.run(
+        ["pkg-config", "--cflags", pkg_name],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout.strip()
+    libs = subprocess.run(
+        ["pkg-config", "--libs", pkg_name],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout.strip()
+    version = subprocess.run(
+        ["pkg-config", "--modversion", pkg_name],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout.strip()
+    return True, cflags, libs, version
 
 
 def handle_builtin_find_package(
@@ -142,6 +498,7 @@ def handle_builtin_find_package(
             result = subprocess.run(
                 ["pkg-config", "--exists", "fontconfig"],
                 capture_output=True,
+                check=False,
             )
             if result.returncode == 0:
                 found = True
@@ -149,16 +506,19 @@ def handle_builtin_find_package(
                     ["pkg-config", "--cflags", "fontconfig"],
                     capture_output=True,
                     text=True,
+                    check=False,
                 )
                 libs_result = subprocess.run(
                     ["pkg-config", "--libs", "fontconfig"],
                     capture_output=True,
                     text=True,
+                    check=False,
                 )
                 version_result = subprocess.run(
                     ["pkg-config", "--modversion", "fontconfig"],
                     capture_output=True,
                     text=True,
+                    check=False,
                 )
 
                 fc_cflags = cflags_result.stdout.strip()
@@ -208,6 +568,7 @@ def handle_builtin_find_package(
                 result = subprocess.run(
                     ["pkg-config", "--exists", candidate],
                     capture_output=True,
+                    check=False,
                 )
                 if result.returncode == 0:
                     found = True
@@ -221,16 +582,19 @@ def handle_builtin_find_package(
                 ["pkg-config", "--cflags", pkg_name],
                 capture_output=True,
                 text=True,
+                check=False,
             )
             libs_result = subprocess.run(
                 ["pkg-config", "--libs", pkg_name],
                 capture_output=True,
                 text=True,
+                check=False,
             )
             version_result = subprocess.run(
                 ["pkg-config", "--modversion", pkg_name],
                 capture_output=True,
                 text=True,
+                check=False,
             )
 
             webp_cflags = cflags_result.stdout.strip()
@@ -303,18 +667,25 @@ def handle_builtin_find_package(
         boost_version = ""
         include_dirs: list[str] = []
         missing_required_components: list[str] = []
+        include_search_dirs = _boost_hint_include_dirs(ctx) + _default_boost_include_dirs()
+        pkg_config_checked = False
 
         pkg_base = None
         try:
+            pkg_config_checked = True
             for candidate in ("boost", "boost_headers"):
                 result = subprocess.run(
                     ["pkg-config", "--exists", candidate],
                     capture_output=True,
+                    check=False,
                 )
                 if result.returncode == 0:
                     pkg_base = candidate
                     break
         except FileNotFoundError:
+            # pkg-config is commonly absent on Windows; don't report it as a
+            # location that was searched.
+            pkg_config_checked = False
             pkg_base = None
 
         if pkg_base:
@@ -322,39 +693,38 @@ def handle_builtin_find_package(
                 ["pkg-config", "--cflags", pkg_base],
                 capture_output=True,
                 text=True,
+                check=False,
             )
             libs_result = subprocess.run(
                 ["pkg-config", "--libs", pkg_base],
                 capture_output=True,
                 text=True,
+                check=False,
             )
             version_result = subprocess.run(
                 ["pkg-config", "--modversion", pkg_base],
                 capture_output=True,
                 text=True,
+                check=False,
             )
             boost_cflags = cflags_result.stdout.strip()
             boost_libs = libs_result.stdout.strip()
             boost_version = version_result.stdout.strip()
             found = True
+            for entry in shlex.split(boost_cflags):
+                if entry.startswith("-I"):
+                    include_dirs.append(entry[2:])
 
         if not found:
-            for include_root in (
-                "/usr/include",
-                "/usr/local/include",
-                "/opt/homebrew/include",
-            ):
-                version_header = Path(include_root) / "boost/version.hpp"
+            for include_root in include_search_dirs:
+                version_header = include_root / "boost" / "version.hpp"
                 if version_header.exists():
-                    include_dirs = [include_root]
+                    include_dirs = [str(include_root)]
                     boost_cflags = f"-I{include_root}"
                     found = True
                     break
 
-        if boost_cflags:
-            for entry in shlex.split(boost_cflags):
-                if entry.startswith("-I"):
-                    include_dirs.append(entry[2:])
+        headers_found = found
 
         if found and not boost_version and include_dirs:
             version_header = Path(include_dirs[0]) / "boost/version.hpp"
@@ -370,14 +740,10 @@ def handle_builtin_find_package(
                 if version_match:
                     boost_version = version_match.group(1).replace("_", ".")
 
-        lib_search_dirs = _unique_existing_dirs(
-            [
-                Path("/usr/lib"),
-                Path("/usr/lib64"),
-                Path("/usr/local/lib"),
-                Path("/opt/homebrew/lib"),
-            ]
+        lib_search_candidates = (
+            _boost_hint_library_dirs(ctx, include_dirs) + _default_boost_library_dirs()
         )
+        lib_search_dirs = _unique_existing_dirs(lib_search_candidates)
         component_libs: list[str] = []
         for component in required_components + optional_components:
             pkg_component = f"boost_{component.lower()}"
@@ -388,6 +754,7 @@ def handle_builtin_find_package(
                 result = subprocess.run(
                     ["pkg-config", "--exists", pkg_component],
                     capture_output=True,
+                    check=False,
                 )
                 component_found = result.returncode == 0
             except FileNotFoundError:
@@ -398,40 +765,48 @@ def handle_builtin_find_package(
                     ["pkg-config", "--cflags", pkg_component],
                     capture_output=True,
                     text=True,
+                    check=False,
                 )
                 libs_result = subprocess.run(
                     ["pkg-config", "--libs", pkg_component],
                     capture_output=True,
                     text=True,
+                    check=False,
                 )
                 component_cflags = cflags_result.stdout.strip()
                 component_link_flags = libs_result.stdout.strip()
             else:
                 # Fallback: search for the library file directly
                 if platform.system() == "Windows":
-                    lib_names = [
-                        f"boost_{component.lower()}.lib",
-                        f"libboost_{component.lower()}.lib",
-                    ]
-                elif platform.system() == "Darwin":
-                    lib_names = [
-                        f"libboost_{component.lower()}.dylib",
-                        f"libboost_{component.lower()}.a",
-                    ]
+                    lib_path = _find_windows_boost_component_library(
+                        lib_search_dirs, component
+                    )
+                    if lib_path:
+                        component_found = True
+                        component_cflags = boost_cflags
+                        # MSVC-style names carry toolset/arch/version suffixes,
+                        # so a -lboost_<component> flag would not resolve.
+                        component_link_flags = lib_path
                 else:
-                    lib_names = [
-                        f"libboost_{component.lower()}.so",
-                        f"libboost_{component.lower()}.a",
-                    ]
-                for lib_dir in lib_search_dirs:
-                    for lib_name in lib_names:
-                        if (lib_dir / lib_name).exists():
-                            component_found = True
-                            component_cflags = boost_cflags
-                            component_link_flags = f"-lboost_{component.lower()}"
+                    if platform.system() == "Darwin":
+                        lib_names = [
+                            f"libboost_{component.lower()}.dylib",
+                            f"libboost_{component.lower()}.a",
+                        ]
+                    else:
+                        lib_names = [
+                            f"libboost_{component.lower()}.so",
+                            f"libboost_{component.lower()}.a",
+                        ]
+                    for lib_dir in lib_search_dirs:
+                        for lib_name in lib_names:
+                            if (lib_dir / lib_name).exists():
+                                component_found = True
+                                component_cflags = boost_cflags
+                                component_link_flags = f"-lboost_{component.lower()}"
+                                break
+                        if component_found:
                             break
-                    if component_found:
-                        break
 
                 if not component_found and include_dirs:
                     # Header-only component (e.g. Boost.System since 1.69)
@@ -453,6 +828,14 @@ def handle_builtin_find_package(
                 )
                 ctx.variables[var_name] = "TRUE"
                 ctx.variables[upper_var_name] = "TRUE"
+                # CMake's FindBoost exposes the per-component library via
+                # Boost_<UPPERCASE_COMPONENT>_LIBRARY (e.g.
+                # Boost_UNIT_TEST_FRAMEWORK_LIBRARY). Header-only components
+                # leave it empty, matching CMake.
+                lib_var = f"Boost_{component.upper()}_LIBRARY"
+                ctx.variables[lib_var] = component_link_flags
+                ctx.variables[f"{lib_var}_RELEASE"] = component_link_flags
+                ctx.variables[f"{lib_var}_DEBUG"] = component_link_flags
             else:
                 ctx.variables[var_name] = "FALSE"
                 ctx.variables[upper_var_name] = "FALSE"
@@ -484,12 +867,30 @@ def handle_builtin_find_package(
 
         if required and not found:
             ctx.print_error("could not find package: Boost", cmd.line)
+            _print_boost_not_found_diagnostics(
+                include_search_dirs=include_search_dirs,
+                include_search_patterns=_default_boost_include_patterns(),
+                lib_search_candidates=lib_search_candidates,
+                headers_found=headers_found,
+                missing_components=missing_required_components,
+                pkg_config_checked=pkg_config_checked,
+                components_requested=bool(required_components or optional_components),
+            )
             raise SystemExit(1)
         if not quiet:
             if found:
                 print(f"{colored(status_marker(True), 'green')} {package_name}")
             else:
                 print(f"{colored(status_marker(False), 'red')} {package_name}")
+                _print_boost_not_found_diagnostics(
+                    include_search_dirs=include_search_dirs,
+                    include_search_patterns=_default_boost_include_patterns(),
+                    lib_search_candidates=lib_search_candidates,
+                    headers_found=headers_found,
+                    missing_components=missing_required_components,
+                    pkg_config_checked=pkg_config_checked,
+                    components_requested=bool(required_components or optional_components),
+                )
         return True
 
     if package_name == "PNG":
@@ -505,6 +906,7 @@ def handle_builtin_find_package(
                 result = subprocess.run(
                     ["pkg-config", "--exists", candidate],
                     capture_output=True,
+                    check=False,
                 )
                 if result.returncode == 0:
                     pkg_name = candidate
@@ -518,16 +920,19 @@ def handle_builtin_find_package(
                 ["pkg-config", "--cflags", pkg_name],
                 capture_output=True,
                 text=True,
+                check=False,
             )
             libs_result = subprocess.run(
                 ["pkg-config", "--libs", pkg_name],
                 capture_output=True,
                 text=True,
+                check=False,
             )
             version_result = subprocess.run(
                 ["pkg-config", "--modversion", pkg_name],
                 capture_output=True,
                 text=True,
+                check=False,
             )
 
             png_cflags = cflags_result.stdout.strip()
@@ -579,6 +984,7 @@ def handle_builtin_find_package(
                 result = subprocess.run(
                     ["pkg-config", "--exists", candidate],
                     capture_output=True,
+                    check=False,
                 )
                 if result.returncode == 0:
                     pkg_name = candidate
@@ -592,16 +998,19 @@ def handle_builtin_find_package(
                 ["pkg-config", "--cflags", pkg_name],
                 capture_output=True,
                 text=True,
+                check=False,
             )
             libs_result = subprocess.run(
                 ["pkg-config", "--libs", pkg_name],
                 capture_output=True,
                 text=True,
+                check=False,
             )
             version_result = subprocess.run(
                 ["pkg-config", "--modversion", pkg_name],
                 capture_output=True,
                 text=True,
+                check=False,
             )
 
             openal_cflags = cflags_result.stdout.strip()
@@ -680,6 +1089,7 @@ def handle_builtin_find_package(
                 result = subprocess.run(
                     ["pkg-config", "--exists", candidate],
                     capture_output=True,
+                    check=False,
                 )
                 if result.returncode == 0:
                     pkg_name = candidate
@@ -693,16 +1103,19 @@ def handle_builtin_find_package(
                 ["pkg-config", "--cflags", pkg_name],
                 capture_output=True,
                 text=True,
+                check=False,
             )
             libs_result = subprocess.run(
                 ["pkg-config", "--libs", pkg_name],
                 capture_output=True,
                 text=True,
+                check=False,
             )
             version_result = subprocess.run(
                 ["pkg-config", "--modversion", pkg_name],
                 capture_output=True,
                 text=True,
+                check=False,
             )
 
             freetype_cflags = cflags_result.stdout.strip()
@@ -786,6 +1199,7 @@ def handle_builtin_find_package(
                 result = subprocess.run(
                     ["pkg-config", "--exists", pkg_name],
                     capture_output=True,
+                    check=False,
                 )
                 component_found = result.returncode == 0
             except FileNotFoundError:
@@ -797,16 +1211,19 @@ def handle_builtin_find_package(
                     ["pkg-config", "--cflags", pkg_name],
                     capture_output=True,
                     text=True,
+                    check=False,
                 )
                 libs_result = subprocess.run(
                     ["pkg-config", "--libs", pkg_name],
                     capture_output=True,
                     text=True,
+                    check=False,
                 )
                 version_result = subprocess.run(
                     ["pkg-config", "--modversion", pkg_name],
                     capture_output=True,
                     text=True,
+                    check=False,
                 )
 
                 comp_cflags = cflags_result.stdout.strip()
@@ -837,6 +1254,378 @@ def handle_builtin_find_package(
             ctx.variables["Qt5_FOUND"] = "FALSE"
             if required:
                 ctx.print_error("could not find package: Qt5", cmd.line)
+                raise SystemExit(1)
+            if not quiet:
+                print(f"{colored(status_marker(False), 'red')} {package_name}")
+        return True
+
+    if package_name == "BISON":
+        bison_executable = shutil.which("bison")
+        bison_version = ""
+
+        if bison_executable:
+            try:
+                version_result = subprocess.run(
+                    [bison_executable, "--version"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                version_match = re.search(
+                    r"(\d+\.\d+(?:\.\d+)?)", version_result.stdout
+                )
+                if version_match:
+                    bison_version = version_match.group(1)
+            except (OSError, subprocess.SubprocessError):
+                pass
+
+        found = bool(bison_executable)
+
+        if found:
+            ctx.variables["BISON_FOUND"] = "TRUE"
+            ctx.variables["BISON_EXECUTABLE"] = bison_executable or ""
+            if bison_version:
+                ctx.variables["BISON_VERSION"] = bison_version
+            if not quiet:
+                print(f"{colored(status_marker(True), 'green')} {package_name}")
+        else:
+            ctx.variables["BISON_FOUND"] = "FALSE"
+            if required:
+                ctx.print_error("could not find package: BISON", cmd.line)
+                raise SystemExit(1)
+            if not quiet:
+                print(f"{colored(status_marker(False), 'red')} {package_name}")
+        return True
+
+    if package_name == "FLEX":
+        flex_executable = shutil.which("flex")
+        flex_version = ""
+        include_dir = ""
+        flex_library = ""
+
+        if flex_executable:
+            try:
+                version_result = subprocess.run(
+                    [flex_executable, "--version"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                version_match = re.search(
+                    r"(\d+\.\d+(?:\.\d+)?)", version_result.stdout
+                )
+                if version_match:
+                    flex_version = version_match.group(1)
+            except (OSError, subprocess.SubprocessError):
+                pass
+
+        header_search_dirs = _unique_existing_dirs(
+            [
+                Path("/usr/include"),
+                Path("/usr/local/include"),
+                Path("/opt/homebrew/include"),
+            ]
+        )
+        for inc_dir in header_search_dirs:
+            if (inc_dir / "FlexLexer.h").exists():
+                include_dir = str(inc_dir)
+                break
+
+        lib_search_dirs = _unique_existing_dirs(
+            [
+                Path("/usr/lib"),
+                Path("/usr/lib64"),
+                Path("/usr/lib/x86_64-linux-gnu"),
+                Path("/usr/lib/aarch64-linux-gnu"),
+                Path("/usr/local/lib"),
+                Path("/opt/homebrew/lib"),
+            ]
+        )
+        if platform.system() == "Darwin":
+            lib_names = ["libfl.dylib", "libfl.a"]
+        elif platform.system() == "Windows":
+            lib_names = ["fl.lib", "libfl.lib"]
+        else:
+            lib_names = ["libfl.so", "libfl.a"]
+        flex_library = _find_first_library(lib_search_dirs, lib_names)
+
+        found = bool(flex_executable)
+
+        if found:
+            ctx.variables["FLEX_FOUND"] = "TRUE"
+            ctx.variables["FLEX_EXECUTABLE"] = flex_executable or ""
+            if flex_version:
+                ctx.variables["FLEX_VERSION"] = flex_version
+            if include_dir:
+                ctx.variables["FLEX_INCLUDE_DIRS"] = include_dir
+            if flex_library:
+                ctx.variables["FLEX_LIBRARIES"] = flex_library
+            if not quiet:
+                print(f"{colored(status_marker(True), 'green')} {package_name}")
+        else:
+            ctx.variables["FLEX_FOUND"] = "FALSE"
+            if required:
+                ctx.print_error("could not find package: FLEX", cmd.line)
+                raise SystemExit(1)
+            if not quiet:
+                print(f"{colored(status_marker(False), 'red')} {package_name}")
+        return True
+
+    if package_name == "X11":
+        # CMake's FindX11 finds the core X11 library plus a large set of
+        # related libraries, exposing per-library X11_<lib>_FOUND /
+        # X11_<lib>_LIB / X11_<lib>_INCLUDE_PATH variables and X11::<lib>
+        # imported targets. Each entry is (target_suffix, pkg_config_name,
+        # library_base_name).
+        x11_libraries = [
+            ("X11", "x11", "X11"),
+            ("Xext", "xext", "Xext"),
+            ("Xrandr", "xrandr", "Xrandr"),
+            ("Xrender", "xrender", "Xrender"),
+            ("Xfixes", "xfixes", "Xfixes"),
+            ("Xcursor", "xcursor", "Xcursor"),
+            ("Xinerama", "xinerama", "Xinerama"),
+            ("Xi", "xi", "Xi"),
+            ("Xtst", "xtst", "Xtst"),
+            ("Xt", "xt", "Xt"),
+            ("Xmu", "xmu", "Xmu"),
+            ("Xpm", "xpm", "Xpm"),
+            ("Xss", "xscrnsaver", "Xss"),
+            ("Xxf86vm", "xxf86vm", "Xxf86vm"),
+            ("Xft", "xft", "Xft"),
+            ("xkbcommon", "xkbcommon", "xkbcommon"),
+            ("ICE", "ice", "ICE"),
+            ("SM", "sm", "SM"),
+            ("Xau", "xau", "Xau"),
+            ("Xdmcp", "xdmcp", "Xdmcp"),
+            ("Xcomposite", "xcomposite", "Xcomposite"),
+            ("Xdamage", "xdamage", "Xdamage"),
+            ("Xaw", "xaw7", "Xaw"),
+            ("xcb", "xcb", "xcb"),
+            ("X11_xcb", "x11-xcb", "X11-xcb"),
+        ]
+
+        keywords = {
+            "REQUIRED",
+            "QUIET",
+            "COMPONENTS",
+            "OPTIONAL_COMPONENTS",
+            "EXACT",
+            "MODULE",
+            "CONFIG",
+            "NO_MODULE",
+        }
+        required_components: list[str] = []
+        optional_components: list[str] = []
+        i = 1
+        while i < len(args):
+            token = args[i]
+            if token == "COMPONENTS":
+                i += 1
+                while i < len(args) and args[i] not in keywords:
+                    required_components.append(args[i])
+                    i += 1
+                continue
+            if token == "OPTIONAL_COMPONENTS":
+                i += 1
+                while i < len(args) and args[i] not in keywords:
+                    optional_components.append(args[i])
+                    i += 1
+                continue
+            i += 1
+
+        lib_search_dirs = _unique_existing_dirs(
+            [
+                Path("/usr/lib"),
+                Path("/usr/lib64"),
+                Path("/usr/lib/x86_64-linux-gnu"),
+                Path("/usr/lib/aarch64-linux-gnu"),
+                Path("/usr/local/lib"),
+                Path("/opt/X11/lib"),
+                Path("/opt/homebrew/lib"),
+            ]
+        )
+        include_search_dirs = _unique_existing_dirs(
+            [
+                Path("/usr/include"),
+                Path("/usr/local/include"),
+                Path("/opt/X11/include"),
+            ]
+        )
+
+        if platform.system() == "Darwin":
+            lib_suffixes = [".dylib", ".a"]
+        else:
+            lib_suffixes = [".so", ".a"]
+
+        include_dirs: list[str] = []
+
+        for target_suffix, pkg_name, lib_base in x11_libraries:
+            comp_found, comp_cflags, comp_libs, _ = _pkg_config_info(pkg_name)
+            comp_include_path = ""
+
+            if comp_found:
+                for entry in shlex.split(comp_cflags):
+                    if entry.startswith("-I"):
+                        comp_include_path = entry[2:]
+                        if entry[2:] not in include_dirs:
+                            include_dirs.append(entry[2:])
+            else:
+                # Fallback: search for the library file directly.
+                lib_names = [f"lib{lib_base}{suffix}" for suffix in lib_suffixes]
+                lib_path = _find_first_library(lib_search_dirs, lib_names)
+                if lib_path:
+                    comp_found = True
+                    comp_libs = lib_path
+                    for inc_dir in include_search_dirs:
+                        if (inc_dir / "X11" / "Xlib.h").exists():
+                            comp_include_path = str(inc_dir)
+                            if str(inc_dir) not in include_dirs:
+                                include_dirs.append(str(inc_dir))
+                            break
+
+            if comp_found:
+                ctx.variables[f"X11_{target_suffix}_FOUND"] = "TRUE"
+                ctx.variables[f"X11_{target_suffix}_LIB"] = comp_libs
+                if comp_include_path:
+                    ctx.variables[f"X11_{target_suffix}_INCLUDE_PATH"] = (
+                        comp_include_path
+                    )
+                ctx.imported_targets[f"X11::{target_suffix}"] = ImportedTarget(
+                    cflags=comp_cflags,
+                    libs=comp_libs,
+                )
+            else:
+                ctx.variables[f"X11_{target_suffix}_FOUND"] = "FALSE"
+
+        found = ctx.variables.get("X11_X11_FOUND") == "TRUE"
+
+        # Xkb is a header-based feature: its API lives inside libX11, so CMake
+        # exposes X11_Xkb_FOUND / X11_Xkb_INCLUDE_PATH (without a separate
+        # X11::Xkb target) when X11/XKBlib.h is present alongside libX11.
+        xkb_header_dir = ""
+        for inc_dir in [Path(d) for d in include_dirs] + include_search_dirs:
+            if (inc_dir / "X11" / "XKBlib.h").exists():
+                xkb_header_dir = str(inc_dir)
+                break
+        if found and xkb_header_dir:
+            ctx.variables["X11_Xkb_FOUND"] = "TRUE"
+            ctx.variables["X11_Xkb_INCLUDE_PATH"] = xkb_header_dir
+        else:
+            ctx.variables["X11_Xkb_FOUND"] = "FALSE"
+
+        unique_include_dirs = list(dict.fromkeys(include_dirs))
+        if found:
+            ctx.variables["X11_INCLUDE_DIR"] = ";".join(unique_include_dirs)
+            ctx.variables["X11_LIBRARIES"] = ctx.variables.get("X11_X11_LIB", "")
+
+        missing_required = [
+            component
+            for component in required_components
+            if ctx.variables.get(f"X11_{component}_FOUND") != "TRUE"
+        ]
+        ok = found and not missing_required
+        ctx.variables["X11_FOUND"] = "TRUE" if ok else "FALSE"
+
+        if required and not ok:
+            ctx.print_error("could not find package: X11", cmd.line)
+            raise SystemExit(1)
+        if not quiet:
+            if ok:
+                print(f"{colored(status_marker(True), 'green')} {package_name}")
+            else:
+                print(f"{colored(status_marker(False), 'red')} {package_name}")
+        return True
+
+    if package_name == "Vulkan":
+        found = False
+        vulkan_cflags = ""
+        vulkan_libs = ""
+        vulkan_version = ""
+        include_dirs: list[str] = []
+
+        # 1. Try pkg-config
+        pkg_found, vulkan_cflags, vulkan_libs, vulkan_version = _pkg_config_info("vulkan")
+        if pkg_found:
+            found = True
+            for entry in shlex.split(vulkan_cflags):
+                if entry.startswith("-I"):
+                    include_dirs.append(entry[2:])
+
+        # 2. Try VULKAN_SDK environment variable
+        if not found:
+            vulkan_sdk = os.environ.get("VULKAN_SDK")
+            if vulkan_sdk:
+                sdk_inc = Path(vulkan_sdk) / "include"
+                sdk_lib_dirs = _unique_existing_dirs(
+                    [
+                        Path(vulkan_sdk) / "lib",
+                        Path(vulkan_sdk) / "lib64",
+                    ]
+                )
+                if (sdk_inc / "vulkan" / "vulkan.h").exists():
+                    found = True
+                    vulkan_cflags = f"-I{sdk_inc}"
+                    include_dirs = [str(sdk_inc)]
+                    if platform.system() == "Darwin":
+                        lib_names = ["libvulkan.dylib", "libvulkan.a"]
+                    else:
+                        lib_names = ["libvulkan.so", "libvulkan.a"]
+                    vulkan_libs = _find_first_library(sdk_lib_dirs, lib_names)
+
+        # 3. Fall back to searching common system paths
+        if not found:
+            for include_root in (
+                "/usr/include",
+                "/usr/local/include",
+                "/opt/homebrew/include",
+            ):
+                if (Path(include_root) / "vulkan" / "vulkan.h").exists():
+                    include_dirs = [include_root]
+                    vulkan_cflags = f"-I{include_root}"
+                    lib_search_dirs = _unique_existing_dirs(
+                        [
+                            Path("/usr/lib"),
+                            Path("/usr/lib64"),
+                            Path("/usr/lib/x86_64-linux-gnu"),
+                            Path("/usr/lib/aarch64-linux-gnu"),
+                            Path("/usr/local/lib"),
+                            Path("/opt/homebrew/lib"),
+                        ]
+                    )
+                    if platform.system() == "Darwin":
+                        lib_names = ["libvulkan.dylib", "libvulkan.a"]
+                    else:
+                        lib_names = ["libvulkan.so", "libvulkan.a"]
+                    vulkan_libs = _find_first_library(lib_search_dirs, lib_names)
+                    if vulkan_libs:
+                        found = True
+                    break
+
+        unique_include_dirs = list(dict.fromkeys(include_dirs))
+
+        if found:
+            ctx.variables["Vulkan_FOUND"] = "TRUE"
+            ctx.variables["VULKAN_FOUND"] = "TRUE"
+            ctx.variables["Vulkan_LIBRARIES"] = vulkan_libs
+            ctx.variables["Vulkan_LIBRARY"] = vulkan_libs
+            ctx.variables["Vulkan_INCLUDE_DIRS"] = ";".join(unique_include_dirs)
+            if unique_include_dirs:
+                ctx.variables["Vulkan_INCLUDE_DIR"] = unique_include_dirs[0]
+            if vulkan_version:
+                ctx.variables["Vulkan_VERSION"] = vulkan_version
+
+            ctx.imported_targets["Vulkan::Vulkan"] = ImportedTarget(
+                cflags=vulkan_cflags,
+                libs=vulkan_libs,
+            )
+            if not quiet:
+                print(f"{colored(status_marker(True), 'green')} {package_name}")
+        else:
+            ctx.variables["Vulkan_FOUND"] = "FALSE"
+            ctx.variables["VULKAN_FOUND"] = "FALSE"
+            if required:
+                ctx.print_error("could not find package: Vulkan", cmd.line)
                 raise SystemExit(1)
             if not quiet:
                 print(f"{colored(status_marker(False), 'red')} {package_name}")

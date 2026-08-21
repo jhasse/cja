@@ -41,3 +41,23 @@ def test_multiple_definitions() -> None:
     process_commands(commands, ctx)
 
     assert ctx.compile_definitions == ["FOO", "BAR", "BAZ=123"]
+
+
+def test_add_definitions_strips_dash_d(tmp_path: Path) -> None:
+    """Legacy add_definitions(-DFOO) should emit a single -DFOO flag."""
+    from cja.generator import configure
+
+    source_dir = tmp_path
+    (source_dir / "main.c").write_text("int main(void) { return 0; }\n")
+    (source_dir / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.10)\n"
+        "project(AddDefsTest C)\n"
+        "add_executable(myapp main.c)\n"
+        "add_definitions(-DLUAJIT_OS=LUAJIT_OS_LINUX -D_FILE_OFFSET_BITS=64)\n"
+    )
+
+    configure(source_dir, "build")
+    content = (source_dir / "build.ninja").read_text()
+    assert "-DLUAJIT_OS=LUAJIT_OS_LINUX" in content
+    assert "-D-DLUAJIT_OS" not in content
+    assert "-D_FILE_OFFSET_BITS=64" in content

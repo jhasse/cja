@@ -1,8 +1,10 @@
 """Tests for execute_process command."""
 
-from pathlib import Path
 import sys
+from pathlib import Path
+
 import pytest
+
 from cja.generator import BuildContext, process_commands
 from cja.parser import Command
 

@@ -1,8 +1,10 @@
 """Tests for FetchContent command."""
 
-import pytest
 import tarfile
 from pathlib import Path
+
+import pytest
+
 from cja.generator import BuildContext, process_commands
 from cja.parser import Command
 

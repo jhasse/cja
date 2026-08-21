@@ -5,9 +5,9 @@ from pathlib import Path
 import pytest
 
 from cja.build_context import BuildContext
-from cja.generator import process_commands, configure
-from cja.syntax import evaluate_condition
+from cja.generator import configure, process_commands
 from cja.parser import Command
+from cja.syntax import evaluate_condition
 
 
 class TestEvaluateCondition:

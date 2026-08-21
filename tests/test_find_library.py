@@ -1,8 +1,9 @@
 """Tests for find_library command."""
 
-from pathlib import Path
-import pytest
 import platform
+from pathlib import Path
+
+import pytest
 
 from cja.generator import BuildContext, process_commands
 from cja.parser import Command

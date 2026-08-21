@@ -1,14 +1,14 @@
 """Integration tests for cja."""
 
-import subprocess
-import platform
 import os
+import platform
+import subprocess
 from pathlib import Path
+
 import pytest
 
 from cja import configure
 from tests.helpers import copy_unignored_tree
-
 
 EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
 EXE_EXT = ".exe" if platform.system() == "Windows" else ""
@@ -50,6 +50,7 @@ def test_hello_example(tmp_path: Path) -> None:
         cwd=source_dir,
         capture_output=True,
         text=True,
+        check=False,
     )
     assert result.returncode == 0, f"ninja failed: {result.stderr}"
 
@@ -63,6 +64,7 @@ def test_hello_example(tmp_path: Path) -> None:
         [str(hello_exe)],
         capture_output=True,
         text=True,
+        check=False,
     )
     assert result.returncode == 0
     assert result.stdout.strip() == "Hello, World!"
@@ -87,6 +89,7 @@ def test_libmath_example(tmp_path: Path) -> None:
         cwd=source_dir,
         capture_output=True,
         text=True,
+        check=False,
     )
     assert result.returncode == 0, f"ninja failed: {result.stderr}"
 
@@ -100,6 +103,7 @@ def test_libmath_example(tmp_path: Path) -> None:
         [str(build_dir / f"calculator{EXE_EXT}")],
         capture_output=True,
         text=True,
+        check=False,
     )
     assert result.returncode == 0
     assert "3 + 4 = 7" in result.stdout
@@ -129,6 +133,7 @@ def test_objlib_example(tmp_path: Path) -> None:
         cwd=source_dir,
         capture_output=True,
         text=True,
+        check=False,
     )
     assert result.returncode == 0, f"ninja failed: {result.stderr}"
 
@@ -142,6 +147,7 @@ def test_objlib_example(tmp_path: Path) -> None:
         [str(build_dir / f"app{EXE_EXT}")],
         capture_output=True,
         text=True,
+        check=False,
     )
     assert result.returncode == 0
     assert "Value: 42" in result.stdout
@@ -164,6 +170,7 @@ def test_manifest_example(tmp_path: Path) -> None:
         cwd=source_dir,
         capture_output=True,
         text=True,
+        check=False,
     )
     assert result.returncode == 0, f"ninja failed: {result.stderr}"
 
@@ -176,6 +183,7 @@ def test_manifest_example(tmp_path: Path) -> None:
         [str(app_exe)],
         capture_output=True,
         text=True,
+        check=False,
     )
     assert result.returncode == 0
     assert "Hello from manifest example" in result.stdout
@@ -232,6 +240,7 @@ def test_regenerate_preserves_defines(tmp_path: Path) -> None:
         cwd=source_dir,
         capture_output=True,
         text=True,
+        check=False,
     )
     assert result.returncode == 0, f"ninja failed: {result.stderr}"
 
@@ -262,6 +271,7 @@ def test_linker_unknown_argument_captured_output_gxx_only(tmp_path: Path) -> Non
         capture_output=True,
         text=True,
         env={**os.environ, "CLICOLOR_FORCE": "1", "LC_ALL": "C"},
+        check=False,
     )
     assert result.returncode != 0
     output_lower = f"{result.stdout}\n{result.stderr}".lower()
@@ -297,6 +307,7 @@ def test_stale_object_removed_from_static_library(tmp_path: Path) -> None:
     configure(source_dir, "build")
     result = subprocess.run(
         ["ninja"], cwd=source_dir, capture_output=True, text=True,
+        check=False,
     )
     assert result.returncode == 0, f"ninja failed: {result.stderr}"
 
@@ -325,6 +336,7 @@ def test_stale_object_removed_from_static_library(tmp_path: Path) -> None:
     configure(source_dir, "build")
     result = subprocess.run(
         ["ninja"], cwd=source_dir, capture_output=True, text=True,
+        check=False,
     )
     assert result.returncode == 0, f"ninja rebuild failed: {result.stderr}"
 

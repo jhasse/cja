@@ -94,6 +94,43 @@ def test_foreach_in_lists(capsys: pytest.CaptureFixture[str]) -> None:
     assert "z" in captured.out
 
 
+def test_foreach_in_lists_semicolon_separated() -> None:
+    """foreach(IN LISTS) must split CMake's ";"-separated lists into items."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    # CMake stores lists as ";"-separated values (as produced by set(L a b c)).
+    ctx.variables["MY_LIST"] = "x;y;z"
+    commands = [
+        Command(name="set", args=["RESULT", ""], line=1),
+        Command(name="foreach", args=["item", "IN", "LISTS", "MY_LIST"], line=2),
+        Command(name="set", args=["RESULT", "${RESULT}${item}-"], line=3),
+        Command(name="endforeach", args=[], line=4),
+    ]
+    process_commands(commands, ctx)
+
+    # Each element is its own iteration; before the fix this was a single
+    # iteration with item="x;y;z" producing "x;y;z-".
+    assert ctx.variables["RESULT"] == "x-y-z-"
+
+
+def test_foreach_in_lists_nested_variable() -> None:
+    """foreach(IN LISTS) with a per-item variable lookup (as used by SDL's
+    CPU detection) must resolve ${prefix_${item}} for each element."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    ctx.variables["known"] = "a;b;c"
+    ctx.variables["arch_a"] = "XA"
+    ctx.variables["arch_b"] = "XB"
+    ctx.variables["arch_c"] = "XC"
+    commands = [
+        Command(name="set", args=["RESULT", ""], line=1),
+        Command(name="foreach", args=["k", "IN", "LISTS", "known"], line=2),
+        Command(name="set", args=["RESULT", "${RESULT}${arch_${k}}"], line=3),
+        Command(name="endforeach", args=[], line=4),
+    ]
+    process_commands(commands, ctx, strict=True)
+
+    assert ctx.variables["RESULT"] == "XAXBXC"
+
+
 def test_foreach_in_items(capsys: pytest.CaptureFixture[str]) -> None:
     """Test foreach IN ITEMS."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
