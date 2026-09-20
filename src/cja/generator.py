@@ -2012,6 +2012,18 @@ def run_script(
     return ctx
 
 
+def _generate_delegate_ninja(build_dir_path: Path, build_dir: str) -> None:
+    """Write a small build.ninja into the build directory that delegates to
+    the real manifest in the source directory, so `ninja -C <build_dir>`
+    works even though the manifest itself lives one level up."""
+    with open(build_dir_path / "build.ninja", "w") as f:
+        n = Writer(f)
+        n.rule("delegate", f"cd .. && ninja -f {build_dir}.ninja", pool="console")
+        n.newline()
+        n.build("all", "delegate")
+        n.default("all")
+
+
 def configure(
     source_dir: Path,
     build_dir: str,
@@ -2113,6 +2125,7 @@ def configure(
     output_path = source_dir / f"{build_dir}.ninja"
     manifest_existed = output_path.exists()
     generate_ninja(ctx, output_path, build_dir, strict=strict)
+    _generate_delegate_ninja(ctx.build_dir, build_dir)
 
     # Generate compilation database
     try:
