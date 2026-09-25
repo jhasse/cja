@@ -15,7 +15,7 @@ jobs:
       FORCE_COLOR: "1"
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Install uv
       run: sudo dnf install -y uv python ninja gcc-c++ zlib-devel gtest-devel libwebp-devel libvorbis-devel ruff nodejs git
