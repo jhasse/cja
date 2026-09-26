@@ -185,3 +185,68 @@ def test_alias_propagates_public_include_directories(tmp_path: Path) -> None:
     rest = content[app_line_idx:]
     block = rest.split("\n\n")[0]
     assert "-Iinclude" in block
+
+
+def _app_link_inputs(content: str) -> list[str]:
+    statement = next(
+        stmt
+        for stmt in content.replace("$\n    ", "").split("\nbuild ")
+        if stmt.startswith("$builddir/app:")
+    )
+    return statement.splitlines()[0].split()[2:]
+
+
+def test_static_library_linked_before_its_dependencies(tmp_path: Path) -> None:
+    """A static library precedes the libraries it depends on, even via an INTERFACE group."""
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    commands = [
+        Command(name="add_library", args=["core", "STATIC", "core.c"], line=1),
+        Command(name="add_library", args=["debugger", "STATIC", "debugger.c"], line=2),
+        Command(
+            name="target_link_libraries", args=["debugger", "PUBLIC", "core"], line=3
+        ),
+        Command(name="add_library", args=["all", "INTERFACE"], line=4),
+        Command(
+            name="target_link_libraries",
+            args=["all", "INTERFACE", "core", "debugger"],
+            line=5,
+        ),
+        Command(name="add_library", args=["Proj::All", "ALIAS", "all"], line=6),
+        Command(name="add_executable", args=["app", "main.c"], line=7),
+        Command(
+            name="target_link_libraries", args=["app", "PRIVATE", "Proj::All"], line=8
+        ),
+    ]
+    process_commands(commands, ctx)
+    generate_ninja(ctx, tmp_path / "build.ninja", "build")
+
+    assert _app_link_inputs((tmp_path / "build.ninja").read_text()) == [
+        "$builddir/app_main.o",
+        "$builddir/libdebugger.a",
+        "$builddir/libcore.a",
+    ]
+
+
+def test_circular_static_libraries_are_repeated(tmp_path: Path) -> None:
+    """Static libraries that depend on each other are listed twice, like in CMake."""
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    commands = [
+        Command(name="add_library", args=["a", "STATIC", "a.c"], line=1),
+        Command(name="add_library", args=["b", "STATIC", "b.c"], line=2),
+        Command(name="target_link_libraries", args=["a", "PRIVATE", "b"], line=3),
+        Command(name="target_link_libraries", args=["b", "PRIVATE", "a"], line=4),
+        Command(name="add_executable", args=["app", "main.c"], line=5),
+        Command(name="target_link_libraries", args=["app", "PRIVATE", "a", "m"], line=6),
+    ]
+    process_commands(commands, ctx)
+    generate_ninja(ctx, tmp_path / "build.ninja", "build")
+
+    content = (tmp_path / "build.ninja").read_text()
+    assert _app_link_inputs(content) == [
+        "$builddir/app_main.o",
+        "$builddir/liba.a",
+        "$builddir/libb.a",
+        "$builddir/liba.a",
+        "$builddir/libb.a",
+    ]
+    assert "-lm" in content

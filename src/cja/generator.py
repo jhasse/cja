@@ -1071,9 +1071,8 @@ def generate_ninja(
             n.newline()
 
         # Helper to expand link libraries recursively
-        def expand_link_libraries(
-            initial: list[str], follow_private_of_static: bool
-        ) -> list[str]:
+        def expand_link_libraries(initial: list[str]) -> list[str]:
+            """Link items plus their transitive public dependencies, for usage requirements."""
             expanded: list[str] = []
             seen: set[str] = set()
             queue = list(initial)
@@ -1085,20 +1084,71 @@ def generate_ninja(
                 expanded.append(name)
                 lib = ctx.get_library(name)
                 if lib:
-                    # For static libraries, even private dependencies propagate to the consumer
-                    # but only when we are expanding for linking, not for compile flags
-                    if follow_private_of_static and lib.lib_type == "STATIC":
-                        deps = list(
-                            dict.fromkeys(
-                                lib.link_libraries + lib.public_link_libraries
-                            )
-                        )
-                    else:
-                        deps = lib.public_link_libraries
-                    for dep in deps:
+                    for dep in lib.public_link_libraries:
                         if dep not in seen:
                             queue.append(dep)
             return expanded
+
+        def order_link_libraries(initial: list[str]) -> list[str]:
+            """Order link items so each static library precedes its dependencies.
+
+            Like CMake, the declared order is kept where dependencies allow and
+            libraries with circular dependencies are listed twice.
+            """
+
+            def canonical(name: str) -> str:
+                lib = ctx.get_library(name)
+                return lib.name if lib else name
+
+            def deps(name: str) -> list[str]:
+                lib = ctx.get_library(name)
+                if not lib:
+                    return []
+                # For static libraries, even private dependencies propagate to the consumer
+                if lib.lib_type == "STATIC":
+                    names = lib.link_libraries + lib.public_link_libraries
+                else:
+                    names = lib.public_link_libraries
+                return list(dict.fromkeys(canonical(dep) for dep in names))
+
+            # Tarjan's algorithm: emits strongly connected components with
+            # dependencies first. Visiting in reverse keeps the declared order
+            # once the result is reversed.
+            index: dict[str, int] = {}
+            low: dict[str, int] = {}
+            stack: list[str] = []
+            on_stack: set[str] = set()
+            components: list[list[str]] = []
+
+            def visit(name: str) -> None:
+                index[name] = low[name] = len(index)
+                stack.append(name)
+                on_stack.add(name)
+                for dep in reversed(deps(name)):
+                    if dep not in index:
+                        visit(dep)
+                        low[name] = min(low[name], low[dep])
+                    elif dep in on_stack:
+                        low[name] = min(low[name], index[dep])
+                if low[name] == index[name]:
+                    component: list[str] = []
+                    while True:
+                        member = stack.pop()
+                        on_stack.discard(member)
+                        component.append(member)
+                        if member == name:
+                            break
+                    components.append(component)
+
+            for name in reversed(list(dict.fromkeys(canonical(n) for n in initial))):
+                if name not in index:
+                    visit(name)
+
+            ordered: list[str] = []
+            for component in reversed(components):
+                members = list(reversed(component))
+                ordered.extend(members * 2 if len(members) > 1 else members)
+            return ordered
 
         def _collect_directory_property_chain(
             target_dir: Path, prop_name: str
@@ -1215,9 +1265,7 @@ def generate_ninja(
             headers = [
                 h for h in target.properties.get("PRECOMPILE_HEADERS", "").split(";") if h
             ]
-            for dep_name in expand_link_libraries(
-                target.link_libraries, follow_private_of_static=False
-            ):
+            for dep_name in expand_link_libraries(target.link_libraries):
                 dep_lib = ctx.get_library(dep_name)
                 if dep_lib:
                     headers.extend(
@@ -1362,9 +1410,7 @@ def generate_ninja(
 
             # Propagate flags from dependencies
             # For compilation, we only follow public dependencies
-            expanded_lib_link_libraries = expand_link_libraries(
-                lib.link_libraries, follow_private_of_static=False
-            )
+            expanded_lib_link_libraries = expand_link_libraries(lib.link_libraries)
             for dep_name in expanded_lib_link_libraries:
                 dep_lib = ctx.get_library(dep_name)
                 if dep_lib:
@@ -1567,13 +1613,9 @@ def generate_ninja(
             objects: list[str] = []
             uses_cxx = False
             # For compile flags, we only follow public dependencies
-            expanded_compile_libraries = expand_link_libraries(
-                exe.link_libraries, follow_private_of_static=False
-            )
+            expanded_compile_libraries = expand_link_libraries(exe.link_libraries)
             # For linking, static libraries propagate their private dependencies
-            expanded_link_libraries = expand_link_libraries(
-                exe.link_libraries, follow_private_of_static=True
-            )
+            expanded_link_libraries = order_link_libraries(exe.link_libraries)
 
             # Collect cflags from global options, compile definitions, compile features, include dirs, linked libraries, and imported targets
             target_dir = (
