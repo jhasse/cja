@@ -185,3 +185,25 @@ def test_find_path_skips_when_already_set(tmp_path: Path) -> None:
     process_commands(commands, ctx)
 
     assert ctx.variables["MY_HEADER_PATH"] == "/preset/include"
+
+
+def test_find_path_searches_again_after_notfound(tmp_path: Path) -> None:
+    """A NOTFOUND cache entry doesn't stop a later search, like in CMake."""
+    (tmp_path / "inc").mkdir()
+    (tmp_path / "inc" / "foo.h").touch()
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    commands = [
+        Command(name="find_path", args=["H", "foo.h", "PATHS", "/nonexistent"], line=1),
+        Command(
+            name="find_path", args=["H", "foo.h", "PATHS", str(tmp_path / "inc")], line=2
+        ),
+        Command(
+            name="find_path",
+            args=["N", "foo.h", "PATHS", str(tmp_path / "inc"), "NO_CACHE"],
+            line=3,
+        ),
+    ]
+    process_commands(commands, ctx)
+    assert ctx.variables["H"] == str((tmp_path / "inc").absolute())
+    assert ctx.variables["N"] == str((tmp_path / "inc").absolute())
+    assert "N" not in ctx.cache_values

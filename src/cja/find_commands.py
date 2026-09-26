@@ -11,7 +11,7 @@ from pathlib import Path
 
 from .build_context import BuildContext
 from .parser import Command
-from .utils import split_unquoted_list_args
+from .utils import UNDEFINED_VAR_SENTINEL, split_unquoted_list_args
 
 
 def _search_dirs_with_defaults(
@@ -174,11 +174,28 @@ def _parse_find_args(
 
 
 def _is_already_resolved(ctx: BuildContext, var_name: str) -> bool:
-    """Return True if a cache var has already been resolved to a non-NOTFOUND value."""
-    existing = ctx.variables.get(var_name, "")
-    return var_name in ctx.cache_values or (
-        bool(existing) and not existing.endswith("-NOTFOUND")
-    )
+    """Return True if the variable is set to a non-NOTFOUND value, so the search is skipped.
+
+    Like CMake, this looks at the visible value (normal or cache) and treats an
+    empty value as found.
+    """
+    existing = ctx.variables.get(var_name)
+    if existing is None or existing == UNDEFINED_VAR_SENTINEL:
+        return False
+    return existing != "NOTFOUND" and not existing.endswith("-NOTFOUND")
+
+
+def _store_find_result(
+    ctx: BuildContext, var_name: str, value: str, no_cache: bool
+) -> None:
+    """Store a find result in the cache, or as a normal variable with NO_CACHE."""
+    if no_cache:
+        ctx.variables[var_name] = value
+        return
+    ctx.set_cache(var_name, value)
+    # CMake also updates an existing normal binding (CMP0125 NEW)
+    if var_name in ctx.variables.normal_bindings:
+        ctx.variables[var_name] = value
 
 
 def handle_find_program(ctx: BuildContext, cmd: Command, args: list[str]) -> None:
@@ -187,6 +204,9 @@ def handle_find_program(ctx: BuildContext, cmd: Command, args: list[str]) -> Non
         return
 
     var_name = args[0]
+    if _is_already_resolved(ctx, var_name):
+        return
+    no_cache = "NO_CACHE" in args
     # Parse arguments: find_program(VAR name1 [name2...] [NAMES name1...] [REQUIRED])
     names: list[str] = []
     required = False
@@ -218,9 +238,9 @@ def handle_find_program(ctx: BuildContext, cmd: Command, args: list[str]) -> Non
             break
 
     if found_path:
-        ctx.set_cache(var_name, found_path)
+        _store_find_result(ctx, var_name, found_path, no_cache)
     else:
-        ctx.set_cache(var_name, f"{var_name}-NOTFOUND")
+        _store_find_result(ctx, var_name, f"{var_name}-NOTFOUND", no_cache)
         if required:
             raise FileNotFoundError(f"Could not find program: {' or '.join(names)}")
 
@@ -233,6 +253,8 @@ def handle_find_path(ctx: BuildContext, cmd: Command, args: list[str]) -> None:
     var_name = args[0]
     if _is_already_resolved(ctx, var_name):
         return
+    no_cache = "NO_CACHE" in args
+    args = [arg for arg in args if arg != "NO_CACHE"]
 
     names, paths, hints, suffixes, required = _parse_find_args(args)
 
@@ -252,9 +274,9 @@ def handle_find_path(ctx: BuildContext, cmd: Command, args: list[str]) -> None:
             break
 
     if found_dir:
-        ctx.set_cache(var_name, found_dir)
+        _store_find_result(ctx, var_name, found_dir, no_cache)
     else:
-        ctx.set_cache(var_name, f"{var_name}-NOTFOUND")
+        _store_find_result(ctx, var_name, f"{var_name}-NOTFOUND", no_cache)
         if required:
             raise FileNotFoundError(f"Could not find path for: {', '.join(names)}")
 
@@ -270,6 +292,8 @@ def handle_find_file(ctx: BuildContext, cmd: Command, args: list[str]) -> None:
     var_name = args[0]
     if _is_already_resolved(ctx, var_name):
         return
+    no_cache = "NO_CACHE" in args
+    args = [arg for arg in args if arg != "NO_CACHE"]
 
     names, paths, hints, suffixes, required = _parse_find_args(args)
 
@@ -289,9 +313,9 @@ def handle_find_file(ctx: BuildContext, cmd: Command, args: list[str]) -> None:
             break
 
     if found_file:
-        ctx.set_cache(var_name, found_file)
+        _store_find_result(ctx, var_name, found_file, no_cache)
     else:
-        ctx.set_cache(var_name, f"{var_name}-NOTFOUND")
+        _store_find_result(ctx, var_name, f"{var_name}-NOTFOUND", no_cache)
         if required:
             raise FileNotFoundError(f"Could not find file for: {', '.join(names)}")
 
@@ -304,6 +328,8 @@ def handle_find_library(ctx: BuildContext, cmd: Command, args: list[str]) -> Non
     var_name = args[0]
     if _is_already_resolved(ctx, var_name):
         return
+    no_cache = "NO_CACHE" in args
+    args = [arg for arg in args if arg != "NO_CACHE"]
 
     names, paths, hints, suffixes, required = _parse_find_args(args)
 
@@ -368,8 +394,8 @@ def handle_find_library(ctx: BuildContext, cmd: Command, args: list[str]) -> Non
             break
 
     if found_lib:
-        ctx.set_cache(var_name, found_lib)
+        _store_find_result(ctx, var_name, found_lib, no_cache)
     else:
-        ctx.set_cache(var_name, f"{var_name}-NOTFOUND")
+        _store_find_result(ctx, var_name, f"{var_name}-NOTFOUND", no_cache)
         if required:
             raise FileNotFoundError(f"Could not find library: {', '.join(names)}")
