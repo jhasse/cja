@@ -128,6 +128,11 @@ def cmd_run(args: argparse.Namespace) -> int:
                 print(f"{error_label} Parse error: {e}", file=sys.stderr)
             return 1
 
+    if not cja_json_path.exists():
+        error_label = colored("error:", "red", attrs=["bold"])
+        print(f"{error_label} No executable target to run", file=sys.stderr)
+        return 1
+
     cja_config = json.loads(cja_json_path.read_text())
     exe_path = cja_config["run_executable"]
 

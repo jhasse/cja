@@ -1931,7 +1931,8 @@ def generate_ninja(
             n.build("install", "phony", install_files)
             n.newline()
 
-        # Write cja.json with run executable info
+        # Write cja.json with run executable info, removing a stale one first
+        (ctx.build_dir / "cja.json").unlink(missing_ok=True)
         if ctx.executables:
             run_target = ctx.executables[0].name
 

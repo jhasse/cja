@@ -50,3 +50,17 @@ def test_vs_startup_project_first_by_default(tmp_path):
 
     cja_json = json.loads((tmp_path / "build" / "cja.json").read_text())
     assert cja_json["run_executable"] == f"build/exe1{EXE_EXT}"
+
+
+def test_stale_cja_json_removed(tmp_path):
+    build_dir = tmp_path / "build"
+    build_dir.mkdir()
+    (build_dir / "cja.json").write_text('{"run_executable": "build/old"}\n')
+
+    ctx = BuildContext(source_dir=tmp_path, build_dir=build_dir)
+    commands = [Command(name="add_library", args=["lib1", "lib1.cpp"], line=1)]
+    process_commands(commands, ctx)
+
+    generate_ninja(ctx, tmp_path / "build.ninja", "build")
+
+    assert not (build_dir / "cja.json").exists()

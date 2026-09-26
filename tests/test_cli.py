@@ -483,3 +483,27 @@ add_executable(myexe main.c)
         check=False,
     )
     assert result.returncode == 42
+
+
+def test_run_subcommand_without_executable(tmp_path: Path) -> None:
+    """Test cja run reports an error when there is no executable target."""
+    source_dir = tmp_path
+    (source_dir / "lib.c").write_text("int foo() { return 0; }")
+    (source_dir / "CMakeLists.txt").write_text(
+        """
+cmake_minimum_required(VERSION 3.10)
+project(run_prj)
+add_library(mylib lib.c)
+"""
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-m", "cja", "run"],
+        capture_output=True,
+        text=True,
+        cwd=source_dir,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert "No executable target to run" in result.stderr
+    assert "Traceback" not in result.stderr
