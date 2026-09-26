@@ -8,6 +8,9 @@ import pytest
 from cja.generator import BuildContext, generate_ninja, process_commands
 from cja.parser import Command
 
+EXE_EXT = ".exe" if platform.system() == "Windows" else ""
+LIB_EXT = ".lib" if platform.system() == "Windows" else ".a"
+
 
 def test_target_link_libraries_skips_empty_argument() -> None:
     """Empty library arguments should be ignored."""
@@ -191,7 +194,7 @@ def _app_link_inputs(content: str) -> list[str]:
     statement = next(
         stmt
         for stmt in content.replace("$\n    ", "").split("\nbuild ")
-        if stmt.startswith("$builddir/app:")
+        if stmt.startswith(f"$builddir/app{EXE_EXT}:")
     )
     return statement.splitlines()[0].split()[2:]
 
@@ -222,8 +225,8 @@ def test_static_library_linked_before_its_dependencies(tmp_path: Path) -> None:
 
     assert _app_link_inputs((tmp_path / "build.ninja").read_text()) == [
         "$builddir/app_main.o",
-        "$builddir/libdebugger.a",
-        "$builddir/libcore.a",
+        f"$builddir/libdebugger{LIB_EXT}",
+        f"$builddir/libcore{LIB_EXT}",
     ]
 
 
@@ -244,9 +247,9 @@ def test_circular_static_libraries_are_repeated(tmp_path: Path) -> None:
     content = (tmp_path / "build.ninja").read_text()
     assert _app_link_inputs(content) == [
         "$builddir/app_main.o",
-        "$builddir/liba.a",
-        "$builddir/libb.a",
-        "$builddir/liba.a",
-        "$builddir/libb.a",
+        f"$builddir/liba{LIB_EXT}",
+        f"$builddir/libb{LIB_EXT}",
+        f"$builddir/liba{LIB_EXT}",
+        f"$builddir/libb{LIB_EXT}",
     ]
     assert "-lm" in content
