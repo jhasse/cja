@@ -309,29 +309,35 @@ def handle_target_sources(
     """Handle target_sources() command."""
     if len(args) >= 2:
         target_name = args[0]
-        sources = args[1:]
-        # Skip visibility keywords
-        sources = [s for s in sources if s not in ("PUBLIC", "PRIVATE", "INTERFACE")]
-        resolved_sources: list[str] = []
-        for source in sources:
+        target_sources: list[str] = []
+        interface_sources: list[str] = []
+        visibility = "PRIVATE"
+        for source in args[1:]:
+            if source in ("PUBLIC", "PRIVATE", "INTERFACE"):
+                visibility = source
+                continue
             normalized = strip_generator_expressions(source)
             if not normalized:
                 continue
-            resolved_sources.extend(
-                [
-                    ctx.resolve_path(item)
-                    for item in normalized.split(";")
-                    if item and item.strip()
-                ]
-            )
+            resolved = [
+                ctx.resolve_path(item)
+                for item in normalized.split(";")
+                if item and item.strip()
+            ]
+            if visibility in ("PUBLIC", "PRIVATE"):
+                target_sources.extend(resolved)
+            if visibility in ("PUBLIC", "INTERFACE"):
+                interface_sources.extend(resolved)
         # Add sources to library or executable
         lib = ctx.get_library(target_name)
         if lib:
-            lib.sources.extend(resolved_sources)
+            lib.sources.extend(target_sources)
+            lib.interface_sources.extend(interface_sources)
         else:
             exe = ctx.get_executable(target_name)
             if exe:
-                exe.sources.extend(resolved_sources)
+                # Nothing links against executables, so INTERFACE sources are unused.
+                exe.sources.extend(target_sources)
 
 
 def handle_target_compile_features(

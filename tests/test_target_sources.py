@@ -1,5 +1,7 @@
 """Tests for target_sources command."""
 
+import subprocess
+import sys
 from pathlib import Path
 
 from cja.generator import BuildContext, process_commands
@@ -191,3 +193,68 @@ def test_duplicate_target_source_generates_single_object_rule(tmp_path: Path) ->
     configure(source_dir, "build", strict=True)
     ninja = (source_dir / "build.ninja").read_text()
     assert ninja.count("mylib_main.o: cxx") == 1
+
+
+def test_target_sources_visibility_on_library() -> None:
+    """INTERFACE/PUBLIC sources become interface sources of a library."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="add_library", args=["mylib", "STATIC", "own.c"], line=1),
+        Command(
+            name="target_sources",
+            args=["mylib", "PRIVATE", "priv.c", "PUBLIC", "pub.c", "INTERFACE", "iface.c"],
+            line=2,
+        ),
+    ]
+    process_commands(commands, ctx)
+
+    lib = ctx.get_library("mylib")
+    assert lib is not None
+    assert lib.sources == ["own.c", "priv.c", "pub.c"]
+    assert lib.interface_sources == ["pub.c", "iface.c"]
+
+
+def test_interface_sources_are_compiled_into_consumers(tmp_path: Path) -> None:
+    """Like CMake, targets using a library compile its INTERFACE sources themselves."""
+    (tmp_path / "CMakeLists.txt").write_text(
+        """
+cmake_minimum_required(VERSION 3.16)
+project(is C)
+add_library(backend INTERFACE)
+target_sources(backend INTERFACE backend.c backend.h)
+add_library(pubsrc STATIC pub_own.c)
+target_sources(pubsrc PUBLIC pub_shared.c)
+add_library(shell STATIC shell.c)
+target_link_libraries(shell PRIVATE backend)
+add_executable(app main.c)
+target_link_libraries(app PRIVATE shell pubsrc)
+"""
+    )
+    (tmp_path / "backend.h").write_text("int backend_fn(void);\n")
+    (tmp_path / "backend.c").write_text("int backend_fn(void) { return 1; }\n")
+    (tmp_path / "shell.c").write_text(
+        '#include "backend.h"\nint shell_fn(void) { return backend_fn(); }\n'
+    )
+    (tmp_path / "pub_own.c").write_text("int pub_own(void) { return 2; }\n")
+    (tmp_path / "pub_shared.c").write_text("int pub_shared(void) { return 4; }\n")
+    (tmp_path / "main.c").write_text(
+        "int shell_fn(void); int pub_shared(void);\n"
+        "int main(void) { return shell_fn() + pub_shared() == 5 ? 0 : 1; }\n"
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-m", "cja", "run"],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    content = (tmp_path / "build.ninja").read_text()
+    # backend.c goes into shell (direct PRIVATE user) but not into app, which
+    # doesn't use backend; pub_shared.c goes into both pubsrc and app.
+    assert "build $builddir/shell_backend.o" in content
+    assert "app_backend.o" not in content
+    assert "build $builddir/pubsrc_pub_shared.o" in content
+    assert "build $builddir/app_pub_shared.o" in content

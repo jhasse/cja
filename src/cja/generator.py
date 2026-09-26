@@ -1206,6 +1206,17 @@ def generate_ninja(
                     return f"$builddir/{stripped}", stripped
             return source, source
 
+        def _sources_with_interface_sources(
+            sources: list[str], usage_libraries: list[str]
+        ) -> list[str]:
+            """A target's sources plus the INTERFACE sources of the libraries it uses."""
+            combined = list(sources)
+            for dep_name in usage_libraries:
+                dep_lib = ctx.get_library(dep_name)
+                if dep_lib:
+                    combined.extend(dep_lib.interface_sources)
+            return list(dict.fromkeys(combined))
+
         def _generated_source_deps(sources: list[str]) -> list[str]:
             """Ninja nodes for custom-command outputs listed among target sources.
 
@@ -1437,10 +1448,13 @@ def generate_ninja(
                     if imported.cflags:
                         lib_compile_flags.append(imported.cflags)
 
+            lib_sources = _sources_with_interface_sources(
+                lib.sources, expanded_lib_link_libraries
+            )
             # Filter out headers, .rc, and .manifest files from compileable sources
             compileable_sources: list[str] = [
                 s
-                for s in lib.sources
+                for s in lib_sources
                 if is_compilable_source(s)
                 and not is_header(s)
                 and not is_rc(s)
@@ -1453,7 +1467,7 @@ def generate_ninja(
             c_clang_tidy = lib.properties.get("C_CLANG_TIDY")
 
             lib_dep_order_only = _target_order_only(lib.dependencies)
-            lib_generated_deps = _generated_source_deps(lib.sources)
+            lib_generated_deps = _generated_source_deps(lib_sources)
             lib_order_only = list(
                 dict.fromkeys([*lib_dep_order_only, *lib_generated_deps])
             )
@@ -1694,10 +1708,13 @@ def generate_ninja(
                                         f"-I{_ninja_flag_path(inc_dir, ctx.source_dir)}"
                                     )
 
+            exe_sources = _sources_with_interface_sources(
+                exe.sources, expanded_compile_libraries
+            )
             # Filter out headers, .rc, and .manifest files from compileable sources
             compileable_sources: list[str] = [
                 s
-                for s in exe.sources
+                for s in exe_sources
                 if is_compilable_source(s)
                 and not is_header(s)
                 and not is_rc(s)
@@ -1705,14 +1722,14 @@ def generate_ninja(
             ]
             # CMake tolerates duplicate source entries on a target. Keep first occurrence.
             compileable_sources = list(dict.fromkeys(compileable_sources))
-            rc_sources: list[str] = [s for s in exe.sources if is_rc(s)]
-            manifest_sources: list[str] = [s for s in exe.sources if is_manifest(s)]
+            rc_sources: list[str] = [s for s in exe_sources if is_rc(s)]
+            manifest_sources: list[str] = [s for s in exe_sources if is_manifest(s)]
 
             cxx_clang_tidy = exe.properties.get("CXX_CLANG_TIDY")
             c_clang_tidy = exe.properties.get("C_CLANG_TIDY")
 
             exe_dep_order_only = _target_order_only(exe.dependencies)
-            exe_generated_deps = _generated_source_deps(exe.sources)
+            exe_generated_deps = _generated_source_deps(exe_sources)
             exe_order_only = list(
                 dict.fromkeys([*exe_dep_order_only, *exe_generated_deps])
             )
