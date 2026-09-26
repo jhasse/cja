@@ -333,16 +333,24 @@ def _rc_manifest_deps(ctx: BuildContext, rc_path: str) -> list[str]:
     return deps
 
 
-def compile_feature_to_flag(feature: str) -> str | None:
-    """Translate a CMake compile feature to a compiler flag."""
+def compile_feature_to_flag(
+    feature: str, properties: dict[str, str] | None = None
+) -> str | None:
+    """Translate a CMake compile feature to a compiler flag.
+
+    ``properties`` are those of the target being compiled; they decide whether
+    GNU extensions are enabled (C_EXTENSIONS defaults to ON, like in CMake).
+    """
     # Map cxx_std_XX features to -std=c++XX flags
     if feature.startswith("cxx_std_"):
         std_version = feature[8:]  # Extract "11", "14", "17", "20", "23", etc.
         return f"-std=c++{std_version}"
-    # Map c_std_XX features to -std=cXX flags
+    # Map c_std_XX features to -std=gnuXX or -std=cXX flags
     if feature.startswith("c_std_"):
         std_version = feature[6:]
-        return f"-std=c{std_version}"
+        extensions = (properties or {}).get("C_EXTENSIONS", "").strip()
+        prefix = "gnu" if not extensions or is_truthy(extensions) else "c"
+        return f"-std={prefix}{std_version}"
     # Other features could be added here
     return None
 
@@ -353,7 +361,7 @@ def target_std_flags(properties: dict[str, str]) -> list[str]:
     for prop, prefix in (("C_STANDARD", "c_std_"), ("CXX_STANDARD", "cxx_std_")):
         std = properties.get(prop, "").strip()
         if std.isdigit():
-            flag = compile_feature_to_flag(f"{prefix}{std}")
+            flag = compile_feature_to_flag(f"{prefix}{std}", properties)
             if flag:
                 flags.append(flag)
     return flags
@@ -406,6 +414,10 @@ def _std_level(lang: str, token: str) -> int:
         except ValueError:
             return -1
     return -1
+
+
+_CXX_STD_FLAG_RE = re.compile(r"^-std=(?:gnu\+\+|c\+\+)")
+_C_STD_FLAG_RE = re.compile(r"^-std=(?:gnu|c)(?!\+\+)")
 
 
 def _keep_highest_std_flag(flags: list[str], lang: str) -> list[str]:
@@ -1328,13 +1340,9 @@ def generate_ninja(
                     if sub_opt and sub_opt not in flags:
                         flags.append(sub_opt)
             if language in ("C", "ASM"):
-                flags = [flag for flag in flags if not flag.startswith("-std=c++")]
+                flags = [flag for flag in flags if not _CXX_STD_FLAG_RE.match(flag)]
                 return _keep_highest_std_flag(flags, "c")
-            flags = [
-                flag
-                for flag in flags
-                if not (flag.startswith("-std=c") and not flag.startswith("-std=c++"))
-            ]
+            flags = [flag for flag in flags if not _C_STD_FLAG_RE.match(flag)]
             flags = [
                 _normalize_windows_clang_cxx_std(flag, windows_clangxx)
                 for flag in flags
@@ -1490,7 +1498,7 @@ def generate_ninja(
                 if opt:
                     lib_compile_flags.append(opt)
             for feature in lib.compile_features:
-                flag = compile_feature_to_flag(feature)
+                flag = compile_feature_to_flag(feature, lib.properties)
                 if flag:
                     lib_compile_flags.append(flag)
             lib_compile_flags.extend(target_std_flags(lib.properties))
@@ -1505,7 +1513,7 @@ def generate_ninja(
                 dep_lib = ctx.get_library(dep_name)
                 if dep_lib:
                     for feature in dep_lib.public_compile_features:
-                        flag = compile_feature_to_flag(feature)
+                        flag = compile_feature_to_flag(feature, lib.properties)
                         if flag and flag not in lib_compile_flags:
                             lib_compile_flags.append(flag)
                     for inc_dir in dep_lib.public_include_directories:
@@ -1740,7 +1748,7 @@ def generate_ninja(
                 if opt:
                     compile_flags.append(opt)
             for feature in exe.compile_features:
-                flag = compile_feature_to_flag(feature)
+                flag = compile_feature_to_flag(feature, exe.properties)
                 if flag:
                     compile_flags.append(flag)
             compile_flags.extend(target_std_flags(exe.properties))
@@ -1754,7 +1762,7 @@ def generate_ninja(
 
                 if linked_lib:
                     for feature in linked_lib.public_compile_features:
-                        flag = compile_feature_to_flag(feature)
+                        flag = compile_feature_to_flag(feature, exe.properties)
                         if flag and flag not in compile_flags:
                             compile_flags.append(flag)
                     # Check for public include directories from linked libraries

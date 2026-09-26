@@ -124,9 +124,10 @@ def _default_target_properties(ctx: BuildContext) -> dict[str, str]:
     """Initialize target properties from their CMAKE_* variables."""
     properties: dict[str, str] = {}
     for lang in ("C", "CXX"):
-        std = ctx.variables.get(f"CMAKE_{lang}_STANDARD", "").strip()
-        if std:
-            properties[f"{lang}_STANDARD"] = std
+        for prop in ("STANDARD", "EXTENSIONS"):
+            value = ctx.variables.get(f"CMAKE_{lang}_{prop}", "").strip()
+            if value:
+                properties[f"{lang}_{prop}"] = value
     disable_pch = ctx.variables.get("CMAKE_DISABLE_PRECOMPILE_HEADERS", "")
     if disable_pch:
         properties["DISABLE_PRECOMPILE_HEADERS"] = disable_pch
