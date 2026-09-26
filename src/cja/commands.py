@@ -25,6 +25,7 @@ from .utils import (
     UNDEFINED_VAR_SENTINEL,
     cmake_regex_to_python,
     is_truthy,
+    is_verbatim_include,
     resolve_cmake_path,
     strip_generator_expressions,
     to_posix_path,
@@ -119,13 +120,16 @@ def _collect_directory_include_dirs(ctx: BuildContext) -> list[str]:
     return include_dirs
 
 
-def _default_std_properties(ctx: BuildContext) -> dict[str, str]:
-    """Initialize *_STANDARD target properties from CMAKE_*_STANDARD vars."""
+def _default_target_properties(ctx: BuildContext) -> dict[str, str]:
+    """Initialize target properties from their CMAKE_* variables."""
     properties: dict[str, str] = {}
     for lang in ("C", "CXX"):
         std = ctx.variables.get(f"CMAKE_{lang}_STANDARD", "").strip()
         if std:
             properties[f"{lang}_STANDARD"] = std
+    disable_pch = ctx.variables.get("CMAKE_DISABLE_PRECOMPILE_HEADERS", "")
+    if disable_pch:
+        properties["DISABLE_PRECOMPILE_HEADERS"] = disable_pch
     return properties
 
 
@@ -546,6 +550,54 @@ def handle_target_compile_options(
                 exe.compile_options.extend(public_opts)
 
 
+def handle_target_precompile_headers(
+    ctx: BuildContext,
+    cmd: Command,
+    args: list[str],
+    strict: bool,
+) -> None:
+    """Handle target_precompile_headers() command."""
+    if len(args) < 2:
+        return
+    target_name = args[0]
+    target = ctx.get_library(target_name) or ctx.get_executable(target_name)
+    if target is None:
+        return
+    if args[1] == "REUSE_FROM":
+        if len(args) >= 3:
+            target.properties["PRECOMPILE_HEADERS_REUSE_FROM"] = args[2]
+        return
+    target_headers: list[str] = []
+    public_headers: list[str] = []
+    visibility = "PUBLIC"  # Default visibility
+    for arg in args[1:]:
+        if arg in ("PUBLIC", "INTERFACE", "PRIVATE"):
+            visibility = arg
+            continue
+        expanded = ctx.expand_variables(arg, strict, cmd.line)
+        for header in expanded.split(";"):
+            header = header.strip()
+            if not header:
+                continue
+            # Relative paths inside generator expressions are resolved
+            # against the target's directory at generation time.
+            if "$<" not in header and not is_verbatim_include(header):
+                header = resolve_cmake_path(header, ctx.current_source_dir)
+            if visibility in ("PUBLIC", "PRIVATE"):
+                target_headers.append(header)
+            if visibility in ("PUBLIC", "INTERFACE"):
+                public_headers.append(header)
+    for prop_name, headers in (
+        ("PRECOMPILE_HEADERS", target_headers),
+        ("INTERFACE_PRECOMPILE_HEADERS", public_headers),
+    ):
+        if headers:
+            existing = target.properties.get(prop_name)
+            target.properties[prop_name] = ";".join(
+                [existing, *headers] if existing else headers
+            )
+
+
 def handle_set_target_properties(
     ctx: BuildContext,
     cmd: Command,
@@ -791,6 +843,8 @@ def handle_set_property(
                     file_props.object_depends.extend(prop_values)
                 else:
                     file_props.object_depends = list(prop_values)
+            elif prop_name == "SKIP_PRECOMPILE_HEADERS":
+                file_props.skip_precompile_headers = is_truthy(";".join(prop_values))
             elif strict:
                 ctx.print_warning(
                     f"set_property(SOURCE): property '{prop_name}' not yet supported",
@@ -926,6 +980,8 @@ def handle_get_property(
                     value = ";".join(file_props.include_directories)
                 elif prop_name == "OBJECT_DEPENDS":
                     value = ";".join(file_props.object_depends)
+                elif prop_name == "SKIP_PRECOMPILE_HEADERS":
+                    value = "ON" if file_props.skip_precompile_headers else ""
 
             if query_type == "DEFINED" or query_type == "SET":
                 ctx.variables[var_name] = "1" if value else "0"
@@ -1101,7 +1157,7 @@ def handle_add_library(
                 ]
             )
         include_directories = _collect_directory_include_dirs(ctx)
-        default_properties = _default_std_properties(ctx)
+        default_properties = _default_target_properties(ctx)
         ctx.libraries.append(
             Library(
                 name=name,
@@ -1134,7 +1190,7 @@ def handle_add_executable(
                 [ctx.resolve_path(item) for item in normalized.split(";") if item]
             )
         include_directories = _collect_directory_include_dirs(ctx)
-        default_properties = _default_std_properties(ctx)
+        default_properties = _default_target_properties(ctx)
         ctx.executables.append(
             Executable(
                 name=args[0],

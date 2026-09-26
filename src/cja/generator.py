@@ -19,7 +19,15 @@ from .build_context import (
 from .configurator import process_commands
 from .ninja_syntax import Writer
 from .parser import Command
-from .utils import is_truthy, make_relative, strip_generator_expressions, to_posix_path
+from .targets import Executable, Library
+from .utils import (
+    is_truthy,
+    is_verbatim_include,
+    make_relative,
+    resolve_cmake_path,
+    strip_generator_expressions,
+    to_posix_path,
+)
 
 
 def _quote_ninja_cmd_part(part: str) -> str:
@@ -210,6 +218,19 @@ def is_compilable_source(filename: str) -> bool:
         ".S",
     )
     return filename.endswith(source_extensions)
+
+
+def _source_language(source: str) -> str:
+    """Return the CMake language (C, CXX or ASM) a source is compiled as."""
+    if source.endswith((".s", ".S")):
+        return "ASM"
+    if source.endswith((".cpp", ".cxx", ".cc", ".C", ".mm", ".MM")):
+        return "CXX"
+    return "C"
+
+
+def _is_objc(source: str) -> bool:
+    return source.endswith((".m", ".M", ".mm", ".MM"))
 
 
 def _obj_subdir(source_rel: PurePath) -> str:
@@ -702,6 +723,31 @@ def generate_ninja(
         )
         n.newline()
 
+        has_pch = any(
+            prop in t.properties
+            for t in (*ctx.libraries, *ctx.executables)
+            for prop in (
+                "PRECOMPILE_HEADERS",
+                "INTERFACE_PRECOMPILE_HEADERS",
+                "PRECOMPILE_HEADERS_REUSE_FROM",
+            )
+        )
+        if has_pch:
+            for pch_rule, compiler, lang_flags, header_lang in (
+                ("cc_pch", "$cc", c_flags, "c-header"),
+                ("cxx_pch", "$cxx", cxx_flags, "c++-header"),
+            ):
+                n.rule(
+                    pch_rule,
+                    command=f"{compiler} -MMD -MF $out.d {base_cflags} {lang_flags} $cflags -x {header_lang} -c $in -o $out".replace(
+                        "  ", " "
+                    ).strip(),
+                    depfile="$out.d",
+                    deps="gcc",
+                    description="\x1b[32mPrecompiling $in\x1b[0m",
+                )
+                n.newline()
+
         # Assembly: compilers typically do not write a depfile for .s/.S, and a
         # missing depfile makes ninja rebuild the object on every invocation.
         n.rule(
@@ -1124,6 +1170,138 @@ def generate_ninja(
                     deps.append(resolved)
             return deps
 
+        def _language_compile_flags(
+            base_flags: list[str], raw_options: list[str], language: str
+        ) -> list[str]:
+            """Target compile flags for sources of the given language."""
+            flags = list(base_flags)
+            for option in raw_options:
+                opt = strip_generator_expressions(
+                    option,
+                    ctx.variables,
+                    compile_language=language,
+                )
+                for sub_opt in opt.split(";"):
+                    sub_opt = sub_opt.strip()
+                    if sub_opt and sub_opt not in flags:
+                        flags.append(sub_opt)
+            if language in ("C", "ASM"):
+                flags = [flag for flag in flags if not flag.startswith("-std=c++")]
+                return _keep_highest_std_flag(flags, "c")
+            flags = [
+                flag
+                for flag in flags
+                if not (flag.startswith("-std=c") and not flag.startswith("-std=c++"))
+            ]
+            flags = [
+                _normalize_windows_clang_cxx_std(flag, windows_clangxx)
+                for flag in flags
+            ]
+            return _keep_highest_std_flag(flags, "cxx")
+
+        def _target_pch_headers(
+            target: Library | Executable, seen: frozenset[str] = frozenset()
+        ) -> list[str]:
+            """PRECOMPILE_HEADERS of a target plus those its dependencies export."""
+            reuse_from = target.properties.get("PRECOMPILE_HEADERS_REUSE_FROM")
+            if reuse_from:
+                # Build our own PCH from the same headers instead of sharing
+                # the other target's, which could have been compiled with
+                # different flags.
+                other = ctx.get_library(reuse_from) or ctx.get_executable(reuse_from)
+                if other is None or other.name in seen:
+                    return []
+                return _target_pch_headers(other, seen | {target.name})
+            headers = [
+                h for h in target.properties.get("PRECOMPILE_HEADERS", "").split(";") if h
+            ]
+            for dep_name in expand_link_libraries(
+                target.link_libraries, follow_private_of_static=False
+            ):
+                dep_lib = ctx.get_library(dep_name)
+                if dep_lib:
+                    headers.extend(
+                        h
+                        for h in dep_lib.properties.get(
+                            "INTERFACE_PRECOMPILE_HEADERS", ""
+                        ).split(";")
+                        if h
+                    )
+            return list(dict.fromkeys(headers))
+
+        def _emit_pch(
+            target: Library | Executable,
+            target_dir: Path,
+            sources: list[str],
+            base_flags: list[str],
+            raw_options: list[str],
+            order_only: list[str],
+        ) -> dict[str, tuple[list[str], str]]:
+            """Write cmake_pch.h/.hxx for a target and emit rules to precompile them.
+
+            Returns the compile flags and the precompiled header node per language.
+            GCC and Clang both pick up <header>.gch next to an -include'd header.
+            """
+            if is_truthy(target.properties.get("DISABLE_PRECOMPILE_HEADERS", "")):
+                return {}
+            raw_headers = _target_pch_headers(target)
+            if not raw_headers:
+                return {}
+            pch: dict[str, tuple[list[str], str]] = {}
+            languages = {
+                _source_language(s)
+                for s in sources
+                if not _is_objc(s)
+            }
+            for language in ("C", "CXX"):
+                if language not in languages:
+                    continue
+                includes: list[str] = []
+                for raw in raw_headers:
+                    evaluated = strip_generator_expressions(
+                        raw, ctx.variables, compile_language=language
+                    )
+                    for header in evaluated.split(";"):
+                        header = header.strip()
+                        if not header:
+                            continue
+                        if not is_verbatim_include(header):
+                            header = f'"{resolve_cmake_path(header, target_dir)}"'
+                        includes.append(f"#include {header}")
+                if not includes:
+                    continue
+                header_rel = (
+                    f"CMakeFiles/{target.name}.dir/"
+                    f"cmake_pch.{'hxx' if language == 'CXX' else 'h'}"
+                )
+                header_path = ctx.build_dir / header_rel
+                content = "/* generated by cja */\n\n" + "\n".join(includes) + "\n"
+                # Only rewrite on change so the PCH isn't rebuilt on every configure
+                if not header_path.exists() or header_path.read_text() != content:
+                    header_path.parent.mkdir(parents=True, exist_ok=True)
+                    header_path.write_text(content)
+                header_node = f"$builddir/{header_rel}"
+                pch_node = f"{header_node}.gch"
+                register_output(pch_node, target.defined_file, target.defined_line)
+                pch_flags = _language_compile_flags(base_flags, raw_options, language)
+                n.build(
+                    pch_node,
+                    "cxx_pch" if language == "CXX" else "cc_pch",
+                    header_node,
+                    order_only=order_only or None,
+                    variables=cast(
+                        dict[str, str | list[str] | None],
+                        {"cflags": " ".join(pch_flags)},
+                    )
+                    if pch_flags
+                    else None,
+                )
+                include_flags = [f"-include {header_node}"]
+                if ctx.variables.get(f"CMAKE_{language}_COMPILER_ID") == "GNU":
+                    include_flags.insert(0, "-Winvalid-pch")
+                pch[language] = (include_flags, pch_node)
+            return pch
+
         # Generate build statements for libraries
         for lib in ctx.libraries:
             if lib.is_alias:
@@ -1233,6 +1411,14 @@ def generate_ninja(
             lib_order_only = list(
                 dict.fromkeys([*lib_dep_order_only, *lib_generated_deps])
             )
+            lib_pch = _emit_pch(
+                lib,
+                target_dir,
+                compileable_sources,
+                lib_compile_flags,
+                lib_compile_options_raw,
+                lib_order_only,
+            )
 
             for source in compileable_sources:
                 actual_source, obj_source = _resolve_source(source)
@@ -1248,34 +1434,24 @@ def generate_ninja(
                 objects.append(obj_name)
 
                 # Determine if C, C++, or assembly
-                is_cxx = source.endswith((".cpp", ".cxx", ".cc", ".C", ".mm", ".MM"))
-                is_asm = source.endswith((".s", ".S"))
+                source_language = _source_language(source)
+                is_cxx = source_language == "CXX"
+                is_asm = source_language == "ASM"
                 if is_asm:
                     rule = "asm"
-                    source_language = "ASM"
                 elif is_cxx:
                     rule = "cxx"
                     uses_cxx = True
-                    source_language = "CXX"
                 else:
                     rule = "cc"
-                    source_language = "C"
 
                 # Check for source file properties
                 abs_source = str(ctx.source_dir / source)
                 file_props = ctx.source_file_properties.get(abs_source)
 
-                source_compile_flags = list(lib_compile_flags)
-                for option in lib_compile_options_raw:
-                    opt = strip_generator_expressions(
-                        option,
-                        ctx.variables,
-                        compile_language=source_language,
-                    )
-                    for sub_opt in opt.split(";"):
-                        sub_opt = sub_opt.strip()
-                        if sub_opt and sub_opt not in source_compile_flags:
-                            source_compile_flags.append(sub_opt)
+                source_compile_flags = _language_compile_flags(
+                    lib_compile_flags, lib_compile_options_raw, source_language
+                )
                 source_depends = []
 
                 if file_props:
@@ -1293,37 +1469,23 @@ def generate_ninja(
                         else:
                             source_depends.append(d)
 
-                if rule in ("cc", "asm"):
-                    source_compile_flags = [
-                        flag
-                        for flag in source_compile_flags
-                        if not flag.startswith("-std=c++")
-                    ]
-                    source_compile_flags = _keep_highest_std_flag(
-                        source_compile_flags, "c"
-                    )
-                else:
-                    source_compile_flags = [
-                        flag
-                        for flag in source_compile_flags
-                        if not (
-                            flag.startswith("-std=c")
-                            and not flag.startswith("-std=c++")
-                        )
-                    ]
-                    source_compile_flags = [
-                        _normalize_windows_clang_cxx_std(flag, windows_clangxx)
-                        for flag in source_compile_flags
-                    ]
-                    source_compile_flags = _keep_highest_std_flag(
-                        source_compile_flags, "cxx"
-                    )
+                # Precompiled header flags go only to the compile edge, not to
+                # clang-tidy, which can't load a PCH built by another compiler.
+                obj_compile_flags = source_compile_flags
+                pch = lib_pch.get(source_language)
+                if (
+                    pch
+                    and not _is_objc(source)
+                    and not (file_props and file_props.skip_precompile_headers)
+                ):
+                    obj_compile_flags = [*source_compile_flags, *pch[0]]
+                    source_depends.append(pch[1])
 
                 source_vars: dict[str, str | list[str] | None] | None = None
-                if source_compile_flags:
+                if obj_compile_flags:
                     source_vars = cast(
                         dict[str, str | list[str] | None],
-                        {"cflags": " ".join(source_compile_flags)},
+                        {"cflags": " ".join(obj_compile_flags)},
                     )
 
                 # Generate clang-tidy validation node if applicable
@@ -1512,6 +1674,14 @@ def generate_ninja(
             exe_order_only = list(
                 dict.fromkeys([*exe_dep_order_only, *exe_generated_deps])
             )
+            exe_pch = _emit_pch(
+                exe,
+                target_dir,
+                compileable_sources,
+                compile_flags,
+                exe_compile_options_raw,
+                exe_order_only,
+            )
 
             for source in compileable_sources:
                 actual_source, obj_source = _resolve_source(source)
@@ -1527,34 +1697,24 @@ def generate_ninja(
                 objects.append(obj_name)
 
                 # Determine if C, C++, or assembly
-                is_cxx = source.endswith((".cpp", ".cxx", ".cc", ".C", ".mm", ".MM"))
-                is_asm = source.endswith((".s", ".S"))
+                source_language = _source_language(source)
+                is_cxx = source_language == "CXX"
+                is_asm = source_language == "ASM"
                 if is_asm:
                     rule = "asm"
-                    source_language = "ASM"
                 elif is_cxx:
                     rule = "cxx"
                     uses_cxx = True
-                    source_language = "CXX"
                 else:
                     rule = "cc"
-                    source_language = "C"
 
                 # Check for source file properties
                 abs_source = str(ctx.source_dir / source)
                 file_props = ctx.source_file_properties.get(abs_source)
 
-                source_compile_flags = list(compile_flags)
-                for option in exe_compile_options_raw:
-                    opt = strip_generator_expressions(
-                        option,
-                        ctx.variables,
-                        compile_language=source_language,
-                    )
-                    for sub_opt in opt.split(";"):
-                        sub_opt = sub_opt.strip()
-                        if sub_opt and sub_opt not in source_compile_flags:
-                            source_compile_flags.append(sub_opt)
+                source_compile_flags = _language_compile_flags(
+                    compile_flags, exe_compile_options_raw, source_language
+                )
                 source_depends = []
 
                 if file_props:
@@ -1572,37 +1732,23 @@ def generate_ninja(
                         else:
                             source_depends.append(d)
 
-                if rule in ("cc", "asm"):
-                    source_compile_flags = [
-                        flag
-                        for flag in source_compile_flags
-                        if not flag.startswith("-std=c++")
-                    ]
-                    source_compile_flags = _keep_highest_std_flag(
-                        source_compile_flags, "c"
-                    )
-                else:
-                    source_compile_flags = [
-                        flag
-                        for flag in source_compile_flags
-                        if not (
-                            flag.startswith("-std=c")
-                            and not flag.startswith("-std=c++")
-                        )
-                    ]
-                    source_compile_flags = [
-                        _normalize_windows_clang_cxx_std(flag, windows_clangxx)
-                        for flag in source_compile_flags
-                    ]
-                    source_compile_flags = _keep_highest_std_flag(
-                        source_compile_flags, "cxx"
-                    )
+                # Precompiled header flags go only to the compile edge, not to
+                # clang-tidy, which can't load a PCH built by another compiler.
+                obj_compile_flags = source_compile_flags
+                pch = exe_pch.get(source_language)
+                if (
+                    pch
+                    and not _is_objc(source)
+                    and not (file_props and file_props.skip_precompile_headers)
+                ):
+                    obj_compile_flags = [*source_compile_flags, *pch[0]]
+                    source_depends.append(pch[1])
 
                 source_vars: dict[str, str | list[str] | None] | None = None
-                if source_compile_flags:
+                if obj_compile_flags:
                     source_vars = cast(
                         dict[str, str | list[str] | None],
-                        {"cflags": " ".join(source_compile_flags)},
+                        {"cflags": " ".join(obj_compile_flags)},
                     )
 
                 # Generate clang-tidy validation node if applicable

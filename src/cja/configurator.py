@@ -56,6 +56,7 @@ from .commands import (
     handle_target_include_directories,
     handle_target_link_directories,
     handle_target_link_libraries,
+    handle_target_precompile_headers,
     handle_target_sources,
     handle_unset,
 )
@@ -1742,6 +1743,9 @@ int main() {{
             case "target_compile_options":
                 handle_target_compile_options(ctx, cmd, args, strict)
 
+            case "target_precompile_headers":
+                handle_target_precompile_headers(ctx, cmd, args, strict)
+
             case "include_directories":
                 handle_include_directories(ctx, cmd, args, strict)
 
@@ -2301,6 +2305,10 @@ int main() {{
                                 elif prop_name == "COMPILE_DEFINITIONS":
                                     file_props.compile_definitions.extend(
                                         expanded_values
+                                    )
+                                elif prop_name == "SKIP_PRECOMPILE_HEADERS":
+                                    file_props.skip_precompile_headers = is_truthy(
+                                        ";".join(expanded_values)
                                     )
                             else:
                                 ctx.print_warning(

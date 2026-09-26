@@ -117,6 +117,13 @@ def make_relative(path_str: str, root: Path) -> str:
     return path_str
 
 
+def is_verbatim_include(header: str) -> bool:
+    """Check if a precompile header entry is an include spec like <x> or "x"."""
+    return (header.startswith("<") and header.endswith(">")) or (
+        len(header) >= 2 and header.startswith('"') and header.endswith('"')
+    )
+
+
 def is_truthy(value: str) -> bool:
     """Check if a CMake value is considered true."""
     if not value:
