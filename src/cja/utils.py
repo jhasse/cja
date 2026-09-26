@@ -1,3 +1,4 @@
+import os
 import re
 import sys
 from pathlib import Path
@@ -71,6 +72,27 @@ def cmake_regex_to_python(pattern: str) -> str:
                 result.append(c)
                 i += 1
     return "".join(result)
+
+
+def write_if_changed(path: Path, content: str) -> None:
+    """Write ``content`` to ``path`` unless the file already holds it.
+
+    Like CMake's copy-if-different: an unchanged generated file keeps its
+    mtime, so regenerating doesn't force everything that depends on it to
+    rebuild.
+    """
+    # Compare against what write_text() would put on disk (text mode turns
+    # "\n" into os.linesep); read without newline translation so CRLF content
+    # compares correctly.
+    expected = content if os.linesep == "\n" else content.replace("\n", os.linesep)
+    try:
+        with path.open(newline="") as f:
+            if f.read() == expected:
+                return
+    except (OSError, UnicodeDecodeError):
+        pass
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
 
 
 def to_posix_path(path: str | Path) -> str:

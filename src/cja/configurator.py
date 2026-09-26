@@ -88,6 +88,7 @@ from .utils import (
     split_unquoted_list_args,
     status_marker,
     to_posix_path,
+    write_if_changed,
 )
 
 
@@ -1786,14 +1787,14 @@ int main() {{
                         )
                     )
                     output_path = current_binary_dir / output_path
-                output_path.parent.mkdir(parents=True, exist_ok=True)
-                output_path.write_text(
+                write_if_changed(
+                    output_path,
                     _render_basic_package_version_file(
                         version,
                         compatibility,
                         arch_independent,
                         ctx,
-                    )
+                    ),
                 )
 
             case "file":

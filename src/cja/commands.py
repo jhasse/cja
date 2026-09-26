@@ -30,6 +30,7 @@ from .utils import (
     resolve_cmake_path,
     strip_generator_expressions,
     to_posix_path,
+    write_if_changed,
 )
 
 
@@ -2562,9 +2563,7 @@ def handle_file(
                 sys.exit(1)
             return
 
-        dst = Path(output_path)
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        dst.write_text(generated)
+        write_if_changed(Path(output_path), generated)
 
 
 def handle_configure_file(
@@ -2667,8 +2666,7 @@ def handle_configure_file(
         if escape_quotes:
             content = content.replace('"', '\\"')
 
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    dst.write_text(content)
+    write_if_changed(dst, content)
 
 
 def _make_c_identifier(value: str) -> str:
@@ -2907,6 +2905,4 @@ def handle_generate_export_header(
         custom_content=custom_content,
     )
 
-    export_file_name.parent.mkdir(parents=True, exist_ok=True)
-    if not export_file_name.exists() or export_file_name.read_text() != content:
-        export_file_name.write_text(content)
+    write_if_changed(export_file_name, content)
