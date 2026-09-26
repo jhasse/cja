@@ -30,6 +30,9 @@ class TrackedDict(dict[str, str]):
     ) -> None:
         super().__init__(*args, **kwargs)
         self._tracker: set[str] = _tracker if _tracker is not None else set()
+        # Names bound by a normal set() in this scope. Such a binding hides a
+        # cache entry of the same name, like in CMake.
+        self.normal_bindings: set[str] = set()
 
     def __getitem__(self, key: str) -> str:
         self._tracker.add(key)
@@ -52,6 +55,7 @@ class TrackedDict(dict[str, str]):
         new = TrackedDict(_tracker=self._tracker)
         for k, v in dict.items(self):
             dict.__setitem__(new, k, v)
+        new.normal_bindings = set(self.normal_bindings)
         return new
 
 
@@ -115,7 +119,9 @@ class BuildContext:
     current_list_file: Path = field(init=False)
     project_name: str = ""
     variables: TrackedDict = field(default_factory=TrackedDict)
-    cache_variables: set[str] = field(default_factory=set)  # Variables from -D flags
+    cache_variables: set[str] = field(default_factory=set)  # Names of cache entries
+    # Values of cache entries, kept for when a normal binding hides them
+    cache_values: dict[str, str] = field(default_factory=dict)
     cli_variables: dict[str, str] = field(
         default_factory=dict
     )  # Original -D flag values
@@ -185,6 +191,22 @@ class BuildContext:
         except OSError:
             resolved = path
         self.configure_depends.add(resolved)
+
+    def cache_updates(self) -> dict[str, str]:
+        """Cache entries to carry over to the parent when leaving a scope."""
+        updates: dict[str, str] = {}
+        for name in self.cache_variables:
+            if name in self.cache_values:
+                updates[name] = self.cache_values[name]
+            elif name in self.variables and name not in self.variables.normal_bindings:
+                updates[name] = dict.__getitem__(self.variables, name)
+        return updates
+
+    def apply_cache_updates(self, updates: dict[str, str]) -> None:
+        """Make cache entries visible unless a normal binding hides them."""
+        for name, value in updates.items():
+            if name not in self.variables.normal_bindings:
+                self.variables[name] = value
 
     def get_library(self, name: str) -> Library | None:
         for lib in self.libraries:

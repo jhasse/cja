@@ -2135,6 +2135,7 @@ def run_script(
     if variables:
         ctx.variables.update(variables)
         ctx.cache_variables.update(variables.keys())
+        ctx.cache_values.update(variables)
         ctx.cli_variables = dict(variables)
 
     ctx.variables["CMAKE_SOURCE_DIR"] = str(cwd)
@@ -2229,6 +2230,7 @@ def configure(
     if variables:
         ctx.variables.update(variables)
         ctx.cache_variables.update(variables.keys())
+        ctx.cache_values.update(variables)
         ctx.cli_variables = dict(variables)
 
     # Set up standard CMake variables

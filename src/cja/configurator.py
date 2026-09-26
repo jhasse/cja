@@ -458,18 +458,14 @@ def process_commands(
                                 str, str | None
                             ] = saved_parent_scope_vars,
                         ) -> None:
-                            cache_updates = {
-                                k: v
-                                for k, v in ctx.variables.items()
-                                if k in ctx.cache_variables
-                            }
+                            cache_updates = ctx.cache_updates()
                             parent_scope_updates = ctx.parent_scope_vars
                             ctx.parent_scope_vars = saved_parent_scope_vars
                             ctx.current_source_dir = saved_current_source_dir
                             ctx.current_list_file = saved_current_list_file
                             ctx.parent_directory = saved_parent_directory
                             ctx.variables = saved_vars
-                            ctx.variables.update(cache_updates)
+                            ctx.apply_cache_updates(cache_updates)
                             for var, val in parent_scope_updates.items():
                                 if val is None:
                                     ctx.variables[var] = UNDEFINED_VAR_SENTINEL
@@ -860,18 +856,14 @@ def process_commands(
                                 str, str | None
                             ] = saved_parent_scope_vars,
                         ) -> None:
-                            cache_updates = {
-                                k: v
-                                for k, v in ctx.variables.items()
-                                if k in ctx.cache_variables
-                            }
+                            cache_updates = ctx.cache_updates()
                             parent_scope_updates = ctx.parent_scope_vars
                             ctx.parent_scope_vars = saved_parent_scope_vars
                             ctx.current_source_dir = saved_current_source_dir
                             ctx.current_list_file = saved_current_list_file
                             ctx.parent_directory = saved_parent_directory
                             ctx.variables = saved_vars
-                            ctx.variables.update(cache_updates)
+                            ctx.apply_cache_updates(cache_updates)
                             for var, val in parent_scope_updates.items():
                                 if val is None:
                                     ctx.variables[var] = UNDEFINED_VAR_SENTINEL
@@ -3318,11 +3310,7 @@ int main() {{
                             str, str | None
                         ] = saved_parent_scope_vars,
                     ) -> None:
-                        cache_updates = {
-                            k: v
-                            for k, v in ctx.variables.items()
-                            if k in ctx.cache_variables
-                        }
+                        cache_updates = ctx.cache_updates()
                         for var_name, var_value in ctx.parent_scope_vars.items():
                             if var_value is None:
                                 saved_vars[var_name] = UNDEFINED_VAR_SENTINEL
@@ -3333,7 +3321,7 @@ int main() {{
                         ctx.current_list_file = saved_current_list_file
                         ctx.parent_directory = saved_parent_directory
                         ctx.variables = saved_vars
-                        ctx.variables.update(cache_updates)
+                        ctx.apply_cache_updates(cache_updates)
                         ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = str(
                             saved_current_source_dir
                         )

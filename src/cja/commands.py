@@ -1599,9 +1599,17 @@ def handle_set(
                 continue
             filtered_values.append(val)
 
-        # Don't override cache variables unless FORCE is specified
-        if var_name in ctx.cache_variables and not has_force:
-            pass  # Skip, variable was set via -D flag
+        if has_cache:
+            # An existing cache entry is only overwritten with FORCE, and a
+            # normal binding of the same name keeps hiding it (CMP0126 NEW).
+            if var_name in ctx.cache_variables and not has_force:
+                return
+            value = ";".join(filtered_values)
+            # Cache variables are global and survive function/directory scopes.
+            ctx.cache_variables.add(var_name)
+            ctx.cache_values[var_name] = value
+            if var_name not in ctx.variables.normal_bindings:
+                ctx.variables[var_name] = value
         elif has_parent_scope:
             # Set in parent scope (for function calls)
             if filtered_values:
@@ -1609,13 +1617,31 @@ def handle_set(
             else:
                 ctx.parent_scope_vars[var_name] = ""
         elif filtered_values:
+            # A normal variable hides a cache entry of the same name.
+            if (
+                var_name in ctx.cache_variables
+                and var_name not in ctx.variables.normal_bindings
+                and var_name not in ctx.cache_values
+                and var_name in ctx.variables
+            ):
+                # Remember the cache value (e.g. from find_program()) so it
+                # becomes visible again on unset().
+                ctx.cache_values[var_name] = dict.__getitem__(ctx.variables, var_name)
             ctx.variables[var_name] = ";".join(filtered_values)
-            if has_cache:
-                # Cache variables are global and survive function/directory scopes.
-                ctx.cache_variables.add(var_name)
+            ctx.variables.normal_bindings.add(var_name)
         else:
             # set(VAR) with no value unsets the variable
-            ctx.variables.pop(var_name, None)
+            _unset_normal_variable(ctx, var_name)
+
+
+def _unset_normal_variable(ctx: BuildContext, var_name: str) -> None:
+    """Remove a normal binding, making a cache entry of the same name visible."""
+    ctx.variables.normal_bindings.discard(var_name)
+    if var_name in ctx.cache_variables:
+        if var_name in ctx.cache_values:
+            ctx.variables[var_name] = ctx.cache_values[var_name]
+    else:
+        ctx.variables.pop(var_name, None)
 
 
 def handle_unset(
@@ -1634,8 +1660,11 @@ def handle_unset(
         ctx.parent_scope_vars[var_name] = None
     elif scope == "CACHE":
         ctx.cache_variables.discard(var_name)
+        ctx.cache_values.pop(var_name, None)
+        if var_name not in ctx.variables.normal_bindings:
+            ctx.variables.pop(var_name, None)
     else:
-        ctx.variables.pop(var_name, None)
+        _unset_normal_variable(ctx, var_name)
 
 
 def handle_option(

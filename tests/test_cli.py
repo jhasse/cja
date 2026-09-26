@@ -105,8 +105,8 @@ def test_cli_multiple_d_flags(tmp_path: Path) -> None:
     assert "-O3" in content
 
 
-def test_d_flag_overrides_cmake_set(tmp_path: Path) -> None:
-    """Test that -D flag overrides set() in CMakeLists.txt."""
+def test_cmake_set_overrides_d_flag(tmp_path: Path) -> None:
+    """Test that a normal set() in CMakeLists.txt hides a -D cache entry, like CMake."""
     source_dir = tmp_path / "hello"
     copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
 
@@ -119,15 +119,13 @@ def test_d_flag_overrides_cmake_set(tmp_path: Path) -> None:
     )
     cmake_file.write_text(content)
 
-    # Override with -D flag to Release
     configure(source_dir, "build", variables={"CMAKE_BUILD_TYPE": "Release"})
 
     build_ninja = source_dir / "build.ninja"
     content = build_ninja.read_text()
-    # Should have Release flags, not Debug
-    assert "-O3" in content
-    assert "-DNDEBUG" in content
-    assert "-O0" not in content
+    # Should have Debug flags, not Release
+    assert "-O0" in content
+    assert "-O3" not in content
 
 
 def test_custom_build_dir_ninja_name(tmp_path: Path) -> None:
