@@ -745,12 +745,10 @@ def process_commands(
                     ctx.variables["PROJECT_BINARY_DIR"] = current_binary_dir
                     source_var = f"{project_name}_SOURCE_DIR"
                     binary_var = f"{project_name}_BINARY_DIR"
-                    ctx.variables[source_var] = str(ctx.current_source_dir)
-                    ctx.variables[binary_var] = current_binary_dir
                     # Keep project source/binary dirs globally visible across scopes
                     # (e.g. when project() is called in add_subdirectory()).
-                    ctx.cache_variables.add(source_var)
-                    ctx.cache_variables.add(binary_var)
+                    ctx.set_cache(source_var, str(ctx.current_source_dir))
+                    ctx.set_cache(binary_var, current_binary_dir)
 
                     if "VERSION" in args:
                         ver_idx = args.index("VERSION")

@@ -84,10 +84,8 @@ def handle_project(
         ctx.variables["PROJECT_BINARY_DIR"] = str(ctx.build_dir)
         source_var = f"{args[0]}_SOURCE_DIR"
         binary_var = f"{args[0]}_BINARY_DIR"
-        ctx.variables[source_var] = str(ctx.current_source_dir)
-        ctx.variables[binary_var] = str(ctx.build_dir)
-        ctx.cache_variables.add(source_var)
-        ctx.cache_variables.add(binary_var)
+        ctx.set_cache(source_var, str(ctx.current_source_dir))
+        ctx.set_cache(binary_var, str(ctx.build_dir))
 
 
 def _collect_directory_include_dirs(ctx: BuildContext) -> list[str]:
@@ -1602,14 +1600,10 @@ def handle_set(
         if has_cache:
             # An existing cache entry is only overwritten with FORCE, and a
             # normal binding of the same name keeps hiding it (CMP0126 NEW).
-            if var_name in ctx.cache_variables and not has_force:
+            if var_name in ctx.cache_values and not has_force:
                 return
-            value = ";".join(filtered_values)
             # Cache variables are global and survive function/directory scopes.
-            ctx.cache_variables.add(var_name)
-            ctx.cache_values[var_name] = value
-            if var_name not in ctx.variables.normal_bindings:
-                ctx.variables[var_name] = value
+            ctx.set_cache(var_name, ";".join(filtered_values))
         elif has_parent_scope:
             # Set in parent scope (for function calls)
             if filtered_values:
@@ -1618,17 +1612,7 @@ def handle_set(
                 ctx.parent_scope_vars[var_name] = ""
         elif filtered_values:
             # A normal variable hides a cache entry of the same name.
-            if (
-                var_name in ctx.cache_variables
-                and var_name not in ctx.variables.normal_bindings
-                and var_name not in ctx.cache_values
-                and var_name in ctx.variables
-            ):
-                # Remember the cache value (e.g. from find_program()) so it
-                # becomes visible again on unset().
-                ctx.cache_values[var_name] = dict.__getitem__(ctx.variables, var_name)
             ctx.variables[var_name] = ";".join(filtered_values)
-            ctx.variables.normal_bindings.add(var_name)
         else:
             # set(VAR) with no value unsets the variable
             _unset_normal_variable(ctx, var_name)
@@ -1636,12 +1620,9 @@ def handle_set(
 
 def _unset_normal_variable(ctx: BuildContext, var_name: str) -> None:
     """Remove a normal binding, making a cache entry of the same name visible."""
-    ctx.variables.normal_bindings.discard(var_name)
-    if var_name in ctx.cache_variables:
-        if var_name in ctx.cache_values:
-            ctx.variables[var_name] = ctx.cache_values[var_name]
-    else:
-        ctx.variables.pop(var_name, None)
+    ctx.variables.pop(var_name, None)
+    if var_name in ctx.cache_values:
+        ctx.set_cache(var_name, ctx.cache_values[var_name])
 
 
 def handle_unset(
@@ -1659,10 +1640,10 @@ def handle_unset(
         # Signal caller to remove the variable
         ctx.parent_scope_vars[var_name] = None
     elif scope == "CACHE":
-        ctx.cache_variables.discard(var_name)
-        ctx.cache_values.pop(var_name, None)
-        if var_name not in ctx.variables.normal_bindings:
-            ctx.variables.pop(var_name, None)
+        if ctx.cache_values.pop(var_name, None) is not None and (
+            var_name not in ctx.variables.normal_bindings
+        ):
+            dict.pop(ctx.variables, var_name, None)
     else:
         _unset_normal_variable(ctx, var_name)
 

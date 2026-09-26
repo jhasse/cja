@@ -73,14 +73,13 @@ def test_set_with_cache_and_force() -> None:
 def test_unset_cache() -> None:
     """Test unset(CACHE) removes cache variable tracking."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
-    ctx.cache_variables.add("CACHED")
-    ctx.variables["CACHED"] = "1"
+    ctx.set_cache("CACHED", "1")
     commands = [
         Command(name="unset", args=["CACHED", "CACHE"], line=1),
     ]
     process_commands(commands, ctx)
 
-    assert "CACHED" not in ctx.cache_variables
+    assert "CACHED" not in ctx.cache_values
     assert "CACHED" not in ctx.variables
 
 
@@ -126,7 +125,7 @@ def test_set_cache_persists_outside_function() -> None:
     ]
     process_commands(commands, ctx)
     assert ctx.variables["CACHED_VAR"] == "cached-value"
-    assert "CACHED_VAR" in ctx.cache_variables
+    assert "CACHED_VAR" in ctx.cache_values
 
 
 def test_normal_variable_hides_cache_entry(
@@ -178,3 +177,49 @@ message(STATUS "cli: [${D1}]")
     assert "subdir: [parent-normal]" in out
     assert "subdir-after-unset: [from-sub]" in out
     assert "cli: [set-in-list]" in out
+
+
+def test_other_commands_create_normal_bindings(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """list(), string(), math() etc. set normal variables that hide cache entries."""
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "CMakeLists.txt").write_text(
+        'set(C3 from-sub CACHE STRING "" FORCE)\n'
+    )
+    (tmp_path / "CMakeLists.txt").write_text(
+        """
+project(p NONE)
+set(C1 cache CACHE STRING "")
+function(f)
+  string(APPEND C1 "-suffix")
+endfunction()
+f()
+message(STATUS "func: [${C1}]")
+set(C2 cache CACHE STRING "")
+list(APPEND C2 x)
+set(C2 forced CACHE STRING "" FORCE)
+message(STATUS "list: [${C2}]")
+set(C3 cache CACHE STRING "")
+string(TOUPPER "${C3}" C3)
+add_subdirectory(sub)
+message(STATUS "string: [${C3}]")
+set(C4 cache CACHE STRING "")
+math(EXPR C4 "1+2")
+set(C4 forced CACHE STRING "" FORCE)
+message(STATUS "math: [${C4}]")
+set(C5 a CACHE STRING "")
+list(APPEND C5 b)
+unset(C5)
+message(STATUS "unset: [${C5}]")
+"""
+    )
+
+    configure(tmp_path, "build")
+
+    out = capsys.readouterr().out
+    assert "func: [cache]" in out
+    assert "list: [cache;x]" in out
+    assert "string: [CACHE]" in out
+    assert "math: [3]" in out
+    assert "unset: [a]" in out

@@ -2133,9 +2133,8 @@ def run_script(
     ctx.record_cmake_file(script_path)
 
     if variables:
-        ctx.variables.update(variables)
-        ctx.cache_variables.update(variables.keys())
-        ctx.cache_values.update(variables)
+        for name, value in variables.items():
+            ctx.set_cache(name, value)
         ctx.cli_variables = dict(variables)
 
     ctx.variables["CMAKE_SOURCE_DIR"] = str(cwd)
@@ -2228,9 +2227,8 @@ def configure(
     # Set variables from command line (-D flags) first
     # These are cache variables that won't be overridden by set()
     if variables:
-        ctx.variables.update(variables)
-        ctx.cache_variables.update(variables.keys())
-        ctx.cache_values.update(variables)
+        for name, value in variables.items():
+            ctx.set_cache(name, value)
         ctx.cli_variables = dict(variables)
 
     # Set up standard CMake variables

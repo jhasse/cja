@@ -176,7 +176,7 @@ def _parse_find_args(
 def _is_already_resolved(ctx: BuildContext, var_name: str) -> bool:
     """Return True if a cache var has already been resolved to a non-NOTFOUND value."""
     existing = ctx.variables.get(var_name, "")
-    return var_name in ctx.cache_variables or (
+    return var_name in ctx.cache_values or (
         bool(existing) and not existing.endswith("-NOTFOUND")
     )
 
@@ -187,7 +187,6 @@ def handle_find_program(ctx: BuildContext, cmd: Command, args: list[str]) -> Non
         return
 
     var_name = args[0]
-    ctx.cache_variables.add(var_name)
     # Parse arguments: find_program(VAR name1 [name2...] [NAMES name1...] [REQUIRED])
     names: list[str] = []
     required = False
@@ -219,9 +218,9 @@ def handle_find_program(ctx: BuildContext, cmd: Command, args: list[str]) -> Non
             break
 
     if found_path:
-        ctx.variables[var_name] = found_path
+        ctx.set_cache(var_name, found_path)
     else:
-        ctx.variables[var_name] = f"{var_name}-NOTFOUND"
+        ctx.set_cache(var_name, f"{var_name}-NOTFOUND")
         if required:
             raise FileNotFoundError(f"Could not find program: {' or '.join(names)}")
 
@@ -234,7 +233,6 @@ def handle_find_path(ctx: BuildContext, cmd: Command, args: list[str]) -> None:
     var_name = args[0]
     if _is_already_resolved(ctx, var_name):
         return
-    ctx.cache_variables.add(var_name)
 
     names, paths, hints, suffixes, required = _parse_find_args(args)
 
@@ -254,9 +252,9 @@ def handle_find_path(ctx: BuildContext, cmd: Command, args: list[str]) -> None:
             break
 
     if found_dir:
-        ctx.variables[var_name] = found_dir
+        ctx.set_cache(var_name, found_dir)
     else:
-        ctx.variables[var_name] = f"{var_name}-NOTFOUND"
+        ctx.set_cache(var_name, f"{var_name}-NOTFOUND")
         if required:
             raise FileNotFoundError(f"Could not find path for: {', '.join(names)}")
 
@@ -272,7 +270,6 @@ def handle_find_file(ctx: BuildContext, cmd: Command, args: list[str]) -> None:
     var_name = args[0]
     if _is_already_resolved(ctx, var_name):
         return
-    ctx.cache_variables.add(var_name)
 
     names, paths, hints, suffixes, required = _parse_find_args(args)
 
@@ -292,9 +289,9 @@ def handle_find_file(ctx: BuildContext, cmd: Command, args: list[str]) -> None:
             break
 
     if found_file:
-        ctx.variables[var_name] = found_file
+        ctx.set_cache(var_name, found_file)
     else:
-        ctx.variables[var_name] = f"{var_name}-NOTFOUND"
+        ctx.set_cache(var_name, f"{var_name}-NOTFOUND")
         if required:
             raise FileNotFoundError(f"Could not find file for: {', '.join(names)}")
 
@@ -307,7 +304,6 @@ def handle_find_library(ctx: BuildContext, cmd: Command, args: list[str]) -> Non
     var_name = args[0]
     if _is_already_resolved(ctx, var_name):
         return
-    ctx.cache_variables.add(var_name)
 
     names, paths, hints, suffixes, required = _parse_find_args(args)
 
@@ -372,8 +368,8 @@ def handle_find_library(ctx: BuildContext, cmd: Command, args: list[str]) -> Non
             break
 
     if found_lib:
-        ctx.variables[var_name] = found_lib
+        ctx.set_cache(var_name, found_lib)
     else:
-        ctx.variables[var_name] = f"{var_name}-NOTFOUND"
+        ctx.set_cache(var_name, f"{var_name}-NOTFOUND")
         if required:
             raise FileNotFoundError(f"Could not find library: {', '.join(names)}")

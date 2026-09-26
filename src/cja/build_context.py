@@ -30,9 +30,18 @@ class TrackedDict(dict[str, str]):
     ) -> None:
         super().__init__(*args, **kwargs)
         self._tracker: set[str] = _tracker if _tracker is not None else set()
-        # Names bound by a normal set() in this scope. Such a binding hides a
-        # cache entry of the same name, like in CMake.
+        # Names with a normal binding in this scope. Such a binding hides a
+        # cache entry of the same name, like in CMake. Every assignment
+        # creates one; cache entries are written via BuildContext.set_cache().
         self.normal_bindings: set[str] = set()
+
+    def __setitem__(self, key: str, value: str) -> None:
+        self.normal_bindings.add(key)
+        super().__setitem__(key, value)
+
+    def pop(self, key: str, *args: Any) -> Any:  # type: ignore[override]
+        self.normal_bindings.discard(key)
+        return super().pop(key, *args)
 
     def __getitem__(self, key: str) -> str:
         self._tracker.add(key)
@@ -119,8 +128,8 @@ class BuildContext:
     current_list_file: Path = field(init=False)
     project_name: str = ""
     variables: TrackedDict = field(default_factory=TrackedDict)
-    cache_variables: set[str] = field(default_factory=set)  # Names of cache entries
-    # Values of cache entries, kept for when a normal binding hides them
+    # Cache entries. Their values are visible through `variables` unless a
+    # normal binding of the same name hides them.
     cache_values: dict[str, str] = field(default_factory=dict)
     cli_variables: dict[str, str] = field(
         default_factory=dict
@@ -192,21 +201,21 @@ class BuildContext:
             resolved = path
         self.configure_depends.add(resolved)
 
+    def set_cache(self, name: str, value: str) -> None:
+        """Set a cache entry; a normal binding of the same name keeps hiding it."""
+        self.cache_values[name] = value
+        if name not in self.variables.normal_bindings:
+            dict.__setitem__(self.variables, name, value)
+
     def cache_updates(self) -> dict[str, str]:
         """Cache entries to carry over to the parent when leaving a scope."""
-        updates: dict[str, str] = {}
-        for name in self.cache_variables:
-            if name in self.cache_values:
-                updates[name] = self.cache_values[name]
-            elif name in self.variables and name not in self.variables.normal_bindings:
-                updates[name] = dict.__getitem__(self.variables, name)
-        return updates
+        return dict(self.cache_values)
 
     def apply_cache_updates(self, updates: dict[str, str]) -> None:
         """Make cache entries visible unless a normal binding hides them."""
         for name, value in updates.items():
             if name not in self.variables.normal_bindings:
-                self.variables[name] = value
+                dict.__setitem__(self.variables, name, value)
 
     def get_library(self, name: str) -> Library | None:
         for lib in self.libraries:
