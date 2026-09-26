@@ -16,6 +16,7 @@ from termcolor import colored
 from .build_context import (
     BuildContext,
 )
+from .commands import evaluate_glob, glob_watch_dirs
 from .configurator import process_commands
 from .ninja_syntax import Writer
 from .parser import Command
@@ -173,6 +174,63 @@ def _resolve_cja_cmd() -> list[str]:
     if platform.system() == "Windows":
         cmd[0] = to_posix_path(cmd[0])
     return cmd
+
+
+VERIFY_GLOBS_MANIFEST = "CMakeFiles/VerifyGlobs.json"
+VERIFY_GLOBS_STAMP = "CMakeFiles/cja.verify_globs"
+
+
+def _write_verify_globs(ctx: BuildContext) -> None:
+    """Record CONFIGURE_DEPENDS glob results for ``cja --verify-globs``.
+
+    The stamp is written too, before build.ninja, so it isn't newer than
+    build.ninja and a fresh configure doesn't trigger a reconfigure.
+    """
+    manifest = ctx.build_dir / VERIFY_GLOBS_MANIFEST
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(
+        json.dumps(
+            [
+                {
+                    "pattern": glob.pattern,
+                    "base_dir": str(glob.base_dir),
+                    "recursive": glob.recursive,
+                    "list_directories": glob.list_directories,
+                    "files": glob.files,
+                    "dirs": glob.dirs,
+                }
+                for glob in ctx.configure_depend_globs
+            ],
+            indent=2,
+        )
+    )
+    (ctx.build_dir / VERIFY_GLOBS_STAMP).touch()
+
+
+def verify_globs(manifest: Path, stamp: Path) -> int:
+    """Touch ``stamp`` if a CONFIGURE_DEPENDS glob no longer matches the same paths.
+
+    Watched directories are compared too, so that a new subdirectory of a
+    GLOB_RECURSE gets watched after the reconfigure.
+    """
+    try:
+        globs = json.loads(manifest.read_text())
+    except (OSError, ValueError):
+        globs = None
+    changed = globs is None or not stamp.exists()
+    for glob in globs or []:
+        if changed:
+            break
+        base_dir = Path(glob["base_dir"])
+        files = evaluate_glob(
+            glob["pattern"], base_dir, glob["recursive"], glob["list_directories"]
+        )
+        dirs = glob_watch_dirs(glob["pattern"], base_dir, glob["recursive"])
+        changed = files != glob["files"] or dirs != glob["dirs"]
+    if changed:
+        stamp.parent.mkdir(parents=True, exist_ok=True)
+        stamp.touch()
+    return 0
 
 
 def _detect_host_system_processor() -> str:
@@ -638,13 +696,18 @@ def generate_ninja(
                 if rel not in seen_deps:
                     cmake_deps.append(rel)
                     seen_deps.add(rel)
-        # Directory mtimes (CONFIGURE_DEPENDS globs): ninja restats directories
-        # and rebuilds when entries are added, removed, or renamed.
-        for depend_path in sorted(ctx.configure_depends, key=lambda p: str(p)):
-            rel = make_relative(str(depend_path), ctx.source_dir)
-            if rel not in seen_deps:
-                cmake_deps.append(rel)
-                seen_deps.add(rel)
+        # CONFIGURE_DEPENDS globs: ninja restats the watched directories, which
+        # change when entries are added, removed, or renamed. That only runs the
+        # glob check, which touches its stamp (and so triggers reconfigure) when
+        # a glob result actually differs.
+        glob_deps: list[str] = []
+        if ctx.configure_depend_globs:
+            _write_verify_globs(ctx)
+            for depend_path in sorted(ctx.configure_depends, key=lambda p: str(p)):
+                rel = make_relative(str(depend_path), ctx.source_dir)
+                if rel not in glob_deps:
+                    glob_deps.append(rel)
+            cmake_deps.append(f"$builddir/{VERIFY_GLOBS_STAMP}")
 
         if cmake_deps:
 
@@ -677,6 +740,23 @@ def generate_ninja(
                 description="\x1b[35mRe-running cja\x1b[0m",
             )
             n.newline()
+
+            if ctx.configure_depend_globs:
+                verify_cmd = " ".join(
+                    quote_part(part) for part in cja_cmd + ["--verify-globs"]
+                )
+                # The manifest isn't an input: configure rewrites it along
+                # with the stamp, so it must not make this step dirty.
+                n.rule(
+                    "verify_globs",
+                    command=f"{verify_cmd} $builddir/{VERIFY_GLOBS_MANIFEST} $out",
+                    generator=True,
+                    restat=True,
+                    description="\x1b[35mChecking globs\x1b[0m",
+                )
+                n.newline()
+                n.build(f"$builddir/{VERIFY_GLOBS_STAMP}", "verify_globs", glob_deps)
+                n.newline()
 
             output_name = make_relative(str(output_path), ctx.source_dir)
             n.build(output_name, "reconfigure", cmake_deps)

@@ -11,7 +11,7 @@ from pathlib import Path
 from termcolor import colored
 
 from . import __version__
-from .generator import configure, run_script
+from .generator import configure, run_script, verify_globs
 
 
 def _get_version() -> str:
@@ -361,6 +361,13 @@ def main() -> int:
         help=argparse.SUPPRESS,
     )
 
+    parser.add_argument(
+        "--verify-globs",
+        nargs=2,
+        metavar=("MANIFEST", "STAMP"),
+        help=argparse.SUPPRESS,
+    )
+
     # Build subcommand
     build_parser = subparsers.add_parser(
         "build", help="Configure and build the project"
@@ -411,6 +418,10 @@ def main() -> int:
     try:
         if args.E:
             return cmd_command_mode(args.E)
+
+        if args.verify_globs:
+            manifest, stamp = args.verify_globs
+            return verify_globs(Path(manifest), Path(stamp))
 
         if script_path is not None:
             return cmd_script(

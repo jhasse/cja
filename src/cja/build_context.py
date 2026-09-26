@@ -119,6 +119,18 @@ class CustomTarget:
 
 
 @dataclass
+class ConfigureDependGlob:
+    """A file(GLOB ... CONFIGURE_DEPENDS) call, re-checked at build time."""
+
+    pattern: str
+    base_dir: Path
+    recursive: bool
+    list_directories: bool | None
+    files: list[str]
+    dirs: list[str]
+
+
+@dataclass
 class BuildContext:
     """Context for processing CMake commands."""
 
@@ -175,6 +187,7 @@ class BuildContext:
     parent_directory: str = ""  # Path to parent directory (if in subdirectory)
     cmake_files: set[Path] = field(default_factory=set)
     configure_depends: set[Path] = field(default_factory=set)
+    configure_depend_globs: list[ConfigureDependGlob] = field(default_factory=list)
     include_guarded_files: set[Path] = field(default_factory=set)
     c_compiler: str = field(default_factory=_default_c_compiler)
     cxx_compiler: str = field(default_factory=_default_cxx_compiler)

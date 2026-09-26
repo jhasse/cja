@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .build_context import (
     BuildContext,
+    ConfigureDependGlob,
     find_matching_endfunction,
     find_matching_endmacro,
 )
@@ -2266,6 +2267,23 @@ def _cmake_glob_files(pattern: str, source_dir: Path, recursive: bool) -> list[s
     return py_glob.glob(str(source_dir / parent / "**" / name), recursive=True)
 
 
+def evaluate_glob(
+    pattern: str, source_dir: Path, recursive: bool, list_directories: bool | None
+) -> list[str]:
+    """Sorted matches of one file(GLOB) / file(GLOB_RECURSE) pattern."""
+    matched = _cmake_glob_files(pattern, source_dir, recursive)
+    if list_directories is False:
+        matched = [m for m in matched if not Path(m).is_dir()]
+    return sorted(matched)
+
+
+def glob_watch_dirs(pattern: str, source_dir: Path, recursive: bool) -> list[str]:
+    """Sorted directories watched for a CONFIGURE_DEPENDS glob."""
+    return sorted(
+        str(d) for d in _glob_configure_depend_dirs(pattern, source_dir, recursive)
+    )
+
+
 def handle_file(
     ctx: BuildContext,
     cmd: Command,
@@ -2352,17 +2370,28 @@ def handle_file(
             matched_files: list[str] = []
             for pattern in patterns:
                 expanded_pattern = ctx.expand_variables(pattern, strict, cmd.line)
-                if configure_depends:
-                    for glob_dir in _glob_configure_depend_dirs(
-                        expanded_pattern, ctx.current_source_dir, recursive
-                    ):
-                        ctx.record_configure_depend(glob_dir)
-                matched = _cmake_glob_files(
-                    expanded_pattern, ctx.current_source_dir, recursive
+                matched = evaluate_glob(
+                    expanded_pattern,
+                    ctx.current_source_dir,
+                    recursive,
+                    list_directories,
                 )
-                if list_directories is False:
-                    matched = [m for m in matched if not Path(m).is_dir()]
-                matched.sort()
+                if configure_depends:
+                    watch_dirs = glob_watch_dirs(
+                        expanded_pattern, ctx.current_source_dir, recursive
+                    )
+                    for glob_dir in watch_dirs:
+                        ctx.record_configure_depend(Path(glob_dir))
+                    ctx.configure_depend_globs.append(
+                        ConfigureDependGlob(
+                            pattern=expanded_pattern,
+                            base_dir=ctx.current_source_dir,
+                            recursive=recursive,
+                            list_directories=list_directories,
+                            files=matched,
+                            dirs=watch_dirs,
+                        )
+                    )
                 if relative_base is not None:
                     try:
                         base_resolved = relative_base.resolve()

@@ -1,10 +1,18 @@
 """Tests for file command."""
 
+import json
+import os
 import subprocess
 import time
 from pathlib import Path
 
-from cja.generator import BuildContext, configure, generate_ninja, process_commands
+from cja.generator import (
+    BuildContext,
+    configure,
+    generate_ninja,
+    process_commands,
+    verify_globs,
+)
 from cja.parser import Command
 
 
@@ -137,7 +145,7 @@ def test_file_glob_without_configure_depends_does_not_record_dir(
 
 
 def test_file_glob_configure_depends_in_ninja(tmp_path: Path) -> None:
-    """CONFIGURE_DEPENDS glob directories are reconfigure inputs in build.ninja."""
+    """CONFIGURE_DEPENDS glob directories feed a glob check before reconfigure."""
     src = tmp_path / "src"
     src.mkdir()
     (src / "a.cpp").touch()
@@ -158,7 +166,16 @@ def test_file_glob_configure_depends_in_ninja(tmp_path: Path) -> None:
     generate_ninja(ctx, ninja_path, "build")
 
     ninja = ninja_path.read_text()
-    assert "build build.ninja: reconfigure CMakeLists.txt src" in ninja
+    assert "build $builddir/CMakeFiles/cja.verify_globs: verify_globs src\n" in ninja
+    assert (
+        "build build.ninja: reconfigure CMakeLists.txt $\n"
+        "    $builddir/CMakeFiles/cja.verify_globs\n"
+    ) in ninja
+    manifest = json.loads(
+        (tmp_path / "build" / "CMakeFiles" / "VerifyGlobs.json").read_text()
+    )
+    assert manifest[0]["files"] == [str(src / "a.cpp")]
+    assert (tmp_path / "build" / "CMakeFiles" / "cja.verify_globs").exists()
 
 
 def test_file_glob_recurse_configure_depends_records_subdirs(tmp_path: Path) -> None:
@@ -198,7 +215,7 @@ def test_file_glob_configure_depends_reconfigure_on_new_file(tmp_path: Path) -> 
 
     configure(source_dir, "build")
     ninja = (source_dir / "build.ninja").read_text()
-    assert "build build.ninja: reconfigure CMakeLists.txt src" in ninja
+    assert "verify_globs src\n" in ninja
     assert "extra.cpp" not in ninja
 
     time.sleep(0.05)
@@ -214,6 +231,70 @@ def test_file_glob_configure_depends_reconfigure_on_new_file(tmp_path: Path) -> 
     assert result.returncode == 0, result.stderr + result.stdout
     rebuilt = (source_dir / "build.ninja").read_text()
     assert "extra.cpp" in rebuilt
+
+
+def test_file_glob_configure_depends_no_reconfigure_on_unmatched_file(
+    tmp_path: Path,
+) -> None:
+    """A new file the glob doesn't match only runs the glob check, not cja."""
+    source_dir = tmp_path / "proj"
+    src = source_dir / "src"
+    src.mkdir(parents=True)
+    (src / "main.cpp").write_text("int main() { return 0; }\n")
+    (source_dir / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.10)\n"
+        "project(glob_cfg)\n"
+        "file(GLOB SRC CONFIGURE_DEPENDS src/*.cpp)\n"
+        "add_executable(app ${SRC})\n"
+    )
+
+    configure(source_dir, "build")
+    subprocess.run(["ninja"], cwd=source_dir, check=True, capture_output=True)
+
+    time.sleep(0.05)
+    (src / "notes.txt").write_text("not a source\n")
+
+    result = subprocess.run(
+        ["ninja"],
+        cwd=source_dir,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "Checking globs" in result.stdout
+    assert "Re-running cja" not in result.stdout
+
+
+def test_verify_globs_touches_stamp_only_on_change(tmp_path: Path) -> None:
+    """cja --verify-globs leaves the stamp alone while glob results match."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.cpp").touch()
+
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    process_commands(
+        [
+            Command(
+                name="file",
+                args=["GLOB", "SRC", "CONFIGURE_DEPENDS", "src/*.cpp"],
+                line=1,
+            )
+        ],
+        ctx,
+    )
+    generate_ninja(ctx, tmp_path / "build.ninja", "build")
+    manifest = tmp_path / "build" / "CMakeFiles" / "VerifyGlobs.json"
+    stamp = tmp_path / "build" / "CMakeFiles" / "cja.verify_globs"
+    os.utime(stamp, (0, 0))
+
+    (src / "notes.txt").touch()
+    verify_globs(manifest, stamp)
+    assert stamp.stat().st_mtime == 0
+
+    (src / "b.cpp").touch()
+    verify_globs(manifest, stamp)
+    assert stamp.stat().st_mtime > 0
 
 
 def test_file_glob_recurse_literal_path(tmp_path: Path) -> None:
