@@ -1145,3 +1145,100 @@ def test_find_package_vulkan_found_via_vulkan_sdk(
 
     assert ctx.variables["Vulkan_FOUND"] == "TRUE"
     assert "Vulkan::Vulkan" in ctx.imported_targets
+
+
+def _fake_glfw_pkg_config(version: str | None):  # type: ignore[no-untyped-def]
+    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        if version is None:
+            return subprocess.CompletedProcess(cmd, 1)
+        outputs = {
+            "--exists": "",
+            "--cflags": "-I/opt/glfw/include",
+            "--libs": "-L/opt/glfw/lib -lglfw",
+            "--modversion": version,
+        }
+        if cmd[:1] == ["pkg-config"] and cmd[-1] == "glfw3":
+            return subprocess.CompletedProcess(cmd, 0, stdout=outputs[cmd[1]])
+        return subprocess.CompletedProcess(cmd, 1)
+
+    return fake_run
+
+
+def test_find_package_glfw3_via_pkg_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    """find_package(glfw3) provides the "glfw" target like glfw3Config.cmake."""
+    monkeypatch.setattr("cja.generator.subprocess.run", _fake_glfw_pkg_config("3.4.0"))
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    process_commands(
+        [Command(name="find_package", args=["glfw3", "3.3", "REQUIRED"], line=1)], ctx
+    )
+
+    assert ctx.variables["glfw3_FOUND"] == "1"
+    assert ctx.variables["glfw3_VERSION"] == "3.4.0"
+    assert ctx.variables["glfw3_VERSION_MAJOR"] == "3"
+    assert ctx.variables["glfw3_VERSION_MINOR"] == "4"
+    assert ctx.variables["glfw3_VERSION_PATCH"] == "0"
+    target = ctx.imported_targets["glfw"]
+    assert target.cflags == "-I/opt/glfw/include"
+    assert target.libs == "-L/opt/glfw/lib -lglfw"
+
+
+@pytest.mark.parametrize(
+    ("version_args", "found"),
+    [
+        (["3.4"], "1"),
+        (["3.5"], "0"),
+        (["4.0"], "0"),
+        (["2.0"], "0"),
+        (["3.4", "EXACT"], "0"),
+        (["3.4.0", "EXACT"], "1"),
+    ],
+)
+def test_find_package_glfw3_version_check(
+    monkeypatch: pytest.MonkeyPatch, version_args: list[str], found: str
+) -> None:
+    """Versions are checked like GLFW's SameMajorVersion config version file."""
+    monkeypatch.setattr("cja.generator.subprocess.run", _fake_glfw_pkg_config("3.4.0"))
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    process_commands(
+        [Command(name="find_package", args=["glfw3", *version_args, "QUIET"], line=1)],
+        ctx,
+    )
+    assert ctx.variables["glfw3_FOUND"] == found
+    assert ("glfw" in ctx.imported_targets) == (found == "1")
+
+
+def test_find_package_glfw3_via_glfw3_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Without pkg-config, glfw3_ROOT is searched and the version read from glfw3.h."""
+    (tmp_path / "include" / "GLFW").mkdir(parents=True)
+    (tmp_path / "include" / "GLFW" / "glfw3.h").write_text(
+        "#define GLFW_VERSION_MAJOR 3\n"
+        "#define GLFW_VERSION_MINOR 3\n"
+        "#define GLFW_VERSION_REVISION 8\n"
+    )
+    (tmp_path / "lib").mkdir()
+    lib_name = "libglfw.dylib" if platform.system() == "Darwin" else "libglfw.so"
+    (tmp_path / "lib" / lib_name).write_text("")
+    monkeypatch.setattr("cja.generator.subprocess.run", _fake_glfw_pkg_config(None))
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    ctx.variables["glfw3_ROOT"] = str(tmp_path)
+    process_commands([Command(name="find_package", args=["glfw3"], line=1)], ctx)
+
+    assert ctx.variables["glfw3_FOUND"] == "1"
+    assert ctx.variables["glfw3_VERSION"] == "3.3.8"
+    target = ctx.imported_targets["glfw"]
+    assert target.cflags == f"-I{tmp_path / 'include'}"
+    assert target.libs == str(tmp_path / "lib" / lib_name)
+
+
+def test_find_package_glfw3_required_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """find_package(glfw3 REQUIRED) fails when glfw is not found."""
+    monkeypatch.setattr("cja.generator.subprocess.run", _fake_glfw_pkg_config(None))
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    # Asking for an incompatible major version also fails when GLFW is installed.
+    commands = [Command(name="find_package", args=["glfw3", "99", "REQUIRED"], line=1)]
+    with pytest.raises(SystemExit) as exc_info:
+        process_commands(commands, ctx)
+    assert exc_info.value.code == 1
+    assert ctx.variables["glfw3_FOUND"] == "0"

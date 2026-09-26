@@ -396,6 +396,47 @@ def _pkg_config_info(pkg_name: str) -> tuple[bool, str, str, str]:
     return True, cflags, libs, version
 
 
+def _requested_version(args: list[str]) -> tuple[str, bool]:
+    """Return the version requested by find_package(<name> [version] [EXACT] ...)."""
+    if len(args) > 1 and re.fullmatch(r"\d+(\.\d+)*", args[1]):
+        return args[1], "EXACT" in args[2:]
+    return "", False
+
+
+def _version_tuple(version: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in re.findall(r"\d+", version))
+
+
+def _same_major_version_compatible(found: str, requested: str, exact: bool) -> bool:
+    """Version check of a SameMajorVersion package config version file."""
+    if not requested:
+        return True
+    if exact:
+        # write_basic_package_version_file() compares with STREQUAL, so "3.4"
+        # doesn't exactly match "3.4.0".
+        return found == requested
+    found_parts = _version_tuple(found)
+    requested_parts = _version_tuple(requested)
+    if not found_parts:
+        return False
+    return found_parts[0] == requested_parts[0] and found_parts >= requested_parts
+
+
+def _glfw_header_version(header: Path) -> str:
+    """Read GLFW_VERSION_MAJOR/MINOR/REVISION from glfw3.h."""
+    try:
+        text = header.read_text(errors="replace")
+    except OSError:
+        return ""
+    parts: list[str] = []
+    for name in ("MAJOR", "MINOR", "REVISION"):
+        match = re.search(rf"#define\s+GLFW_VERSION_{name}\s+(\d+)", text)
+        if not match:
+            return ""
+        parts.append(match.group(1))
+    return ".".join(parts)
+
+
 def handle_builtin_find_package(
     ctx: BuildContext,
     cmd: Command,
@@ -1534,6 +1575,87 @@ def handle_builtin_find_package(
             if ok:
                 print(f"{colored(status_marker(True), 'green')} {package_name}")
             else:
+                print(f"{colored(status_marker(False), 'red')} {package_name}")
+        return True
+
+    if package_name == "glfw3":
+        # GLFW only ships a package config file (no Find module in CMake). Mirror
+        # what glfw3Config.cmake provides: the "glfw" target and glfw3_VERSION.
+        found = False
+        glfw_cflags = ""
+        glfw_libs = ""
+        glfw_version = ""
+
+        # 1. Try pkg-config
+        pkg_found, glfw_cflags, glfw_libs, glfw_version = _pkg_config_info("glfw3")
+        if pkg_found:
+            found = True
+
+        # 2. Fall back to searching glfw3_ROOT, CMAKE_PREFIX_PATH and system prefixes
+        if not found:
+            prefixes = [
+                *(p for p in [_var_or_env(ctx, "glfw3_ROOT", "GLFW3_ROOT")] if p),
+                *_prefix_path_entries(ctx),
+                "/usr",
+                "/usr/local",
+                "/opt/homebrew",
+            ]
+            if platform.system() == "Darwin":
+                lib_names = ["libglfw.dylib", "libglfw3.a"]
+            else:
+                lib_names = ["libglfw.so", "libglfw3.a"]
+            for prefix in prefixes:
+                header = Path(prefix) / "include" / "GLFW" / "glfw3.h"
+                if not header.exists():
+                    continue
+                lib_search_dirs = _unique_existing_dirs(
+                    [
+                        Path(prefix) / "lib",
+                        Path(prefix) / "lib64",
+                        Path(prefix) / "lib" / "x86_64-linux-gnu",
+                        Path(prefix) / "lib" / "aarch64-linux-gnu",
+                    ]
+                )
+                glfw_libs = _find_first_library(lib_search_dirs, lib_names)
+                if glfw_libs:
+                    found = True
+                    glfw_cflags = f"-I{Path(prefix) / 'include'}"
+                    glfw_version = _glfw_header_version(header)
+                    break
+
+        requested_version, exact = _requested_version(args)
+        if found and not _same_major_version_compatible(
+            glfw_version, requested_version, exact
+        ):
+            found = False
+            if not quiet:
+                ctx.print_warning(
+                    f"glfw3 {glfw_version or '(unknown version)'} is not compatible "
+                    f"with requested version {requested_version}",
+                    cmd.line,
+                )
+
+        if found:
+            # Config-mode packages report 1/0 rather than TRUE/FALSE
+            ctx.variables["glfw3_FOUND"] = "1"
+            if glfw_version:
+                ctx.variables["glfw3_VERSION"] = glfw_version
+                for suffix, part in zip(
+                    ("MAJOR", "MINOR", "PATCH"), glfw_version.split("."), strict=False
+                ):
+                    ctx.variables[f"glfw3_VERSION_{suffix}"] = part
+            ctx.imported_targets["glfw"] = ImportedTarget(
+                cflags=glfw_cflags,
+                libs=glfw_libs,
+            )
+            if not quiet:
+                print(f"{colored(status_marker(True), 'green')} {package_name}")
+        else:
+            ctx.variables["glfw3_FOUND"] = "0"
+            if required:
+                ctx.print_error("could not find package: glfw3", cmd.line)
+                raise SystemExit(1)
+            if not quiet:
                 print(f"{colored(status_marker(False), 'red')} {package_name}")
         return True
 
