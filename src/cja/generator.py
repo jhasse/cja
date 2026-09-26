@@ -267,6 +267,18 @@ def compile_feature_to_flag(feature: str) -> str | None:
     return None
 
 
+def target_std_flags(properties: dict[str, str]) -> list[str]:
+    """Translate C_STANDARD/CXX_STANDARD target properties to compiler flags."""
+    flags: list[str] = []
+    for prop, prefix in (("C_STANDARD", "c_std_"), ("CXX_STANDARD", "cxx_std_")):
+        std = properties.get(prop, "").strip()
+        if std.isdigit():
+            flag = compile_feature_to_flag(f"{prefix}{std}")
+            if flag:
+                flags.append(flag)
+    return flags
+
+
 def _is_windows_clangxx(cxx: str) -> bool:
     if platform.system() != "Windows":
         return False
@@ -1165,6 +1177,7 @@ def generate_ninja(
                 flag = compile_feature_to_flag(feature)
                 if flag:
                     lib_compile_flags.append(flag)
+            lib_compile_flags.extend(target_std_flags(lib.properties))
             for inc_dir in lib.include_directories:
                 inc = strip_generator_expressions(inc_dir)
                 lib_compile_flags.append(f"-I{_ninja_flag_path(inc, ctx.source_dir)}")
@@ -1433,6 +1446,7 @@ def generate_ninja(
                 flag = compile_feature_to_flag(feature)
                 if flag:
                     compile_flags.append(flag)
+            compile_flags.extend(target_std_flags(exe.properties))
             for inc_dir in exe.include_directories:
                 inc = strip_generator_expressions(inc_dir)
                 compile_flags.append(f"-I{_ninja_flag_path(inc, ctx.source_dir)}")
