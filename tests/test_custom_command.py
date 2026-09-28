@@ -3,6 +3,8 @@
 import platform
 from pathlib import Path
 
+import pytest
+
 from cja.generator import BuildContext, process_commands
 from cja.parser import Command
 
@@ -454,6 +456,51 @@ add_custom_command(TARGET myapp POST_BUILD COMMAND echo done)
     assert "myapp.post_build" in ninja_content
     # The executable itself should appear as a dependency of the stamp
     assert "$builddir/myapp" in ninja_content
+
+
+def test_post_build_windows_paths_not_single_quoted(tmp_path: Path) -> None:
+    """POST_BUILD must use Windows-aware quoting, not shlex single quotes.
+
+    Ninja runs commands via cmd.exe on Windows, which ignores single quotes.
+    Paths with backslashes must be forward-slash normalized instead.
+    """
+    if platform.system() != "Windows":
+        pytest.skip("Windows-specific quoting behavior")
+
+    from cja.generator import configure
+
+    source_dir = tmp_path
+    cmake_content = """\
+cmake_minimum_required(VERSION 3.10)
+project(PostBuildQuoteTest)
+
+add_executable(myapp main.c)
+
+add_custom_command(TARGET myapp POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy ${PROJECT_SOURCE_DIR}/data/asset.txt
+            $<TARGET_FILE_DIR:myapp>
+)
+"""
+    (source_dir / "CMakeLists.txt").write_text(cmake_content)
+    (source_dir / "main.c").write_text("int main() { return 0; }\n")
+    (source_dir / "data").mkdir()
+    (source_dir / "data" / "asset.txt").write_text("")
+
+    configure(source_dir, "build")
+
+    # Unwrap ninja "$" line continuations so the full cmd is searchable.
+    unwrapped = (source_dir / "build.ninja").read_text().replace("$\n", "")
+    edge = unwrapped.find("CMakeFiles/myapp.post_build: custom_command")
+    assert edge != -1
+    cmd_start = unwrapped.find("cmd =", edge)
+    assert cmd_start != -1
+    cmd = unwrapped[cmd_start : unwrapped.find("\n", cmd_start)]
+
+    assert "-E touch" in cmd
+    assert "CMakeFiles/myapp.post_build" in cmd
+    assert "data/asset.txt" in cmd
+    assert "'" not in cmd, f"shlex single quotes break cmd.exe: {cmd}"
+    assert "\\" not in cmd, f"backslash paths break cmd.exe: {cmd}"
 
 
 def test_add_custom_command_comment_not_in_depends(tmp_path: Path) -> None:

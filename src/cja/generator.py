@@ -1062,7 +1062,7 @@ def generate_ninja(
                     if arg in shell_operators:
                         parts.append(str(arg))
                     else:
-                        parts.append(shlex.quote(str(arg)))
+                        parts.append(_quote_ninja_cmd_part(str(arg)))
                 return " ".join(parts)
             return " ".join(str(c) for c in expanded)
 
@@ -2056,9 +2056,14 @@ def generate_ninja(
                 pb_cmd_parts: list[str] = []
                 for pb_cmd in exe.post_build_commands:
                     expanded_parts = [_expand_genex(a) for a in pb_cmd]
-                    pb_cmd_parts.append(" ".join(shlex.quote(p) for p in expanded_parts))
+                    pb_cmd_parts.append(
+                        " ".join(_quote_ninja_cmd_part(p) for p in expanded_parts)
+                    )
                 # Touch the stamp so ninja skips this step when nothing has changed
-                pb_cmd_parts.append(f"{shlex.quote(cmake_cmd)} -E touch {shlex.quote(stamp_path)}")
+                pb_cmd_parts.append(
+                    f"{_quote_ninja_cmd_part(cmake_cmd)} -E touch "
+                    f"{_quote_ninja_cmd_part(stamp_path)}"
+                )
                 pb_cmd_str = " && ".join(pb_cmd_parts)
                 n.build([stamp], "custom_command", [exe_name], variables={"cmd": pb_cmd_str})
                 n.newline()
