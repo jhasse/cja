@@ -35,10 +35,16 @@ def parse_define(value: str) -> tuple[str, str]:
 def cmd_configure(args: argparse.Namespace) -> int:
     """Run the configure command."""
     source_dir = Path(".")
-    build_dir = args.build_dir
 
-    # Parse -D arguments into variables dict
-    variables: dict[str, str] = {}
+    # Determine build directory and variables based on --release flag
+    if args.release:
+        build_dir = "build-release"
+        variables: dict[str, str] = {"CMAKE_BUILD_TYPE": "Release"}
+    else:
+        build_dir = args.build_dir
+        variables = {}
+
+    # Parse -D arguments into variables dict (-D can override --release settings)
     for define in args.defines:
         name, value = parse_define(define)
         variables[name] = value
@@ -339,6 +345,12 @@ def main() -> int:
     )
 
     parser.add_argument(
+        "--release",
+        action="store_true",
+        help="Configure in release mode (CMAKE_BUILD_TYPE=Release)",
+    )
+
+    parser.add_argument(
         "-E",
         nargs="+",
         metavar="command",
@@ -369,12 +381,14 @@ def main() -> int:
     )
 
     # Build subcommand
+    # default=SUPPRESS so `cja --release build` keeps the parent flag
     build_parser = subparsers.add_parser(
         "build", help="Configure and build the project"
     )
     build_parser.add_argument(
         "--release",
         action="store_true",
+        default=argparse.SUPPRESS,
         help="Build in release mode (CMAKE_BUILD_TYPE=Release)",
     )
 
@@ -383,6 +397,7 @@ def main() -> int:
     test_parser.add_argument(
         "--release",
         action="store_true",
+        default=argparse.SUPPRESS,
         help="Run tests in release mode (CMAKE_BUILD_TYPE=Release)",
     )
 
@@ -393,6 +408,7 @@ def main() -> int:
     run_parser.add_argument(
         "--release",
         action="store_true",
+        default=argparse.SUPPRESS,
         help="Run in release mode (CMAKE_BUILD_TYPE=Release)",
     )
 

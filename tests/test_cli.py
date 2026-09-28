@@ -183,6 +183,31 @@ def test_build_subcommand_release(tmp_path: Path) -> None:
     assert (source_dir / "build-release" / f"hello{EXE_EXT}").exists()
 
 
+def test_configure_release_flag(tmp_path: Path) -> None:
+    """Test cja --release configures like cja build --release (without building)."""
+    source_dir = tmp_path / "hello"
+    copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
+
+    result = subprocess.run(
+        [sys.executable, "-m", "cja", "--release"],
+        capture_output=True,
+        text=True,
+        cwd=source_dir,
+        check=False,
+    )
+    assert result.returncode == 0
+
+    # Should have created build-release.ninja with Release flags
+    assert (source_dir / "build-release.ninja").exists()
+    assert not (source_dir / "build.ninja").exists()
+    content = (source_dir / "build-release.ninja").read_text()
+    assert "-O3" in content
+    assert "-DNDEBUG" in content
+
+    # Configure-only: should not have built the executable
+    assert not (source_dir / "build-release" / f"hello{EXE_EXT}").exists()
+
+
 def test_build_subcommand_skips_configure_if_ninja_exists(tmp_path: Path) -> None:
     """Test cja build skips configure if ninja file already exists."""
     source_dir = tmp_path / "hello"
