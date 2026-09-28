@@ -1,6 +1,7 @@
 """Tests for FetchContent command."""
 
 import tarfile
+import urllib.request
 from pathlib import Path
 
 import pytest
@@ -112,6 +113,110 @@ def test_fetchcontent_wrong_hash(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError, match="Hash mismatch"):
         process_commands(commands, ctx)
+
+
+def test_fetchcontent_sourceforge_style_download_url(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """URLs ending in /download (SourceForge) still download and extract."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+
+    lib_dir = tmp_path / "mylib"
+    lib_dir.mkdir()
+    (lib_dir / "CMakeLists.txt").write_text("add_library(mylib STATIC mylib.c)")
+    (lib_dir / "mylib.c").write_text("int mylib_func() { return 0; }")
+
+    tar_path = tmp_path / "mylib.tar.gz"
+    with tarfile.open(tar_path, "w:gz") as tar:
+        tar.add(lib_dir, arcname="mylib")
+    archive_bytes = tar_path.read_bytes()
+
+    class _FakeResponse:
+        def info(self) -> dict[str, str]:
+            return {"Content-Length": str(len(archive_bytes))}
+
+        def read(self, size: int = -1) -> bytes:
+            if size < 0:
+                data, self._buf = self._buf, b""
+                return data
+            data, self._buf = self._buf[:size], self._buf[size:]
+            return data
+
+        def __enter__(self) -> "_FakeResponse":
+            self._buf = archive_bytes
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+    url = "https://sourceforge.net/projects/example/files/mylib.tar.gz/download"
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *_a, **_k: _FakeResponse())
+
+    ctx = BuildContext(source_dir=source_dir, build_dir=tmp_path / "build")
+    commands = [
+        Command(name="include", args=["FetchContent"], line=1),
+        Command(name="fetchcontent_declare", args=["mylib", "URL", url], line=2),
+        Command(name="fetchcontent_makeavailable", args=["mylib"], line=3),
+    ]
+
+    process_commands(commands, ctx)
+
+    src = Path(ctx.variables["mylib_SOURCE_DIR"])
+    assert (src / "CMakeLists.txt").exists()
+    assert any(lib.name == "mylib" for lib in ctx.libraries)
+    # Archive should be saved under its real name, not "download"
+    assert (tmp_path / "build" / "_deps" / "mylib.tar.gz").exists()
+
+
+def test_fetchcontent_retries_empty_src_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An empty *-src dir from a prior failed extract is re-populated."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    build_dir = tmp_path / "build"
+    empty = build_dir / "_deps" / "mylib-src"
+    empty.mkdir(parents=True)
+
+    lib_dir = tmp_path / "mylib"
+    lib_dir.mkdir()
+    (lib_dir / "CMakeLists.txt").write_text("add_library(mylib STATIC mylib.c)")
+    (lib_dir / "mylib.c").write_text("int mylib_func() { return 0; }")
+    tar_path = tmp_path / "mylib.tar.gz"
+    with tarfile.open(tar_path, "w:gz") as tar:
+        tar.add(lib_dir, arcname="mylib")
+    archive_bytes = tar_path.read_bytes()
+
+    class _FakeResponse:
+        def info(self) -> dict[str, str]:
+            return {}
+
+        def read(self, size: int = -1) -> bytes:
+            if size < 0:
+                data, self._buf = self._buf, b""
+                return data
+            data, self._buf = self._buf[:size], self._buf[size:]
+            return data
+
+        def __enter__(self) -> "_FakeResponse":
+            self._buf = archive_bytes
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+    url = "https://example.com/mylib.tar.gz"
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *_a, **_k: _FakeResponse())
+
+    ctx = BuildContext(source_dir=source_dir, build_dir=build_dir)
+    commands = [
+        Command(name="include", args=["FetchContent"], line=1),
+        Command(name="fetchcontent_declare", args=["mylib", "URL", url], line=2),
+        Command(name="fetchcontent_makeavailable", args=["mylib"], line=3),
+    ]
+    process_commands(commands, ctx)
+    assert (Path(ctx.variables["mylib_SOURCE_DIR"]) / "CMakeLists.txt").exists()
 
 
 def test_fetchcontent_git_commit_hash(tmp_path: Path) -> None:

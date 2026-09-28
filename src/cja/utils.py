@@ -1,11 +1,67 @@
 import os
 import re
 import sys
+import tarfile
+import zipfile
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 _DRIVE_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
 _UNC_PATH_RE = re.compile(r"^[\\/]{2}[^\\/]+[\\/][^\\/]+")
 UNDEFINED_VAR_SENTINEL = "__CJA_UNDEFINED_VAR__"
+
+# Longest suffixes first so ".tar.gz" wins over ".gz".
+_ARCHIVE_SUFFIXES = (
+    ".tar.gz",
+    ".tar.xz",
+    ".tar.bz2",
+    ".tgz",
+    ".zip",
+)
+
+
+def archive_filename_from_url(url: str) -> str | None:
+    """Return an archive basename embedded in *url*, if recognizable.
+
+    Walks path segments from the end so mirrors that append a meaningless
+    segment (e.g. SourceForge's ``…/foo.tar.xz/download``) still resolve.
+    """
+    path = unquote(urlparse(url).path)
+    for part in reversed(path.strip("/").split("/")):
+        lower = part.lower()
+        if any(lower.endswith(suffix) for suffix in _ARCHIVE_SUFFIXES):
+            return part
+    return None
+
+
+def extract_archive(archive: Path, destination: Path) -> None:
+    """Extract a zip or tar archive into *destination*.
+
+    Format is taken from the filename when possible; otherwise zip/tar are
+    probed from the file contents so URLs without a normal extension still work.
+    """
+    name = archive.name.lower()
+    if name.endswith(".zip"):
+        with zipfile.ZipFile(archive, "r") as zip_ref:
+            zip_ref.extractall(destination)
+        return
+    if name.endswith((".tar.gz", ".tgz", ".tar.xz", ".tar.bz2", ".tar")):
+        with tarfile.open(archive, "r:*") as tar_ref:
+            tar_ref.extractall(destination)
+        return
+
+    if zipfile.is_zipfile(archive):
+        with zipfile.ZipFile(archive, "r") as zip_ref:
+            zip_ref.extractall(destination)
+        return
+    try:
+        with tarfile.open(archive, "r:*") as tar_ref:
+            tar_ref.extractall(destination)
+        return
+    except tarfile.TarError as exc:
+        raise RuntimeError(
+            f"Could not extract archive {archive}: unrecognized format"
+        ) from exc
 
 
 def status_marker(success: bool | None) -> str:

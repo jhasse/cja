@@ -1,9 +1,69 @@
 """Tests for utility helpers."""
 
+import tarfile
 from pathlib import Path
 from types import SimpleNamespace
 
-from cja.utils import make_relative, status_marker, strip_generator_expressions
+from cja.utils import (
+    archive_filename_from_url,
+    extract_archive,
+    make_relative,
+    status_marker,
+    strip_generator_expressions,
+)
+
+
+def test_archive_filename_from_url_sourceforge_download() -> None:
+    """SourceForge …/archive.tar.xz/download URLs still yield the archive name."""
+    url = (
+        "https://sourceforge.net/projects/freetype/files/freetype2/2.14.1/"
+        "freetype-2.14.1.tar.xz/download"
+    )
+    assert archive_filename_from_url(url) == "freetype-2.14.1.tar.xz"
+
+
+def test_archive_filename_from_url_plain() -> None:
+    """Normal archive URLs use the final path segment."""
+    assert (
+        archive_filename_from_url("https://example.com/releases/lib-1.0.tar.gz")
+        == "lib-1.0.tar.gz"
+    )
+    assert archive_filename_from_url("https://example.com/pkg.zip") == "pkg.zip"
+
+
+def test_archive_filename_from_url_unknown() -> None:
+    """URLs without a known archive suffix return None."""
+    assert archive_filename_from_url("https://example.com/download") is None
+
+
+def test_extract_archive_tar_xz(tmp_path: Path) -> None:
+    """extract_archive unpacks tar.xz by filename."""
+    payload = tmp_path / "payload"
+    payload.mkdir()
+    (payload / "hello.txt").write_text("hi\n")
+    archive = tmp_path / "payload.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(payload / "hello.txt", arcname="hello.txt")
+
+    dest = tmp_path / "out"
+    dest.mkdir()
+    extract_archive(archive, dest)
+    assert (dest / "hello.txt").read_text() == "hi\n"
+
+
+def test_extract_archive_content_probe(tmp_path: Path) -> None:
+    """extract_archive probes contents when the filename has no archive suffix."""
+    payload = tmp_path / "payload"
+    payload.mkdir()
+    (payload / "hello.txt").write_text("hi\n")
+    archive = tmp_path / "download"
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(payload / "hello.txt", arcname="hello.txt")
+
+    dest = tmp_path / "out"
+    dest.mkdir()
+    extract_archive(archive, dest)
+    assert (dest / "hello.txt").read_text() == "hi\n"
 
 
 def test_make_relative_with_relative_root(tmp_path: Path, monkeypatch) -> None:

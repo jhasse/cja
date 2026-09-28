@@ -6,10 +6,8 @@ import shlex
 import shutil
 import subprocess
 import sys
-import tarfile
 import typing
 import urllib.request
-import zipfile
 from contextlib import suppress
 from pathlib import Path
 
@@ -83,6 +81,8 @@ from .syntax import (
 from .targets import ImportedTarget, InstallTarget
 from .utils import (
     UNDEFINED_VAR_SENTINEL,
+    archive_filename_from_url,
+    extract_archive,
     is_truthy,
     make_relative,
     split_unquoted_list_args,
@@ -307,9 +307,17 @@ def process_commands(
 
                 src_dir = deps_dir / f"{name.lower()}-src"
 
+                # Empty dirs are left behind when a previous download skipped
+                # extraction (e.g. SourceForge ``…/archive.tar.xz/download``).
+                if src_dir.exists() and not any(src_dir.iterdir()):
+                    src_dir.rmdir()
+
                 if not src_dir.exists():
                     print(f"Downloading {name} from {url}")
-                    download_file = deps_dir / Path(url).name
+                    archive_name = archive_filename_from_url(url) or Path(url).name
+                    if not archive_name or archive_name in (".", "/", "download"):
+                        archive_name = f"{name.lower()}-download"
+                    download_file = deps_dir / archive_name
 
                     with Progress(
                         TextColumn("[bold blue]{task.description}"),
@@ -345,12 +353,20 @@ def process_commands(
                             )
 
                     src_dir.mkdir(parents=True, exist_ok=True)
-                    if url.endswith(".zip"):
-                        with zipfile.ZipFile(download_file, "r") as zip_ref:
-                            zip_ref.extractall(src_dir)
-                    elif url.endswith((".tar.gz", ".tgz", ".tar.xz", ".tar.bz2")):
-                        with tarfile.open(download_file, "r:*") as tar_ref:
-                            tar_ref.extractall(src_dir)
+                    try:
+                        extract_archive(download_file, src_dir)
+                    except Exception:
+                        # Don't leave an empty source dir that blocks retries.
+                        with suppress(OSError):
+                            if src_dir.exists() and not any(src_dir.iterdir()):
+                                src_dir.rmdir()
+                        raise
+                    if not any(src_dir.iterdir()):
+                        with suppress(OSError):
+                            src_dir.rmdir()
+                        raise RuntimeError(
+                            f"Extracted archive for {name} from {url} into an empty directory"
+                        )
             elif git_repo:
                 deps_dir = ctx.build_dir / "_deps"
                 deps_dir.mkdir(parents=True, exist_ok=True)
