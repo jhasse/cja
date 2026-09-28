@@ -967,6 +967,7 @@ def process_commands(
                         "CheckCCompilerFlag",
                         "CheckCXXSymbolExists",
                         "CheckSymbolExists",
+                        "CheckIncludeFile",
                         "CheckIncludeFiles",
                         "CheckLibraryExists",
                         "CheckFunctionExists",
@@ -1600,14 +1601,21 @@ int main() {{
                             f"{colored(status_marker(found), color)} {symbol}"
                         )
 
-            case "check_include_files":
+            case "check_include_file" | "check_include_files":
+                # check_include_file(<include> <variable> [<flags>])
                 # check_include_files(<includes> <variable> [LANGUAGE <language>])
                 # <includes> may be a single semicolon-separated string or multiple args.
                 if len(args) >= 2:
-                    # Determine language (default C)
                     language = "C"
+                    extra_flags: list[str] = []
                     trimmed_args = list(args)
-                    if "LANGUAGE" in trimmed_args:
+
+                    if cmd.name.lower() == "check_include_file":
+                        # Optional third argument is compile flags (CMake CheckIncludeFile).
+                        if len(trimmed_args) >= 3:
+                            extra_flags = shlex.split(trimmed_args[2])
+                            trimmed_args = trimmed_args[:2]
+                    elif "LANGUAGE" in trimmed_args:
                         lang_idx = trimmed_args.index("LANGUAGE")
                         if lang_idx + 1 < len(trimmed_args):
                             language = trimmed_args[lang_idx + 1].upper()
@@ -1638,7 +1646,7 @@ int main() {{
                             temp_src = tmp.name
                         temp_out = temp_src.replace(suffix, "")
                         result = subprocess.run(
-                            [compiler, "-o", temp_out, temp_src],
+                            [compiler, *extra_flags, "-o", temp_out, temp_src],
                             capture_output=True,
                             text=True,
                             check=False,
