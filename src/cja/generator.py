@@ -382,16 +382,23 @@ def _normalize_windows_clang_cxx_std(flag: str, enabled: bool) -> str:
     return re.sub(r"(?<!\S)-std=c\+\+11(?=\s|$)", "-std=c++14", flag)
 
 
-def _win32_executable_link_flag(ctx: BuildContext) -> str:
-    """Return the linker flag that selects the Windows GUI subsystem.
+def _windows_subsystem_link_flag(
+    ctx: BuildContext, win32_executable: bool
+) -> str | None:
+    """Return the Windows subsystem linker flag for an executable.
 
-    LLVM clang on Windows usually targets ``*-windows-msvc``, which ignores
-    GCC's ``-mwindows``.  In that case pass the MSVC ``/SUBSYSTEM:WINDOWS``
-    flag through to the linker.  MinGW-style toolchains keep ``-mwindows``.
+    LLVM clang on Windows usually targets ``*-windows-msvc``.  That driver
+    ignores GCC's ``-mwindows`` and emits LNK4031 unless ``/SUBSYSTEM`` is
+    set explicitly, so pass ``/SUBSYSTEM:WINDOWS`` or ``/SUBSYSTEM:CONSOLE``
+    through to the linker.  MinGW-style toolchains only need ``-mwindows``
+    for GUI apps.
     """
     if ctx.variables.get("MSVC_VERSION"):
-        return "-Wl,/SUBSYSTEM:WINDOWS"
-    return "-mwindows"
+        subsystem = "WINDOWS" if win32_executable else "CONSOLE"
+        return f"-Wl,/SUBSYSTEM:{subsystem}"
+    if win32_executable:
+        return "-mwindows"
+    return None
 
 
 def _std_level(lang: str, token: str) -> int:
@@ -2039,14 +2046,19 @@ def generate_ninja(
                     )
                     link_inputs.append(res_name)
 
-            # WIN32_EXECUTABLE: Windows GUI subsystem.
-            # Supports generator expressions such as $<CONFIG:Release>.
-            win32_executable = strip_generator_expressions(
-                exe.properties.get("WIN32_EXECUTABLE", ""),
-                ctx.variables,
+            # Windows subsystem: GUI when WIN32_EXECUTABLE is truthy (supports
+            # genex such as $<CONFIG:Release>), otherwise console.  MSVC-style
+            # clang requires an explicit /SUBSYSTEM to avoid LNK4031.
+            win32_executable = is_truthy(
+                strip_generator_expressions(
+                    exe.properties.get("WIN32_EXECUTABLE", ""),
+                    ctx.variables,
+                )
             )
-            if is_truthy(win32_executable) and platform.system() == "Windows":
-                link_flags.append(_win32_executable_link_flag(ctx))
+            if platform.system() == "Windows":
+                subsystem_flag = _windows_subsystem_link_flag(ctx, win32_executable)
+                if subsystem_flag:
+                    link_flags.append(subsystem_flag)
 
             # Link
             prefix = _output_prefix(exe.binary_dir)

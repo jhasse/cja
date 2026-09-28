@@ -8,14 +8,22 @@ from cja.generator import configure
 def _assert_win32_gui_flag(ninja_content: str, *, msvc: bool) -> None:
     if msvc:
         assert "/SUBSYSTEM:WINDOWS" in ninja_content
+        assert "/SUBSYSTEM:CONSOLE" not in ninja_content
         assert "-mwindows" not in ninja_content
     else:
         assert "-mwindows" in ninja_content
 
 
-def _assert_no_win32_gui_flag(ninja_content: str) -> None:
+def _assert_win32_console_flag(ninja_content: str) -> None:
+    assert "/SUBSYSTEM:CONSOLE" in ninja_content
+    assert "/SUBSYSTEM:WINDOWS" not in ninja_content
+    assert "-mwindows" not in ninja_content
+
+
+def _assert_no_subsystem_flag(ninja_content: str) -> None:
     assert "-mwindows" not in ninja_content
     assert "/SUBSYSTEM:WINDOWS" not in ninja_content
+    assert "/SUBSYSTEM:CONSOLE" not in ninja_content
 
 
 def test_set_target_properties_interface_include_directories(tmp_path: Path) -> None:
@@ -56,7 +64,7 @@ def test_set_target_properties_win32_executable_config_genex(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    """WIN32_EXECUTABLE $<CONFIG:Release> should emit a GUI flag only for Release."""
+    """WIN32_EXECUTABLE $<CONFIG:Release> should select WINDOWS vs CONSOLE by config."""
     monkeypatch.setattr("cja.generator.platform.system", lambda: "Windows")
 
     source_dir = tmp_path / "src"
@@ -68,17 +76,21 @@ def test_set_target_properties_win32_executable_config_genex(
     )
     (source_dir / "main.c").write_text("int main() { return 0; }")
 
-    configure(source_dir, "build", variables={"CMAKE_BUILD_TYPE": "Release"})
-    release_ninja = (source_dir / "build.ninja").read_text()
-    # Real Windows+clang sets MSVC_VERSION; treat either GUI flag as success.
-    assert "-mwindows" in release_ninja or "/SUBSYSTEM:WINDOWS" in release_ninja
+    configure(
+        source_dir,
+        "build",
+        variables={"CMAKE_BUILD_TYPE": "Release", "MSVC_VERSION": "1930"},
+    )
+    _assert_win32_gui_flag((source_dir / "build.ninja").read_text(), msvc=True)
 
     exe = configure(
-        source_dir, "build-debug", variables={"CMAKE_BUILD_TYPE": "Debug"}
+        source_dir,
+        "build-debug",
+        variables={"CMAKE_BUILD_TYPE": "Debug", "MSVC_VERSION": "1930"},
     ).get_executable("foo")
     assert exe is not None
     assert exe.properties["WIN32_EXECUTABLE"] == "$<CONFIG:Release>"
-    _assert_no_win32_gui_flag((source_dir / "build-debug.ninja").read_text())
+    _assert_win32_console_flag((source_dir / "build-debug.ninja").read_text())
 
 
 def test_set_target_properties_win32_executable_msvc_flag(
@@ -103,6 +115,22 @@ def test_set_target_properties_win32_executable_msvc_flag(
         variables={"MSVC_VERSION": "1930"},
     )
     _assert_win32_gui_flag((source_dir / "build.ninja").read_text(), msvc=True)
+
+
+def test_msvc_console_subsystem_default(tmp_path: Path, monkeypatch) -> None:
+    """MSVC-style clang console apps must set /SUBSYSTEM:CONSOLE (LNK4031)."""
+    monkeypatch.setattr("cja.generator.platform.system", lambda: "Windows")
+
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    (source_dir / "CMakeLists.txt").write_text(
+        "project(test_console)\n"
+        "add_executable(foo main.c)\n"
+    )
+    (source_dir / "main.c").write_text("int main() { return 0; }")
+
+    configure(source_dir, "build", variables={"MSVC_VERSION": "1930"})
+    _assert_win32_console_flag((source_dir / "build.ninja").read_text())
 
 
 def test_set_target_properties_win32_executable_gnu_flag(
@@ -149,7 +177,7 @@ def test_add_executable_win32_keyword(tmp_path: Path, monkeypatch) -> None:
 
 
 def test_win32_executable_ignored_on_non_windows(tmp_path: Path, monkeypatch) -> None:
-    """WIN32_EXECUTABLE must not emit a GUI subsystem flag off Windows."""
+    """WIN32_EXECUTABLE must not emit a subsystem flag off Windows."""
     monkeypatch.setattr("cja.generator.platform.system", lambda: "Linux")
 
     source_dir = tmp_path / "src"
@@ -162,4 +190,4 @@ def test_win32_executable_ignored_on_non_windows(tmp_path: Path, monkeypatch) ->
     (source_dir / "main.c").write_text("int main() { return 0; }")
 
     configure(source_dir, "build")
-    _assert_no_win32_gui_flag((source_dir / "build.ninja").read_text())
+    _assert_no_subsystem_flag((source_dir / "build.ninja").read_text())
