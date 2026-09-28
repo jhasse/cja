@@ -382,6 +382,18 @@ def _normalize_windows_clang_cxx_std(flag: str, enabled: bool) -> str:
     return re.sub(r"(?<!\S)-std=c\+\+11(?=\s|$)", "-std=c++14", flag)
 
 
+def _win32_executable_link_flag(ctx: BuildContext) -> str:
+    """Return the linker flag that selects the Windows GUI subsystem.
+
+    LLVM clang on Windows usually targets ``*-windows-msvc``, which ignores
+    GCC's ``-mwindows``.  In that case pass the MSVC ``/SUBSYSTEM:WINDOWS``
+    flag through to the linker.  MinGW-style toolchains keep ``-mwindows``.
+    """
+    if ctx.variables.get("MSVC_VERSION"):
+        return "-Wl,/SUBSYSTEM:WINDOWS"
+    return "-mwindows"
+
+
 def _std_level(lang: str, token: str) -> int:
     known = {
         "cxx": {
@@ -2026,6 +2038,15 @@ def generate_ninja(
                         implicit=manifest,
                     )
                     link_inputs.append(res_name)
+
+            # WIN32_EXECUTABLE: Windows GUI subsystem.
+            # Supports generator expressions such as $<CONFIG:Release>.
+            win32_executable = strip_generator_expressions(
+                exe.properties.get("WIN32_EXECUTABLE", ""),
+                ctx.variables,
+            )
+            if is_truthy(win32_executable) and platform.system() == "Windows":
+                link_flags.append(_win32_executable_link_flag(ctx))
 
             # Link
             prefix = _output_prefix(exe.binary_dir)

@@ -131,6 +131,9 @@ def _default_target_properties(ctx: BuildContext) -> dict[str, str]:
     disable_pch = ctx.variables.get("CMAKE_DISABLE_PRECOMPILE_HEADERS", "")
     if disable_pch:
         properties["DISABLE_PRECOMPILE_HEADERS"] = disable_pch
+    win32_executable = ctx.variables.get("CMAKE_WIN32_EXECUTABLE", "")
+    if win32_executable:
+        properties["WIN32_EXECUTABLE"] = win32_executable
     return properties
 
 
@@ -1189,7 +1192,17 @@ def handle_add_executable(
     """Handle add_executable() command."""
     if len(args) >= 2:
         sources: list[str] = []
+        default_properties = _default_target_properties(ctx)
         for source in args[1:]:
+            if source == "WIN32":
+                default_properties["WIN32_EXECUTABLE"] = "TRUE"
+                continue
+            if source == "MACOSX_BUNDLE":
+                default_properties["MACOSX_BUNDLE"] = "TRUE"
+                continue
+            if source == "EXCLUDE_FROM_ALL":
+                default_properties["EXCLUDE_FROM_ALL"] = "TRUE"
+                continue
             normalized = strip_generator_expressions(source)
             if not normalized:
                 continue
@@ -1197,7 +1210,6 @@ def handle_add_executable(
                 [ctx.resolve_path(item) for item in normalized.split(";") if item]
             )
         include_directories = _collect_directory_include_dirs(ctx)
-        default_properties = _default_target_properties(ctx)
         ctx.executables.append(
             Executable(
                 name=args[0],
