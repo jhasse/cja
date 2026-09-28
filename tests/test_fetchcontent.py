@@ -3,11 +3,40 @@
 import tarfile
 import urllib.request
 from pathlib import Path
+from typing import Self
 
 import pytest
 
 from cja.generator import BuildContext, process_commands
 from cja.parser import Command
+
+
+class _FakeResponse:
+    """urlopen stand-in that serves a fixed archive body."""
+
+    def __init__(self, data: bytes, *, content_length: bool = True) -> None:
+        self._data = data
+        self._content_length = content_length
+        self._buf = b""
+
+    def info(self) -> dict[str, str]:
+        if self._content_length:
+            return {"Content-Length": str(len(self._data))}
+        return {}
+
+    def read(self, size: int = -1) -> bytes:
+        if size < 0:
+            data, self._buf = self._buf, b""
+            return data
+        data, self._buf = self._buf[:size], self._buf[size:]
+        return data
+
+    def __enter__(self) -> Self:
+        self._buf = self._data
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        return None
 
 
 def test_fetchcontent_url(tmp_path: Path) -> None:
@@ -132,26 +161,10 @@ def test_fetchcontent_sourceforge_style_download_url(
         tar.add(lib_dir, arcname="mylib")
     archive_bytes = tar_path.read_bytes()
 
-    class _FakeResponse:
-        def info(self) -> dict[str, str]:
-            return {"Content-Length": str(len(archive_bytes))}
-
-        def read(self, size: int = -1) -> bytes:
-            if size < 0:
-                data, self._buf = self._buf, b""
-                return data
-            data, self._buf = self._buf[:size], self._buf[size:]
-            return data
-
-        def __enter__(self) -> "_FakeResponse":
-            self._buf = archive_bytes
-            return self
-
-        def __exit__(self, *args: object) -> None:
-            return None
-
     url = "https://sourceforge.net/projects/example/files/mylib.tar.gz/download"
-    monkeypatch.setattr(urllib.request, "urlopen", lambda *_a, **_k: _FakeResponse())
+    monkeypatch.setattr(
+        urllib.request, "urlopen", lambda *_a, **_k: _FakeResponse(archive_bytes)
+    )
 
     ctx = BuildContext(source_dir=source_dir, build_dir=tmp_path / "build")
     commands = [
@@ -188,26 +201,12 @@ def test_fetchcontent_retries_empty_src_dir(
         tar.add(lib_dir, arcname="mylib")
     archive_bytes = tar_path.read_bytes()
 
-    class _FakeResponse:
-        def info(self) -> dict[str, str]:
-            return {}
-
-        def read(self, size: int = -1) -> bytes:
-            if size < 0:
-                data, self._buf = self._buf, b""
-                return data
-            data, self._buf = self._buf[:size], self._buf[size:]
-            return data
-
-        def __enter__(self) -> "_FakeResponse":
-            self._buf = archive_bytes
-            return self
-
-        def __exit__(self, *args: object) -> None:
-            return None
-
     url = "https://example.com/mylib.tar.gz"
-    monkeypatch.setattr(urllib.request, "urlopen", lambda *_a, **_k: _FakeResponse())
+    monkeypatch.setattr(
+        urllib.request,
+        "urlopen",
+        lambda *_a, **_k: _FakeResponse(archive_bytes, content_length=False),
+    )
 
     ctx = BuildContext(source_dir=source_dir, build_dir=build_dir)
     commands = [
