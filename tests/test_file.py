@@ -2,9 +2,12 @@
 
 import json
 import os
+import shutil
 import subprocess
 import time
 from pathlib import Path
+
+import pytest
 
 from cja.generator import (
     BuildContext,
@@ -266,6 +269,62 @@ def test_file_glob_configure_depends_no_reconfigure_on_unmatched_file(
     assert "Re-running cja" not in result.stdout
 
 
+@pytest.mark.skip(reason="Will be fixed once we have proper directory support in ninja")
+def test_file_glob_configure_depends_missing_dir_still_reconfigures(
+    tmp_path: Path,
+) -> None:
+    """A deleted glob directory must not block reconfigure when CMakeLists changes."""
+    source_dir = tmp_path / "proj"
+    music = source_dir / "data" / "music"
+    music.mkdir(parents=True)
+    (music / "theme.ogg").write_text("x")
+    src = source_dir / "src"
+    src.mkdir()
+    (src / "main.cpp").write_text("int main() { return 0; }\n")
+    cmake = source_dir / "CMakeLists.txt"
+    cmake.write_text(
+        "cmake_minimum_required(VERSION 3.10)\n"
+        "project(glob_missing_dir)\n"
+        "file(GLOB MUSIC CONFIGURE_DEPENDS data/music/*.ogg)\n"
+        "file(GLOB SRC CONFIGURE_DEPENDS src/*.cpp)\n"
+        "add_executable(app ${SRC})\n"
+    )
+
+    configure(source_dir, "build")
+    ninja = (source_dir / "build.ninja").read_text()
+    assert "verify_globs cja_check_globs\n" in ninja
+    assert "verify_globs data/music" not in ninja
+    manifest = json.loads(
+        (source_dir / "build" / "CMakeFiles" / "VerifyGlobs.json").read_text()
+    )
+    assert any("music" in f for g in manifest for f in g["files"])
+
+    shutil.rmtree(music)
+    time.sleep(0.05)
+    cmake.write_text(
+        "cmake_minimum_required(VERSION 3.10)\n"
+        "project(glob_missing_dir)\n"
+        "file(GLOB SRC CONFIGURE_DEPENDS src/*.cpp)\n"
+        "add_executable(app ${SRC})\n"
+    )
+
+    result = subprocess.run(
+        ["ninja"],
+        cwd=source_dir,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "Re-running cja" in result.stdout
+    assert "missing and no known rule" not in result.stderr
+    rebuilt_manifest = json.loads(
+        (source_dir / "build" / "CMakeFiles" / "VerifyGlobs.json").read_text()
+    )
+    assert not any("music" in f for g in rebuilt_manifest for f in g["files"])
+    assert len(rebuilt_manifest) == 1
+
+
 def test_verify_globs_touches_stamp_only_on_change(tmp_path: Path) -> None:
     """cja --verify-globs leaves the stamp alone while glob results match."""
     src = tmp_path / "src"
@@ -411,8 +470,10 @@ def test_file_generate_with_config_genex(tmp_path: Path) -> None:
             args=[
                 "GENERATE",
                 "OUTPUT",
-                ("${SDL3_BINARY_DIR}/include-config-$<LOWER_CASE:$<CONFIG>>"
-                "/build_config/SDL_build_config.h"),
+                (
+                    "${SDL3_BINARY_DIR}/include-config-$<LOWER_CASE:$<CONFIG>>"
+                    "/build_config/SDL_build_config.h"
+                ),
                 "INPUT",
                 str(intermediate),
             ],
