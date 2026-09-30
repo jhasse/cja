@@ -46,6 +46,7 @@ from .commands import (
     handle_option,
     handle_set,
     handle_set_property,
+    init_compiler_flag_cache_vars,
     handle_set_target_properties,
     handle_string,
     handle_target_compile_definitions,
@@ -739,22 +740,7 @@ def process_commands(
                     ctx.project_name = project_name
                     ctx.variables["PROJECT_NAME"] = project_name
                     ctx.variables["CMAKE_PROJECT_NAME"] = project_name
-                    ctx.variables["CMAKE_C_FLAGS"] = (
-                        ""  # TODO: Only set when C is enabled
-                    )
-                    ctx.variables["CMAKE_C_FLAGS_DEBUG"] = ""
-                    ctx.variables["CMAKE_C_FLAGS_RELEASE"] = ""
-                    ctx.variables["CMAKE_C_FLAGS_RELWITHDEBINFO"] = ""
-                    ctx.variables["CMAKE_C_FLAGS_MINSIZEREL"] = ""
-                    ctx.variables["CMAKE_CXX_FLAGS"] = (
-                        ""  # TODO: Only set when CXX is enabled
-                    )
-                    ctx.variables["CMAKE_CXX_FLAGS_DEBUG"] = ""
-                    ctx.variables["CMAKE_CXX_FLAGS_RELEASE"] = ""
-                    ctx.variables["CMAKE_CXX_FLAGS_RELWITHDEBINFO"] = ""
-                    ctx.variables["CMAKE_CXX_FLAGS_MINSIZEREL"] = ""
-                    ctx.variables["CMAKE_EXE_LINKER_FLAGS"] = ""
-                    ctx.variables["CMAKE_LINKER_FLAGS"] = ""
+                    init_compiler_flag_cache_vars(ctx)
                     current_binary_dir = ctx.variables.get(
                         "CMAKE_CURRENT_BINARY_DIR", str(ctx.build_dir)
                     )

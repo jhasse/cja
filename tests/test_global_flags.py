@@ -45,6 +45,31 @@ def test_cmake_cxx_flags(tmp_path: Path) -> None:
     assert "-std=c++17" in content
 
 
+def test_cmake_cxx_flags_from_cli(tmp_path: Path) -> None:
+    """-DCMAKE_CXX_FLAGS must survive project() and appear in compile rules."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    (source_dir / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.10)\n"
+        "project(test_cli_flags)\n"
+        'string(APPEND CMAKE_CXX_FLAGS " -ffp-contract=off")\n'
+        "add_executable(main main.cpp)"
+    )
+    (source_dir / "main.cpp").write_text("int main() { return 0; }")
+
+    configure(
+        source_dir,
+        "build",
+        variables={"CMAKE_CXX_FLAGS": "-stdlib=libc++"},
+    )
+
+    content = (source_dir / "build.ninja").read_text()
+    # The flag also appears in the reconfigure -D line; assert on the cxx rule.
+    cxx_rule = content.split("rule cxx", 1)[1].split("\nrule ", 1)[0]
+    assert "-stdlib=libc++" in cxx_rule
+    assert "-ffp-contract=off" in cxx_rule
+
+
 def test_cmake_linker_flags(tmp_path: Path) -> None:
     """Test that CMAKE_LINKER_FLAGS are included in the ninja file."""
     source_dir = tmp_path / "src"

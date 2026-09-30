@@ -63,6 +63,30 @@ def handle_cmake_policy(
             pass
 
 
+def init_compiler_flag_cache_vars(ctx: BuildContext) -> None:
+    """Initialize compiler/linker flag cache vars if not already set (e.g. via -D).
+
+    Matches CMake: project()/enable_language() seeds these as CACHE STRING entries
+    without FORCE, so command-line -D values are preserved.
+    """
+    for name in (
+        "CMAKE_C_FLAGS",  # TODO: Only set when C is enabled
+        "CMAKE_C_FLAGS_DEBUG",
+        "CMAKE_C_FLAGS_RELEASE",
+        "CMAKE_C_FLAGS_RELWITHDEBINFO",
+        "CMAKE_C_FLAGS_MINSIZEREL",
+        "CMAKE_CXX_FLAGS",  # TODO: Only set when CXX is enabled
+        "CMAKE_CXX_FLAGS_DEBUG",
+        "CMAKE_CXX_FLAGS_RELEASE",
+        "CMAKE_CXX_FLAGS_RELWITHDEBINFO",
+        "CMAKE_CXX_FLAGS_MINSIZEREL",
+        "CMAKE_EXE_LINKER_FLAGS",
+        "CMAKE_LINKER_FLAGS",
+    ):
+        if name not in ctx.cache_values:
+            ctx.set_cache(name, "")
+
+
 def handle_project(
     ctx: BuildContext,
     args: list[str],
@@ -72,16 +96,7 @@ def handle_project(
         ctx.project_name = args[0]
         ctx.variables["PROJECT_NAME"] = args[0]
         ctx.variables["CMAKE_PROJECT_NAME"] = args[0]
-        ctx.variables["CMAKE_C_FLAGS"] = ""  # TODO: Only set when C is enabled
-        ctx.variables["CMAKE_C_FLAGS_DEBUG"] = ""
-        ctx.variables["CMAKE_C_FLAGS_RELEASE"] = ""
-        ctx.variables["CMAKE_C_FLAGS_RELWITHDEBINFO"] = ""
-        ctx.variables["CMAKE_C_FLAGS_MINSIZEREL"] = ""
-        ctx.variables["CMAKE_CXX_FLAGS"] = ""  # TODO: Only set when CXX is enabled
-        ctx.variables["CMAKE_CXX_FLAGS_DEBUG"] = ""
-        ctx.variables["CMAKE_CXX_FLAGS_RELEASE"] = ""
-        ctx.variables["CMAKE_CXX_FLAGS_RELWITHDEBINFO"] = ""
-        ctx.variables["CMAKE_CXX_FLAGS_MINSIZEREL"] = ""
+        init_compiler_flag_cache_vars(ctx)
         ctx.variables["PROJECT_SOURCE_DIR"] = str(ctx.current_source_dir)
         ctx.variables["PROJECT_BINARY_DIR"] = str(ctx.build_dir)
         source_var = f"{args[0]}_SOURCE_DIR"
