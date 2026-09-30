@@ -46,7 +46,6 @@ from .commands import (
     handle_option,
     handle_set,
     handle_set_property,
-    init_compiler_flag_cache_vars,
     handle_set_target_properties,
     handle_string,
     handle_target_compile_definitions,
@@ -58,6 +57,7 @@ from .commands import (
     handle_target_precompile_headers,
     handle_target_sources,
     handle_unset,
+    init_compiler_flag_cache_vars,
 )
 from .config_utils import (
     _render_basic_package_version_file,
@@ -318,8 +318,8 @@ def process_commands(
                 else:
                     arg_idx += 1
 
-            def resolve_fetch_path(path: str) -> Path:
-                expanded = ctx.expand_variables(path, strict, fetch_cmd_line)
+            def resolve_fetch_path(path: str, cmd_line: int) -> Path:
+                expanded = ctx.expand_variables(path, strict, cmd_line)
                 resolved = Path(expanded)
                 if not resolved.is_absolute():
                     base = Path(
@@ -331,7 +331,7 @@ def process_commands(
                 return resolved.resolve()
 
             binary_dir = (
-                resolve_fetch_path(declared_binary_dir)
+                resolve_fetch_path(declared_binary_dir, fetch_cmd_line)
                 if declared_binary_dir
                 else ctx.build_dir / "_deps" / f"{name.lower()}-build"
             )
@@ -348,7 +348,7 @@ def process_commands(
 
             if url:
                 if declared_source_dir:
-                    src_dir = resolve_fetch_path(declared_source_dir)
+                    src_dir = resolve_fetch_path(declared_source_dir, fetch_cmd_line)
                     deps_dir = src_dir.parent
                 else:
                     deps_dir = ctx.build_dir / "_deps"
@@ -413,7 +413,7 @@ def process_commands(
                         )
             elif git_repo:
                 if declared_source_dir:
-                    src_dir = resolve_fetch_path(declared_source_dir)
+                    src_dir = resolve_fetch_path(declared_source_dir, fetch_cmd_line)
                     deps_dir = src_dir.parent
                 else:
                     deps_dir = ctx.build_dir / "_deps"
@@ -456,7 +456,7 @@ def process_commands(
                             )
                             sys.exit(1)
             elif declared_source_dir:
-                src_dir = resolve_fetch_path(declared_source_dir)
+                src_dir = resolve_fetch_path(declared_source_dir, fetch_cmd_line)
 
             if src_dir is not None and (url or git_repo or declared_source_dir):
                 actual_src_dir = src_dir
