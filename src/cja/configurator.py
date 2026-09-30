@@ -84,6 +84,7 @@ from .utils import (
     UNDEFINED_VAR_SENTINEL,
     archive_filename_from_url,
     extract_archive,
+    flatten_single_extracted_subdir,
     is_truthy,
     make_relative,
     split_unquoted_list_args,
@@ -278,42 +279,83 @@ def process_commands(
                     sys.exit(1)
                 continue
 
+            fetch_cmd_line = (
+                frame.fetchcontent_cmd.line if frame.fetchcontent_cmd else 0
+            )
+
             url = None
             url_hash = None
             git_repo = None
             git_tag = None
+            declared_source_dir: str | None = None
+            declared_binary_dir: str | None = None
             src_dir: Path | None = None
             arg_idx = 0
             while arg_idx < len(info.args):
-                if info.args[arg_idx] == "URL" and arg_idx + 1 < len(info.args):
-                    url = info.args[arg_idx + 1]
-                    arg_idx += 2
-                elif info.args[arg_idx] == "URL_HASH" and arg_idx + 1 < len(info.args):
-                    url_hash = info.args[arg_idx + 1]
-                    arg_idx += 2
-                elif info.args[arg_idx] == "GIT_REPOSITORY" and arg_idx + 1 < len(
-                    info.args
+                key = info.args[arg_idx]
+                if arg_idx + 1 < len(info.args) and key in (
+                    "URL",
+                    "URL_HASH",
+                    "GIT_REPOSITORY",
+                    "GIT_TAG",
+                    "SOURCE_DIR",
+                    "BINARY_DIR",
                 ):
-                    git_repo = info.args[arg_idx + 1]
+                    val = info.args[arg_idx + 1]
                     arg_idx += 2
-                elif info.args[arg_idx] == "GIT_TAG" and arg_idx + 1 < len(info.args):
-                    git_tag = info.args[arg_idx + 1]
-                    arg_idx += 2
+                    if key == "URL":
+                        url = val
+                    elif key == "URL_HASH":
+                        url_hash = val
+                    elif key == "GIT_REPOSITORY":
+                        git_repo = val
+                    elif key == "GIT_TAG":
+                        git_tag = val
+                    elif key == "SOURCE_DIR":
+                        declared_source_dir = val
+                    else:
+                        declared_binary_dir = val
                 else:
                     arg_idx += 1
 
-            if url:
-                deps_dir = ctx.build_dir / "_deps"
-                deps_dir.mkdir(parents=True, exist_ok=True)
+            def resolve_fetch_path(path: str) -> Path:
+                expanded = ctx.expand_variables(path, strict, fetch_cmd_line)
+                resolved = Path(expanded)
+                if not resolved.is_absolute():
+                    base = Path(
+                        ctx.variables.get(
+                            "CMAKE_CURRENT_BINARY_DIR", str(ctx.build_dir)
+                        )
+                    )
+                    resolved = (base / resolved).resolve()
+                return resolved.resolve()
 
-                src_dir = deps_dir / f"{name.lower()}-src"
+            binary_dir = (
+                resolve_fetch_path(declared_binary_dir)
+                if declared_binary_dir
+                else ctx.build_dir / "_deps" / f"{name.lower()}-build"
+            )
 
+            def fetch_source_needs_populate(directory: Path) -> bool:
+                if not directory.exists():
+                    return True
+                if any(directory.iterdir()):
+                    return False
                 # Empty dirs are left behind when a previous download skipped
                 # extraction (e.g. SourceForge ``…/archive.tar.xz/download``).
-                if src_dir.exists() and not any(src_dir.iterdir()):
-                    src_dir.rmdir()
+                directory.rmdir()
+                return True
 
-                if not src_dir.exists():
+            if url:
+                if declared_source_dir:
+                    src_dir = resolve_fetch_path(declared_source_dir)
+                    deps_dir = src_dir.parent
+                else:
+                    deps_dir = ctx.build_dir / "_deps"
+                    src_dir = deps_dir / f"{name.lower()}-src"
+                deps_dir.mkdir(parents=True, exist_ok=True)
+
+                if fetch_source_needs_populate(src_dir):
                     print(f"Downloading {name} from {url}")
                     archive_name = archive_filename_from_url(url) or Path(url).name
                     if not archive_name or archive_name in (".", "/", "download"):
@@ -356,6 +398,7 @@ def process_commands(
                     src_dir.mkdir(parents=True, exist_ok=True)
                     try:
                         extract_archive(download_file, src_dir)
+                        flatten_single_extracted_subdir(src_dir)
                     except Exception:
                         # Don't leave an empty source dir that blocks retries.
                         with suppress(OSError):
@@ -369,15 +412,16 @@ def process_commands(
                             f"Extracted archive for {name} from {url} into an empty directory"
                         )
             elif git_repo:
-                deps_dir = ctx.build_dir / "_deps"
+                if declared_source_dir:
+                    src_dir = resolve_fetch_path(declared_source_dir)
+                    deps_dir = src_dir.parent
+                else:
+                    deps_dir = ctx.build_dir / "_deps"
+                    src_dir = deps_dir / f"{name.lower()}-src"
                 deps_dir.mkdir(parents=True, exist_ok=True)
-                src_dir = deps_dir / f"{name.lower()}-src"
 
-                if not src_dir.exists():
+                if fetch_source_needs_populate(src_dir):
                     print(f"Cloning {name} from {git_repo}")
-                    fetch_cmd_line = (
-                        frame.fetchcontent_cmd.line if frame.fetchcontent_cmd else 0
-                    )
                     try:
                         clone_cmd = ["git", "clone", git_repo, str(src_dir)]
                         subprocess.run(clone_cmd, check=True)
@@ -400,9 +444,6 @@ def process_commands(
                             )
                             sys.exit(1)
                 elif git_tag:
-                    fetch_cmd_line = (
-                        frame.fetchcontent_cmd.line if frame.fetchcontent_cmd else 0
-                    )
                     try:
                         subprocess.run(
                             ["git", "-C", str(src_dir), "checkout", git_tag], check=True
@@ -414,23 +455,17 @@ def process_commands(
                                 fetch_cmd_line,
                             )
                             sys.exit(1)
+            elif declared_source_dir:
+                src_dir = resolve_fetch_path(declared_source_dir)
 
-            if (url or git_repo) and src_dir is not None:
-                ctx.variables[f"{name.lower()}_SOURCE_DIR"] = str(src_dir)
-                ctx.variables[f"{name.lower()}_BINARY_DIR"] = str(
-                    ctx.build_dir / "_deps" / f"{name.lower()}-build"
-                )
-                ctx.variables[f"{name.lower()}_POPULATED"] = "TRUE"
-
+            if src_dir is not None and (url or git_repo or declared_source_dir):
                 actual_src_dir = src_dir
                 contents = [p for p in src_dir.iterdir() if not p.name.startswith(".")]
                 if len(contents) == 1 and contents[0].is_dir():
                     actual_src_dir = contents[0]
 
                 ctx.variables[f"{name.lower()}_SOURCE_DIR"] = str(actual_src_dir)
-                ctx.variables[f"{name.lower()}_BINARY_DIR"] = str(
-                    ctx.build_dir / "_deps" / f"{name.lower()}-build"
-                )
+                ctx.variables[f"{name.lower()}_BINARY_DIR"] = str(binary_dir)
                 ctx.variables[f"{name.lower()}_POPULATED"] = "TRUE"
 
                 if frame.fetchcontent_make_available:
@@ -451,9 +486,7 @@ def process_commands(
                         saved_parent_scope_vars = ctx.parent_scope_vars
                         ctx.parent_scope_vars = {}
 
-                        fc_binary_dir = (
-                            ctx.build_dir / "_deps" / f"{name.lower()}-build"
-                        )
+                        fc_binary_dir = binary_dir
                         fc_binary_dir.mkdir(parents=True, exist_ok=True)
 
                         ctx.current_source_dir = actual_src_dir

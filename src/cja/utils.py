@@ -1,5 +1,6 @@
 import os
 import re
+import shutil
 import sys
 import tarfile
 import zipfile
@@ -62,6 +63,29 @@ def extract_archive(archive: Path, destination: Path) -> None:
         raise RuntimeError(
             f"Could not extract archive {archive}: unrecognized format"
         ) from exc
+
+
+def flatten_single_extracted_subdir(directory: Path) -> None:
+    """Hoist a lone top-level directory after archive extraction.
+
+    Many upstream tarballs ship as ``name-version/…``; CMake and CPM expect
+    ``SOURCE_DIR`` to contain the project root directly so cache hits work.
+    """
+    if (directory / "CMakeLists.txt").exists():
+        return
+    contents = [p for p in directory.iterdir() if not p.name.startswith(".")]
+    if len(contents) != 1 or not contents[0].is_dir():
+        return
+    nested = contents[0]
+    for item in nested.iterdir():
+        dest = directory / item.name
+        if dest.exists():
+            if dest.is_dir():
+                shutil.rmtree(dest)
+            else:
+                dest.unlink()
+        shutil.move(str(item), str(dest))
+    nested.rmdir()
 
 
 def status_marker(success: bool | None) -> str:

@@ -74,6 +74,47 @@ def test_fetchcontent_url(tmp_path: Path) -> None:
     assert ctx.variables["CMAKE_CURRENT_LIST_FILE"] == str(source_dir / "CMakeLists.txt")
 
 
+def test_fetchcontent_source_dir_reuses_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FetchContent honors SOURCE_DIR so CPM_SOURCE_CACHE can be reused."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    build_dir = tmp_path / "build"
+    cache_dir = tmp_path / "cpm-cache" / "mylib"
+    cache_dir.mkdir(parents=True)
+    (cache_dir / "CMakeLists.txt").write_text("add_library(mylib STATIC mylib.c)")
+    (cache_dir / "mylib.c").write_text("int mylib_func() { return 0; }")
+
+    def fail_urlopen(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("URL should not be fetched when SOURCE_DIR is populated")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fail_urlopen)
+
+    ctx = BuildContext(source_dir=source_dir, build_dir=build_dir)
+    commands = [
+        Command(name="include", args=["FetchContent"], line=1),
+        Command(
+            name="fetchcontent_declare",
+            args=[
+                "mylib",
+                "SOURCE_DIR",
+                str(cache_dir),
+                "URL",
+                "http://example.invalid/mylib.tar.gz",
+            ],
+            line=2,
+        ),
+        Command(name="fetchcontent_makeavailable", args=["mylib"], line=3),
+    ]
+
+    process_commands(commands, ctx)
+
+    assert any(lib.name == "mylib" for lib in ctx.libraries)
+    assert Path(ctx.variables["mylib_SOURCE_DIR"]) == cache_dir
+    assert not (build_dir / "_deps" / "mylib-src").exists()
+
+
 def test_fetchcontent_hash(tmp_path: Path) -> None:
     """Test FetchContent with URL_HASH."""
     source_dir = tmp_path / "src"
