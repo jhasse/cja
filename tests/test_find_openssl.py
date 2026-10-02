@@ -234,17 +234,23 @@ def test_find_openssl_version_range(
     assert ctx.variables["OpenSSL_FOUND"] == "FALSE"
 
 
-def _prefix_without_libs(root: Path) -> Path:
+def _prefix_without_libs(root: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     prefix = _make_prefix(root)
     for lib in (prefix / "lib").iterdir():
         lib.unlink()
+    # FindOpenSSL passes pkg-config's libdir as a HINT; keep a system OpenSSL
+    # (e.g. Homebrew's on macOS) from satisfying the library search.
+    empty = root / "empty pkgconfig"
+    empty.mkdir()
+    monkeypatch.setenv("PKG_CONFIG_LIBDIR", str(empty))
+    monkeypatch.delenv("PKG_CONFIG_PATH", raising=False)
     return prefix
 
 
 def test_find_openssl_missing_libraries_required(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    prefix = _prefix_without_libs(tmp_path)
+    prefix = _prefix_without_libs(tmp_path, monkeypatch)
     source = _project(tmp_path, "find_package(OpenSSL REQUIRED)\n")
     monkeypatch.chdir(source)
 
@@ -260,7 +266,7 @@ def test_find_openssl_missing_libraries_required(
 def test_find_openssl_missing_libraries_optional(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    prefix = _prefix_without_libs(tmp_path)
+    prefix = _prefix_without_libs(tmp_path, monkeypatch)
     source = _project(tmp_path, "find_package(OpenSSL)\n")
     monkeypatch.chdir(source)
 
