@@ -60,10 +60,7 @@ def _format_imported_flags(flags: str) -> str:
     """
     if "'" not in flags and '"' not in flags:
         return flags
-    return " ".join(
-        _quote_ninja_cmd_part(token) if re.search(r"\s", token) else token
-        for token in split_flags(flags)
-    )
+    return " ".join(_quote_if_spaced(token) for token in split_flags(flags))
 
 
 def _infer_compiler_id(compiler: str) -> str:
@@ -524,6 +521,16 @@ def _ninja_flag_path(path: str, source_dir: Path) -> str:
         if sep:
             return f"{head}/{tail}"
     return path
+
+
+def _quote_if_spaced(part: str) -> str:
+    """Quote a flag or path for a Ninja command line if it contains whitespace."""
+    return _quote_ninja_cmd_part(part) if re.search(r"\s", part) else part
+
+
+def _include_flag(path: str, source_dir: Path) -> str:
+    """Return the ``-I`` flag for an include directory, quoted if needed."""
+    return _quote_if_spaced(f"-I{_ninja_flag_path(path, source_dir)}")
 
 
 def _cd_prefix(working_dir: str, source_dir: Path) -> str:
@@ -1539,7 +1546,7 @@ def generate_ninja(
             lib_compile_flags.extend(target_std_flags(lib.properties))
             for inc_dir in lib.include_directories:
                 inc = strip_generator_expressions(inc_dir)
-                lib_compile_flags.append(f"-I{_ninja_flag_path(inc, ctx.source_dir)}")
+                lib_compile_flags.append(_include_flag(inc, ctx.source_dir))
 
             # Propagate flags from dependencies
             # For compilation, we only follow public dependencies
@@ -1553,7 +1560,7 @@ def generate_ninja(
                             lib_compile_flags.append(flag)
                     for inc_dir in dep_lib.public_include_directories:
                         inc = strip_generator_expressions(inc_dir)
-                        inc_flag = f"-I{_ninja_flag_path(inc, ctx.source_dir)}"
+                        inc_flag = _include_flag(inc, ctx.source_dir)
                         if inc_flag not in lib_compile_flags:
                             lib_compile_flags.append(inc_flag)
                     for definition in dep_lib.public_compile_definitions:
@@ -1643,7 +1650,7 @@ def generate_ninja(
                         )
                     for inc_dir in file_props.include_directories:
                         source_compile_flags.append(
-                            f"-I{_ninja_flag_path(inc_dir, ctx.source_dir)}"
+                            _include_flag(inc_dir, ctx.source_dir)
                         )
                     for d in file_props.object_depends:
                         if d in custom_command_outputs:
@@ -1789,7 +1796,7 @@ def generate_ninja(
             compile_flags.extend(target_std_flags(exe.properties))
             for inc_dir in exe.include_directories:
                 inc = strip_generator_expressions(inc_dir)
-                compile_flags.append(f"-I{_ninja_flag_path(inc, ctx.source_dir)}")
+                compile_flags.append(_include_flag(inc, ctx.source_dir))
 
             for lib_name in expanded_compile_libraries:
                 # Check for public compile features from linked libraries
@@ -1803,7 +1810,7 @@ def generate_ninja(
                     # Check for public include directories from linked libraries
                     for inc_dir in linked_lib.public_include_directories:
                         inc = strip_generator_expressions(inc_dir)
-                        inc_flag = f"-I{_ninja_flag_path(inc, ctx.source_dir)}"
+                        inc_flag = _include_flag(inc, ctx.source_dir)
                         if inc_flag not in compile_flags:
                             compile_flags.append(inc_flag)
                     # Check for public compile definitions from linked libraries
@@ -1827,7 +1834,7 @@ def generate_ninja(
                             for inc_dir in gtest_includes.split(";"):
                                 if inc_dir:
                                     compile_flags.append(
-                                        f"-I{_ninja_flag_path(inc_dir, ctx.source_dir)}"
+                                        _include_flag(inc_dir, ctx.source_dir)
                                     )
 
             exe_sources = _sources_with_interface_sources(
@@ -1905,7 +1912,7 @@ def generate_ninja(
                         )
                     for inc_dir in file_props.include_directories:
                         source_compile_flags.append(
-                            f"-I{_ninja_flag_path(inc_dir, ctx.source_dir)}"
+                            _include_flag(inc_dir, ctx.source_dir)
                         )
                     for d in file_props.object_depends:
                         if d in custom_command_outputs:
@@ -1973,7 +1980,9 @@ def generate_ninja(
                             exe.link_directories.append(link_dir)
 
             for link_dir in exe.link_directories:
-                link_flags.append(f"-L{_ninja_flag_path(link_dir, ctx.source_dir)}")
+                link_flags.append(
+                    _quote_if_spaced(f"-L{_ninja_flag_path(link_dir, ctx.source_dir)}")
+                )
             for lib_name in expanded_link_libraries:
                 linked_lib = ctx.get_library(lib_name)
                 if linked_lib and linked_lib.lib_type == "INTERFACE":
@@ -2015,7 +2024,7 @@ def generate_ninja(
                         if framework_flags:
                             link_flags.extend(framework_flags)
                         else:
-                            link_flags.append(lib_name)
+                            link_flags.append(_quote_if_spaced(lib_name))
                     else:
                         link_flags.append(f"-l{lib_name}")
 

@@ -93,6 +93,35 @@ def test_find_openssl_basic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     assert f"{quote}{posix_prefix}/lib/libssl.a{quote}" in ninja
 
 
+def test_find_openssl_result_variables_with_spaces(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prefix = _make_prefix(tmp_path)
+    source = _project(
+        tmp_path,
+        "find_package(OpenSSL REQUIRED)\n"
+        "add_executable(app main.c)\n"
+        "target_include_directories(app PRIVATE ${OPENSSL_INCLUDE_DIR})\n"
+        "target_link_libraries(app PRIVATE ${OPENSSL_LIBRARIES})\n",
+    )
+    monkeypatch.chdir(source)
+
+    # Native separators, like a root taken from $ENV{ProgramFiles} on Windows.
+    ctx = configure(
+        source, "build", variables={"OPENSSL_ROOT_DIR": str(prefix)}, quiet=True
+    )
+
+    posix_prefix = prefix.as_posix()
+    # Like CMake, find_* results use forward slashes.
+    assert ctx.variables["OPENSSL_INCLUDE_DIR"] == f"{posix_prefix}/include"
+
+    ninja = re.sub(r" \$\n\s*", " ", (source / "build.ninja").read_text())
+    quote = '"' if sys.platform == "win32" else "'"
+    assert f"{quote}-I{posix_prefix}/include{quote}" in ninja
+    assert f"{quote}{posix_prefix}/lib/libssl.a{quote}" in ninja
+    assert f"{quote}{posix_prefix}/lib/libcrypto.a{quote}" in ninja
+
+
 def test_find_openssl_ssl_target_propagates_crypto(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

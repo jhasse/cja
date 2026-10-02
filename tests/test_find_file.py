@@ -25,7 +25,7 @@ def test_find_file_basic(tmp_path: Path) -> None:
     process_commands(commands, ctx)
 
     # find_file returns the full path including the file name (unlike find_path).
-    assert ctx.variables["MY_HEADER"] == str(header_file.absolute())
+    assert ctx.variables["MY_HEADER"] == header_file.absolute().as_posix()
 
 
 def test_find_file_with_names(tmp_path: Path) -> None:
@@ -51,7 +51,7 @@ def test_find_file_with_names(tmp_path: Path) -> None:
     ]
     process_commands(commands, ctx)
 
-    assert ctx.variables["HDR"] == str(header_file.absolute())
+    assert ctx.variables["HDR"] == header_file.absolute().as_posix()
 
 
 def test_find_file_with_suffixes(tmp_path: Path) -> None:
@@ -79,7 +79,7 @@ def test_find_file_with_suffixes(tmp_path: Path) -> None:
     ]
     process_commands(commands, ctx)
 
-    assert ctx.variables["XLIB"] == str(header.absolute())
+    assert ctx.variables["XLIB"] == header.absolute().as_posix()
 
 
 def test_find_file_not_found(tmp_path: Path) -> None:

@@ -12,7 +12,7 @@ from pathlib import Path
 
 from .build_context import BuildContext
 from .parser import Command
-from .utils import UNDEFINED_VAR_SENTINEL, split_unquoted_list_args
+from .utils import UNDEFINED_VAR_SENTINEL, split_unquoted_list_args, to_posix_path
 
 
 def _pop_find_options(args: list[str]) -> tuple[list[str], bool, bool, bool]:
@@ -232,7 +232,11 @@ def _is_already_resolved(ctx: BuildContext, var_name: str) -> bool:
 def _store_find_result(
     ctx: BuildContext, var_name: str, value: str, no_cache: bool
 ) -> None:
-    """Store a find result in the cache, or as a normal variable with NO_CACHE."""
+    """Store a find result in the cache, or as a normal variable with NO_CACHE.
+
+    Like CMake, found paths always use forward slashes, even on Windows.
+    """
+    value = to_posix_path(value)
     if no_cache:
         ctx.variables[var_name] = value
         return
