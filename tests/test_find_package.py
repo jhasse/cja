@@ -296,14 +296,21 @@ def test_find_package_threads() -> None:
     process_commands(commands, ctx)
 
     assert ctx.variables["Threads_FOUND"] == "TRUE"
-    assert ctx.variables["CMAKE_THREAD_LIBS_INIT"] == "-pthread"
     assert "Threads::Threads" in ctx.imported_targets
-    assert ctx.imported_targets["Threads::Threads"].libs == "-pthread"
+    if platform.system() == "Windows":
+        assert ctx.variables["CMAKE_THREAD_LIBS_INIT"] == ""
+        assert ctx.variables["CMAKE_USE_WIN32_THREADS_INIT"] == "TRUE"
+        assert ctx.imported_targets["Threads::Threads"].libs == ""
+    else:
+        assert ctx.variables["CMAKE_THREAD_LIBS_INIT"] == "-pthread"
+        assert ctx.variables["CMAKE_USE_PTHREADS_INIT"] == "TRUE"
+        assert ctx.imported_targets["Threads::Threads"].libs == "-pthread"
 
 
-def test_find_package_threads_link() -> None:
-    """Test that linking against Threads::Threads adds -pthread."""
-    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+def test_find_package_threads_link(tmp_path: Path) -> None:
+    """Test that linking against Threads::Threads propagates the package flag."""
+    (tmp_path / "main.c").write_text("int main() { return 0; }\n")
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
     commands = [
         Command(name="find_package", args=["Threads"], line=1),
         Command(name="add_executable", args=["myapp", "main.c"], line=2),
@@ -316,6 +323,14 @@ def test_find_package_threads_link() -> None:
     exe = ctx.get_executable("myapp")
     assert exe is not None
     assert "Threads::Threads" in exe.link_libraries
+
+    ninja_path = tmp_path / "build.ninja"
+    generate_ninja(ctx, ninja_path, "build")
+    content = ninja_path.read_text()
+    if platform.system() == "Windows":
+        assert "-pthread" not in content
+    else:
+        assert "-pthread" in content
 
 
 @pytest.mark.skipif(not has_pkg_config_gtest(), reason="gtest not found via pkg-config")

@@ -452,9 +452,18 @@ def handle_builtin_find_package(
     """
     if package_name == "Threads":
         ctx.variables["Threads_FOUND"] = "TRUE"
-        ctx.variables["CMAKE_THREAD_LIBS_INIT"] = "-pthread"
-        ctx.variables["CMAKE_USE_PTHREADS_INIT"] = "TRUE"
-        ctx.imported_targets["Threads::Threads"] = ImportedTarget(libs="-pthread")
+        if platform.system() == "Windows":
+            # Match CMake FindThreads: Win32 threads need no extra link flag.
+            # Emitting -pthread here makes clang (windows-msvc) warn LNK/unused.
+            ctx.variables["CMAKE_THREAD_LIBS_INIT"] = ""
+            ctx.variables["CMAKE_USE_WIN32_THREADS_INIT"] = "TRUE"
+            ctx.variables["CMAKE_USE_PTHREADS_INIT"] = "FALSE"
+            ctx.imported_targets["Threads::Threads"] = ImportedTarget()
+        else:
+            ctx.variables["CMAKE_THREAD_LIBS_INIT"] = "-pthread"
+            ctx.variables["CMAKE_USE_PTHREADS_INIT"] = "TRUE"
+            ctx.variables["CMAKE_USE_WIN32_THREADS_INIT"] = "FALSE"
+            ctx.imported_targets["Threads::Threads"] = ImportedTarget(libs="-pthread")
         if not quiet:
             print(f"{colored(status_marker(True), 'green')} {package_name}")
         return True
