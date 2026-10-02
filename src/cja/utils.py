@@ -1,9 +1,11 @@
 import os
 import re
+import shlex
 import shutil
 import sys
 import tarfile
 import zipfile
+from collections.abc import Iterable
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -178,6 +180,60 @@ def write_if_changed(path: Path, content: str) -> None:
 def to_posix_path(path: str | Path) -> str:
     """Normalize path separators to forward slashes."""
     return str(path).replace("\\", "/")
+
+
+def split_flags(value: str) -> list[str]:
+    """Split a stored flag string (e.g. ``ImportedTarget.libs``) into tokens.
+
+    The format is shell-like: tokens are separated by whitespace and may be
+    single- or double-quoted.  On Windows a backslash is an ordinary path
+    character, so (unlike ``shlex.split``) it never acts as an escape there.
+    """
+    if sys.platform != "win32":
+        try:
+            return shlex.split(value)
+        except ValueError:
+            return value.split()
+    tokens: list[str] = []
+    current: list[str] = []
+    quote = ""
+    has_token = False
+    for ch in value:
+        if quote:
+            if ch == quote:
+                quote = ""
+            else:
+                current.append(ch)
+        elif ch in "'\"":
+            quote = ch
+            has_token = True
+        elif ch.isspace():
+            if current or has_token:
+                tokens.append("".join(current))
+                current = []
+                has_token = False
+        else:
+            current.append(ch)
+    if current or has_token:
+        tokens.append("".join(current))
+    return tokens
+
+
+def join_flags(tokens: Iterable[str]) -> str:
+    """Join flag tokens into a stored flag string, dropping duplicates.
+
+    Tokens that contain whitespace (e.g. ``C:/Program Files/...``) are quoted
+    so :func:`split_flags` round-trips them.  On Windows, tokens without
+    whitespace or quote characters are kept verbatim so backslashes in paths
+    survive.
+    """
+
+    def quote(token: str) -> str:
+        if sys.platform == "win32" and token and not re.search(r"""[\s'"]""", token):
+            return token
+        return shlex.quote(token)
+
+    return " ".join(dict.fromkeys(quote(t) for t in tokens))
 
 
 def is_cmake_absolute_path(path_str: str) -> bool:

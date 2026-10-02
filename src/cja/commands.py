@@ -2,9 +2,9 @@ import glob as py_glob
 import hashlib
 import os
 import re
-import shlex
 import shutil
 import sys
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -27,7 +27,9 @@ from .utils import (
     cmake_regex_to_python,
     is_truthy,
     is_verbatim_include,
+    join_flags,
     resolve_cmake_path,
+    split_flags,
     strip_generator_expressions,
     to_posix_path,
     write_if_changed,
@@ -256,18 +258,12 @@ def handle_target_link_libraries(
                             exe.link_libraries.append(part)
                         elif target_name in ctx.imported_targets:
                             imported_target = ctx.imported_targets[target_name]
-                            existing = shlex.split(imported_target.libs) if imported_target.libs else []
-                            if part in ctx.imported_targets and ctx.imported_targets[part].libs:
-                                existing.extend(shlex.split(ctx.imported_targets[part].libs))
-                            elif (
-                                part.startswith("-")
-                                or "/" in part
-                                or part.endswith((".a", ".so", ".dylib", ".lib", ".dll"))
-                            ):
-                                existing.append(part)
-                            else:
-                                existing.append(f"-l{part}")
-                            imported_target.libs = " ".join(dict.fromkeys(existing))
+                            imported_target.libs = join_flags(
+                                [
+                                    *split_flags(imported_target.libs),
+                                    *_imported_link_flags(ctx, [part]),
+                                ]
+                            )
 
 
 def handle_target_link_directories(
@@ -623,6 +619,61 @@ def handle_target_precompile_headers(
             )
 
 
+def _imported_link_flags(ctx: BuildContext, entries: Iterable[str]) -> list[str]:
+    """Translate link-library entries of an imported target into link flags."""
+    flags: list[str] = []
+    for entry in entries:
+        if not entry:
+            continue
+        dependency = ctx.imported_targets.get(entry)
+        if dependency is not None and dependency.libs:
+            flags.extend(split_flags(dependency.libs))
+        elif (
+            entry.startswith("-")
+            or "/" in entry
+            or "\\" in entry
+            or entry.endswith((".a", ".so", ".dylib", ".lib", ".dll"))
+        ):
+            flags.append(entry)
+        else:
+            flags.append(f"-l{entry}")
+    return flags
+
+
+def _apply_imported_target_property(
+    ctx: BuildContext,
+    imported_target: ImportedTarget,
+    prop_name: str,
+    prop_value: str,
+) -> None:
+    """Fold a property of an imported target into its compile/link flags.
+
+    Imported targets only carry flags, so only the properties that map onto
+    flags are applied; everything else is ignored.
+    """
+    if prop_name.startswith(("IMPORTED_LOCATION", "IMPORTED_IMPLIB")):
+        if prop_value:
+            imported_target.libs = join_flags(
+                [*split_flags(imported_target.libs), prop_value]
+            )
+    elif prop_name == "INTERFACE_INCLUDE_DIRECTORIES":
+        include_flags = [
+            f"-I{resolve_cmake_path(d, ctx.current_source_dir)}"
+            for d in prop_value.split(";")
+            if d
+        ]
+        imported_target.cflags = join_flags(
+            [*split_flags(imported_target.cflags), *include_flags]
+        )
+    elif prop_name == "INTERFACE_LINK_LIBRARIES":
+        imported_target.libs = join_flags(
+            [
+                *split_flags(imported_target.libs),
+                *_imported_link_flags(ctx, prop_value.split(";")),
+            ]
+        )
+
+
 def handle_set_target_properties(
     ctx: BuildContext,
     cmd: Command,
@@ -648,45 +699,9 @@ def handle_set_target_properties(
 
             for prop_name, prop_value in properties.items():
                 if imported_target is not None:
-                    if prop_name.startswith(("IMPORTED_LOCATION", "IMPORTED_IMPLIB")):
-                        current = shlex.split(imported_target.libs) if imported_target.libs else []
-                        current.append(prop_value)
-                        imported_target.libs = " ".join(dict.fromkeys(current))
-                    elif prop_name == "INTERFACE_INCLUDE_DIRECTORIES":
-                        include_flags: list[str] = []
-                        for d in prop_value.split(";"):
-                            if not d:
-                                continue
-                            expanded = resolve_cmake_path(d, ctx.current_source_dir)
-                            include_flags.append(f"-I{expanded}")
-                        current = shlex.split(imported_target.cflags) if imported_target.cflags else []
-                        current.extend(include_flags)
-                        imported_target.cflags = " ".join(dict.fromkeys(current))
-                    elif prop_name == "INTERFACE_LINK_LIBRARIES":
-                        linked_flags: list[str] = []
-                        for entry in prop_value.split(";"):
-                            if not entry:
-                                continue
-                            if (
-                                entry in ctx.imported_targets
-                                and ctx.imported_targets[entry].libs
-                            ):
-                                linked_flags.extend(
-                                    shlex.split(ctx.imported_targets[entry].libs)
-                                )
-                            elif (
-                                entry.startswith("-")
-                                or "/" in entry
-                                or entry.endswith(
-                                    (".a", ".so", ".dylib", ".lib", ".dll")
-                                )
-                            ):
-                                linked_flags.append(entry)
-                            else:
-                                linked_flags.append(f"-l{entry}")
-                        current = shlex.split(imported_target.libs) if imported_target.libs else []
-                        current.extend(linked_flags)
-                        imported_target.libs = " ".join(dict.fromkeys(current))
+                    _apply_imported_target_property(
+                        ctx, imported_target, prop_name, prop_value
+                    )
                     continue
 
                 if prop_name == "INTERFACE_INCLUDE_DIRECTORIES":
@@ -789,6 +804,13 @@ def handle_set_property(
         for target_name in scope_args:
             lib = ctx.get_library(target_name)
             exe = ctx.get_executable(target_name)
+            imported_target = ctx.imported_targets.get(target_name)
+
+            if imported_target is not None and lib is None and exe is None:
+                _apply_imported_target_property(
+                    ctx, imported_target, prop_name, ";".join(prop_values)
+                )
+                continue
 
             if prop_name == "INTERFACE_INCLUDE_DIRECTORIES":
                 for value in prop_values:
@@ -1579,6 +1601,31 @@ def handle_list(
                             if not regex_module.search(py_pattern, item)
                         ]
                     ctx.variables[list_name] = ";".join(items)
+
+    elif subcommand in ("POP_FRONT", "POP_BACK"):
+        # list(POP_FRONT <list> [<out-var>...])
+        # list(POP_BACK <list> [<out-var>...])
+        if len(args) < 2:
+            if strict:
+                ctx.print_error(f"list({subcommand}) requires a list", cmd.line)
+                sys.exit(1)
+        else:
+            list_name = args[1]
+            out_vars = args[2:]
+            list_val = ctx.variables.get(list_name, "")
+            items = list_val.split(";") if list_val else []
+            pop_index = 0 if subcommand == "POP_FRONT" else -1
+            if not out_vars and items:
+                # Without output variables a single element is dropped.
+                items.pop(pop_index)
+            for out_var in out_vars:
+                if items:
+                    ctx.variables[out_var] = items.pop(pop_index)
+                else:
+                    # An exhausted list unsets the remaining output variables.
+                    _unset_normal_variable(ctx, out_var)
+            if list_name in ctx.variables or items:
+                ctx.variables[list_name] = ";".join(items)
     else:
         if strict:
             ctx.print_error(f"list() unknown subcommand: {subcommand}", cmd.line)
@@ -2153,6 +2200,20 @@ def handle_string(
                 result = s1 > s2
             ctx.variables[out_var] = "1" if result else "0"
 
+    elif subcommand == "ASCII":
+        # string(ASCII <number> [<number> ...] <output_variable>)
+        if len(args) >= 3:
+            out_var = args[-1]
+            chars: list[str] = []
+            for number in args[1:-1]:
+                try:
+                    code = int(number)
+                except ValueError:
+                    continue
+                if 0 <= code <= 255:
+                    chars.append(chr(code))
+            ctx.variables[out_var] = "".join(chars)
+
     elif subcommand == "MAKE_C_IDENTIFIER":
         # string(MAKE_C_IDENTIFIER <string> <output_variable>)
         if len(args) >= 3:
@@ -2313,6 +2374,55 @@ def glob_watch_dirs(pattern: str, source_dir: Path, recursive: bool) -> list[str
     )
 
 
+def _read_file_strings(
+    path: Path,
+    *,
+    regex: re.Pattern[str] | None,
+    length_minimum: int,
+    length_maximum: int,
+    limit_count: int,
+    limit_input: int,
+    limit_output: int,
+    newline_consume: bool,
+) -> tuple[list[str], re.Match[str] | None]:
+    """Extract the text strings of a file for ``file(STRINGS)``.
+
+    Lines are the strings; binary (control) characters end a string just like
+    a newline does.  Returns the strings and the match of the last string that
+    satisfied ``regex`` (if any).
+    """
+    data = path.read_bytes()
+    if limit_input > 0:
+        data = data[:limit_input]
+    text = data.decode("utf-8", errors="replace").replace("\r", "")
+    # Tab is text. A newline only ends a string unless NEWLINE_CONSUME is set.
+    separators = r"[\x00-\x08\x0b-\x1f\x7f]+" if newline_consume else r"[\x00-\x08\x0a-\x1f\x7f]+"
+
+    strings: list[str] = []
+    last_match: re.Match[str] | None = None
+    output_length = 0
+    for piece in re.split(separators, text):
+        if not piece:
+            continue
+        step = length_maximum if length_maximum > 0 else len(piece)
+        for start in range(0, len(piece), step):
+            chunk = piece[start : start + step]
+            if len(chunk) < length_minimum:
+                continue
+            if regex is not None:
+                match = regex.search(chunk)
+                if match is None:
+                    continue
+                last_match = match
+            if limit_output > 0 and output_length + len(chunk) > limit_output:
+                return strings, last_match
+            strings.append(chunk)
+            output_length += len(chunk)
+            if 0 < limit_count <= len(strings):
+                return strings, last_match
+    return strings, last_match
+
+
 def handle_file(
     ctx: BuildContext,
     cmd: Command,
@@ -2362,6 +2472,74 @@ def handle_file(
                     ctx.variables[var_name] = f.read()
             else:
                 ctx.variables[var_name] = ""
+
+    elif subcommand == "STRINGS":
+        # file(STRINGS <file> <variable> [LENGTH_MAXIMUM <max-len>]
+        #      [LENGTH_MINIMUM <min-len>] [LIMIT_COUNT <max-num>]
+        #      [LIMIT_INPUT <max-in>] [LIMIT_OUTPUT <max-out>]
+        #      [NEWLINE_CONSUME] [REGEX <regex>] [NO_HEX_CONVERSION]
+        #      [ENCODING <type>])
+        if len(args) >= 3:
+            filename = ctx.expand_variables(args[1], strict, cmd.line)
+            if not Path(filename).is_absolute():
+                filename = str(ctx.current_source_dir / filename)
+            var_name = args[2]
+
+            numeric_options = {
+                "LENGTH_MAXIMUM": 0,
+                "LENGTH_MINIMUM": 0,
+                "LIMIT_COUNT": 0,
+                "LIMIT_INPUT": 0,
+                "LIMIT_OUTPUT": 0,
+            }
+            regex_pattern: str | None = None
+            newline_consume = False
+            i = 3
+            while i < len(args):
+                token = args[i].upper()
+                if token in numeric_options and i + 1 < len(args):
+                    try:
+                        numeric_options[token] = int(args[i + 1])
+                    except ValueError:
+                        pass
+                    i += 2
+                elif token == "REGEX" and i + 1 < len(args):
+                    regex_pattern = args[i + 1]
+                    i += 2
+                elif token == "ENCODING" and i + 1 < len(args):
+                    i += 2
+                else:
+                    if token == "NEWLINE_CONSUME":
+                        newline_consume = True
+                    i += 1
+
+            strings: list[str] = []
+            last_match: re.Match[str] | None = None
+            if Path(filename).is_file():
+                strings, last_match = _read_file_strings(
+                    Path(filename),
+                    regex=(
+                        re.compile(cmake_regex_to_python(regex_pattern))
+                        if regex_pattern is not None
+                        else None
+                    ),
+                    length_minimum=numeric_options["LENGTH_MINIMUM"],
+                    length_maximum=numeric_options["LENGTH_MAXIMUM"],
+                    limit_count=numeric_options["LIMIT_COUNT"],
+                    limit_input=numeric_options["LIMIT_INPUT"],
+                    limit_output=numeric_options["LIMIT_OUTPUT"],
+                    newline_consume=newline_consume,
+                )
+            ctx.variables[var_name] = ";".join(strings)
+
+            if last_match is not None:
+                # CMP0159 NEW: REGEX updates the CMAKE_MATCH_<n> variables.
+                ctx.variables["CMAKE_MATCH_COUNT"] = str(len(last_match.groups()))
+                for group_index in range(len(last_match.groups()) + 1):
+                    group = last_match.group(group_index)
+                    ctx.variables[f"CMAKE_MATCH_{group_index}"] = (
+                        group if group is not None else ""
+                    )
 
     elif subcommand in ("GLOB", "GLOB_RECURSE"):
         if len(args) >= 3:

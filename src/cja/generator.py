@@ -26,6 +26,7 @@ from .utils import (
     is_verbatim_include,
     make_relative,
     resolve_cmake_path,
+    split_flags,
     strip_generator_expressions,
     to_posix_path,
     write_if_changed,
@@ -48,6 +49,21 @@ def _quote_ninja_cmd_part(part: str) -> str:
             return f'"{escaped}"'
         return normalized
     return shlex.quote(part)
+
+
+def _format_imported_flags(flags: str) -> str:
+    """Prepare an ImportedTarget flag string for a Ninja command line.
+
+    Imported flags are stored as a shell-like string.  Only when it contains
+    quotes (i.e. a path with spaces) do the tokens need re-quoting for the
+    target platform; otherwise the string is used verbatim.
+    """
+    if "'" not in flags and '"' not in flags:
+        return flags
+    return " ".join(
+        _quote_ninja_cmd_part(token) if re.search(r"\s", token) else token
+        for token in split_flags(flags)
+    )
 
 
 def _infer_compiler_id(compiler: str) -> str:
@@ -1552,7 +1568,7 @@ def generate_ninja(
                 if dep_name in ctx.imported_targets:
                     imported = ctx.imported_targets[dep_name]
                     if imported.cflags:
-                        lib_compile_flags.append(imported.cflags)
+                        lib_compile_flags.append(_format_imported_flags(imported.cflags))
 
             lib_sources = _sources_with_interface_sources(
                 lib.sources, expanded_lib_link_libraries
@@ -1804,7 +1820,7 @@ def generate_ninja(
                 if lib_name in ctx.imported_targets:
                     imported = ctx.imported_targets[lib_name]
                     if imported.cflags:
-                        compile_flags.append(imported.cflags)
+                        compile_flags.append(_format_imported_flags(imported.cflags))
                     elif lib_name.startswith("GTest::"):
                         gtest_includes = ctx.variables.get("GTEST_INCLUDE_DIRS", "")
                         if gtest_includes:
@@ -1973,7 +1989,7 @@ def generate_ninja(
                     # Imported target (e.g., Threads::Threads): add link flags
                     imported = ctx.imported_targets[lib_name]
                     if imported.libs:
-                        link_flags.append(imported.libs)
+                        link_flags.append(_format_imported_flags(imported.libs))
                     if lib_name == "GTest::gtest_main":
                         main_libs = ctx.variables.get("GTEST_MAIN_LIBRARIES", "")
                         gtest_libs = ctx.variables.get("GTEST_LIBRARIES", "")
@@ -2444,6 +2460,20 @@ def configure(
     else:
         ctx.variables["CMAKE_SYSTEM_NAME"] = "Linux"
         ctx.variables["UNIX"] = "TRUE"
+
+    # Platform library conventions used by Find modules (e.g. FindOpenSSL).
+    if host_system == "Windows":
+        ctx.variables.setdefault("CMAKE_STATIC_LIBRARY_SUFFIX", ".lib")
+        ctx.variables.setdefault("CMAKE_SHARED_LIBRARY_SUFFIX", ".dll")
+        ctx.variables.setdefault("CMAKE_DL_LIBS", "")
+    elif host_system == "Darwin":
+        ctx.variables.setdefault("CMAKE_STATIC_LIBRARY_SUFFIX", ".a")
+        ctx.variables.setdefault("CMAKE_SHARED_LIBRARY_SUFFIX", ".dylib")
+        ctx.variables.setdefault("CMAKE_DL_LIBS", "")
+    else:
+        ctx.variables.setdefault("CMAKE_STATIC_LIBRARY_SUFFIX", ".a")
+        ctx.variables.setdefault("CMAKE_SHARED_LIBRARY_SUFFIX", ".so")
+        ctx.variables.setdefault("CMAKE_DL_LIBS", "dl")
 
     # Set up compilers from variables if provided
     if "CMAKE_C_COMPILER" in ctx.variables:

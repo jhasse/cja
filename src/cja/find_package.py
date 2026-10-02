@@ -14,7 +14,12 @@ from termcolor import colored
 from .build_context import BuildContext
 from .parser import Command
 from .targets import ImportedTarget
-from .utils import split_unquoted_list_args, status_marker
+from .utils import (
+    UNDEFINED_VAR_SENTINEL,
+    is_truthy,
+    split_unquoted_list_args,
+    status_marker,
+)
 
 
 def _unique_existing_dirs(candidates: list[Path]) -> list[Path]:
@@ -420,6 +425,271 @@ def _same_major_version_compatible(found: str, requested: str, exact: bool) -> b
     if not found_parts:
         return False
     return found_parts[0] == requested_parts[0] and found_parts >= requested_parts
+
+
+_VERSION_REQUEST_RE = re.compile(
+    r"(?P<min>\d+(?:\.\d+){0,3})(?:\.\.\.(?P<excl><)?(?P<max>\d+(?:\.\d+){0,3}))?"
+)
+
+# find_package() keywords that don't take component names.
+_FIND_FLAG_KEYWORDS = {
+    "EXACT",
+    "QUIET",
+    "MODULE",
+    "CONFIG",
+    "NO_MODULE",
+    "NO_POLICY_SCOPE",
+    "GLOBAL",
+    "NO_DEFAULT_PATH",
+    "BYPASS_PROVIDER",
+}
+# find_package() keywords followed by values that are not components.
+_FIND_VALUE_KEYWORDS = {
+    "NAMES",
+    "CONFIGS",
+    "HINTS",
+    "PATHS",
+    "PATH_SUFFIXES",
+    "REGISTRY_VIEW",
+}
+
+
+def _compare_versions(left: str, right: str) -> int:
+    """Compare two dotted version strings like CMake's ``VERSION_*`` operators."""
+    a = list(_version_tuple(left))
+    b = list(_version_tuple(right))
+    width = max(len(a), len(b))
+    a += [0] * (width - len(a))
+    b += [0] * (width - len(b))
+    return (a > b) - (a < b)
+
+
+def setup_find_module_request(
+    ctx: BuildContext, package_name: str, args: list[str]
+) -> None:
+    """Expose a ``find_package()`` request to a ``Find<Pkg>.cmake`` module.
+
+    Defines the ``<Pkg>_FIND_VERSION*``, ``<Pkg>_FIND_COMPONENTS``,
+    ``<Pkg>_FIND_REQUIRED_<comp>`` and ``<Pkg>_FIND_QUIETLY`` variables, the same
+    way CMake does before it includes a find module.
+    """
+    prefix = f"{package_name}_FIND_"
+    required_var = f"{prefix}REQUIRED"
+    for key in [k for k in list(ctx.variables) if k.startswith(prefix)]:
+        if key != required_var:
+            ctx.variables.pop(key, None)
+
+    version = ""
+    exact = False
+    quiet = False
+    components: list[tuple[str, bool]] = []
+
+    rest = args[1:]
+    index = 0
+    if rest and _VERSION_REQUEST_RE.fullmatch(rest[0]):
+        version = rest[0]
+        index = 1
+
+    mode = ""
+    while index < len(rest):
+        token = rest[index]
+        index += 1
+        upper = token.upper()
+        if upper == "REQUIRED" or upper == "COMPONENTS":
+            mode = "required"
+        elif upper == "OPTIONAL_COMPONENTS":
+            mode = "optional"
+        elif upper in _FIND_FLAG_KEYWORDS or upper.startswith("NO_"):
+            mode = ""
+            exact = exact or upper == "EXACT"
+            quiet = quiet or upper == "QUIET"
+        elif upper in _FIND_VALUE_KEYWORDS:
+            mode = "skip"
+        elif mode in ("required", "optional"):
+            components.append((token, mode == "required"))
+
+    if quiet or ctx.quiet:
+        ctx.variables[f"{prefix}QUIETLY"] = "TRUE"
+
+    if version:
+        match = _VERSION_REQUEST_RE.fullmatch(version)
+        assert match is not None
+        minimum = match.group("min")
+        parts = minimum.split(".")
+        ctx.variables[f"{prefix}VERSION"] = minimum
+        ctx.variables[f"{prefix}VERSION_COMPLETE"] = version
+        ctx.variables[f"{prefix}VERSION_COUNT"] = str(len(parts))
+        ctx.variables[f"{prefix}VERSION_EXACT"] = "TRUE" if exact else "FALSE"
+        for name, part in zip(("MAJOR", "MINOR", "PATCH", "TWEAK"), parts):
+            ctx.variables[f"{prefix}VERSION_{name}"] = part
+        if match.group("max"):
+            ctx.variables[f"{prefix}VERSION_RANGE"] = version
+            ctx.variables[f"{prefix}VERSION_MIN"] = minimum
+            ctx.variables[f"{prefix}VERSION_MAX"] = match.group("max")
+            ctx.variables[f"{prefix}VERSION_RANGE_MIN"] = "INCLUDE"
+            ctx.variables[f"{prefix}VERSION_RANGE_MAX"] = (
+                "EXCLUDE" if match.group("excl") else "INCLUDE"
+            )
+
+    if components:
+        ctx.variables[f"{prefix}COMPONENTS"] = ";".join(name for name, _ in components)
+        for name, comp_required in components:
+            ctx.variables[f"{prefix}REQUIRED_{name}"] = (
+                "TRUE" if comp_required else "FALSE"
+            )
+
+_FPHSA_KEYWORDS = {
+    "REQUIRED_VARS",
+    "FOUND_VAR",
+    "HANDLE_COMPONENTS",
+    "HANDLE_VERSION_RANGE",
+    "CONFIG_MODE",
+    "FAIL_MESSAGE",
+    "REQUIRED_VERSIONS",
+    "NAME_MISMATCHED",
+    "REASON_FAILURE_MESSAGE",
+    "VERSION_VAR",
+}
+
+
+def _fphsa_var_is_set(ctx: BuildContext, name: str) -> bool:
+    value = ctx.variables.get(name, "")
+    return value != UNDEFINED_VAR_SENTINEL and is_truthy(value)
+
+
+def _fphsa_version_failure(
+    ctx: BuildContext, package_name: str, version_var: str, handle_range: bool
+) -> str:
+    """Return a failure reason if the found version is unsuitable, else ""."""
+    prefix = f"{package_name}_FIND_"
+    requested = ctx.variables.get(f"{prefix}VERSION", "")
+    if not requested or requested == UNDEFINED_VAR_SENTINEL:
+        return ""
+
+    found = ctx.variables.get(version_var, "")
+    if found == UNDEFINED_VAR_SENTINEL:
+        found = ""
+    if not found:
+        return f'Found unsuitable version "", but required is version {requested}'
+
+    range_text = ctx.variables.get(f"{prefix}VERSION_RANGE", "")
+    if handle_range and range_text and range_text != UNDEFINED_VAR_SENTINEL:
+        maximum = ctx.variables.get(f"{prefix}VERSION_MAX", "")
+        exclusive = ctx.variables.get(f"{prefix}VERSION_RANGE_MAX") == "EXCLUDE"
+        too_new = _compare_versions(found, maximum) >= (0 if exclusive else 1)
+        if _compare_versions(found, requested) < 0 or too_new:
+            return (
+                f'Found unsuitable version "{found}", '
+                f"but required is in range [{range_text}]"
+            )
+        return ""
+
+    if ctx.variables.get(f"{prefix}VERSION_EXACT") == "TRUE":
+        count = len(requested.split("."))
+        head = ".".join(found.split(".")[:count])
+        if _compare_versions(head, requested) != 0:
+            return (
+                f'Found unsuitable version "{found}", '
+                f'but required is exact version "{requested}"'
+            )
+        return ""
+
+    if _compare_versions(found, requested) < 0:
+        return (
+            f'Found unsuitable version "{found}", '
+            f'but required is at least "{requested}"'
+        )
+    return ""
+
+
+def handle_find_package_handle_standard_args(
+    ctx: BuildContext, cmd: Command, args: list[str]
+) -> None:
+    """Handle ``find_package_handle_standard_args()``.
+
+    Supports both signatures: ``(<Pkg> <msg> <var>...)`` and the keyword form
+    with ``REQUIRED_VARS``, ``VERSION_VAR``, ``FOUND_VAR``, ``FAIL_MESSAGE``,
+    ``HANDLE_COMPONENTS``, ``HANDLE_VERSION_RANGE`` and ``CONFIG_MODE``.
+    """
+    if not args:
+        return
+
+    package_name = args[0]
+    required_vars: list[str] = []
+    version_var = ""
+    found_var = ""
+    fail_message = ""
+    handle_components = False
+    handle_range = False
+
+    if len(args) >= 3 and args[1] not in _FPHSA_KEYWORDS:
+        # Basic signature: <Pkg> <FAIL_MSG> <var>...
+        required_vars = args[2:]
+    else:
+        index = 1
+        while index < len(args):
+            token = args[index]
+            index += 1
+            if token == "REQUIRED_VARS":
+                while index < len(args) and args[index] not in _FPHSA_KEYWORDS:
+                    required_vars.append(args[index])
+                    index += 1
+            elif token == "VERSION_VAR" and index < len(args):
+                version_var = args[index]
+                index += 1
+            elif token == "FOUND_VAR" and index < len(args):
+                found_var = args[index]
+                index += 1
+            elif token == "FAIL_MESSAGE" and index < len(args):
+                fail_message = args[index]
+                index += 1
+            elif token == "REASON_FAILURE_MESSAGE" and index < len(args):
+                index += 1
+            elif token == "HANDLE_COMPONENTS":
+                handle_components = True
+            elif token == "HANDLE_VERSION_RANGE":
+                handle_range = True
+
+    failure = ""
+    if required_vars:
+        for var in required_vars:
+            if not _fphsa_var_is_set(ctx, var):
+                failure = fail_message or f"missing: {var}"
+                break
+        found = not failure
+    else:
+        # Nothing to check (e.g. CONFIG_MODE): trust what the module/config set.
+        found = _fphsa_var_is_set(ctx, f"{package_name}_FOUND")
+
+    if found and version_var:
+        failure = _fphsa_version_failure(ctx, package_name, version_var, handle_range)
+        found = not failure
+
+    if found and handle_components:
+        components = ctx.variables.get(f"{package_name}_FIND_COMPONENTS", "")
+        if components and components != UNDEFINED_VAR_SENTINEL:
+            for component in split_unquoted_list_args(components):
+                if _fphsa_var_is_set(ctx, f"{package_name}_{component}_FOUND"):
+                    continue
+                if _fphsa_var_is_set(
+                    ctx, f"{package_name}_FIND_REQUIRED_{component}"
+                ):
+                    failure = f"missing components: {component}"
+                    found = False
+                    break
+
+    value = "TRUE" if found else "FALSE"
+    ctx.variables[f"{package_name}_FOUND"] = value
+    ctx.variables[f"{package_name.upper()}_FOUND"] = value
+    if found_var:
+        ctx.variables[found_var] = value
+
+    if not found and ctx.variables.get(f"{package_name}_FIND_REQUIRED") == "TRUE":
+        message = f"could not find package: {package_name}"
+        if failure:
+            message = f"{message} ({failure})"
+        ctx.print_error(message, cmd.line)
+        raise SystemExit(1)
 
 
 def _glfw_header_version(header: Path) -> str:

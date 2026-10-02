@@ -71,7 +71,11 @@ from .find_commands import (
     handle_find_path,
     handle_find_program,
 )
-from .find_package import handle_builtin_find_package
+from .find_package import (
+    handle_builtin_find_package,
+    handle_find_package_handle_standard_args,
+    setup_find_module_request,
+)
 from .frame import Frame
 from .parser import Command
 from .syntax import (
@@ -2367,90 +2371,7 @@ int main() {{
                 handle_find_library(ctx, cmd, args)
 
             case "find_package_handle_standard_args":
-                # Minimal implementation modeled after CMake's
-                # FindPackageHandleStandardArgs. Supports the signatures used in
-                # our tests and in common Find<Package>.cmake modules.
-                if not args:
-                    frame.pc += 1
-                    continue
-
-                pkg_name = args[0]
-                extended_keywords = {
-                    "REQUIRED_VARS",
-                    "FOUND_VAR",
-                    "HANDLE_COMPONENTS",
-                    "CONFIG_MODE",
-                    "FAIL_MESSAGE",
-                    "REQUIRED_VERSIONS",
-                    "NAME_MISMATCHED",
-                    "REASON_FAILURE_MESSAGE",
-                    "VERSION_VAR",
-                }
-                # Basic signature:
-                #   find_package_handle_standard_args(Pkg DEFAULT_MSG VAR1 VAR2 ...)
-                # Detected when arg[1] is not an extended-signature keyword.
-                is_basic = len(args) >= 3 and args[1] not in extended_keywords
-                if is_basic:
-                    required_vars = args[2:]
-                    found = True
-                    for var in required_vars:
-                        value = ctx.variables.get(var, "")
-                        if not value or value.endswith("-NOTFOUND"):
-                            found = False
-                            break
-                    ctx.variables[f"{pkg_name}_FOUND"] = "TRUE" if found else "FALSE"
-
-                # Extended signature:
-                #   find_package_handle_standard_args(Pkg
-                #       REQUIRED_VARS VAR1 VAR2 ...
-                #       FOUND_VAR <var-name>
-                #       [...])
-                required_vars_ext: list[str] = []
-                found_var_name = ""
-                idx_fph = 1
-                while idx_fph < len(args):
-                    token = args[idx_fph]
-                    if token == "REQUIRED_VARS":
-                        idx_fph += 1
-                        while (
-                            idx_fph < len(args)
-                            and args[idx_fph] not in extended_keywords
-                        ):
-                            required_vars_ext.append(args[idx_fph])
-                            idx_fph += 1
-                        continue
-                    if token == "FOUND_VAR" and idx_fph + 1 < len(args):
-                        found_var_name = args[idx_fph + 1]
-                        idx_fph += 2
-                        continue
-                    idx_fph += 1
-
-                if required_vars_ext:
-                    found_ext = True
-                    for var in required_vars_ext:
-                        value = ctx.variables.get(var, "")
-                        if not value or value.endswith("-NOTFOUND"):
-                            found_ext = False
-                            break
-                    if found_var_name:
-                        ctx.variables[found_var_name] = "TRUE" if found_ext else "FALSE"
-                    # If no basic signature was used, also populate <Pkg>_FOUND.
-                    if f"{pkg_name}_FOUND" not in ctx.variables:
-                        ctx.variables[f"{pkg_name}_FOUND"] = (
-                            "TRUE" if found_ext else "FALSE"
-                        )
-
-                # If the package was required and not found, fail the configure step.
-                pkg_required_var = f"{pkg_name}_FIND_REQUIRED"
-                if (
-                    ctx.variables.get(pkg_required_var) == "TRUE"
-                    and ctx.variables.get(f"{pkg_name}_FOUND") != "TRUE"
-                ):
-                    ctx.print_error(
-                        f"could not find package: {pkg_name}",
-                        cmd.line,
-                    )
-                    raise SystemExit(1)
+                handle_find_package_handle_standard_args(ctx, cmd, args)
 
             case "install":
                 if len(args) >= 2 and args[0] == "TARGETS":
@@ -2621,6 +2542,7 @@ int main() {{
                         if found_file:
                             from .parser import parse_file
 
+                            setup_find_module_request(ctx, package_name, args)
                             ctx.record_cmake_file(found_file)
                             find_commands = parse_file(found_file)
 
