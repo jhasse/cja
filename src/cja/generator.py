@@ -1087,15 +1087,27 @@ def generate_ninja(
             """Convert a $builddir/... ninja path to an absolute filesystem path."""
             if ninja_path.startswith("$builddir/"):
                 return to_posix_path(
-                    str(ctx.build_dir / ninja_path[len("$builddir/") :])
+                    str(ctx.build_dir.absolute() / ninja_path[len("$builddir/") :])
                 )
             if ninja_path == "$builddir":
-                return to_posix_path(str(ctx.build_dir))
+                return to_posix_path(str(ctx.build_dir.absolute()))
             return ninja_path
+
+        # Like CMake, $<TARGET_FILE:...> and $<TARGET_FILE_DIR:...> in COMMAND
+        # arguments are absolute, so they stay valid after a WORKING_DIRECTORY cd.
+        target_file_dirs_abs = {
+            k: _absolute_target_file(v) for k, v in target_file_dirs.items()
+        }
+        target_files_abs = {k: _absolute_target_file(v) for k, v in target_files.items()}
 
         def _format_command(command: list[str], *, verbatim: bool) -> str:
             """Format one COMMAND argv, substituting target names with their files."""
-            expanded = [_expand_genex(c) for c in command]
+            expanded = [
+                strip_generator_expressions(
+                    c, ctx.variables, target_file_dirs_abs, target_files_abs
+                )
+                for c in command
+            ]
             if expanded and expanded[0] in target_files:
                 expanded[0] = _absolute_target_file(target_files[expanded[0]])
             if verbatim:
@@ -1185,12 +1197,14 @@ def generate_ninja(
 
                 # Use a stamp file so ninja can track when the target last ran
                 stamp = f"$builddir/{ct.name}.stamp"
+                # After a WORKING_DIRECTORY cd, the relative $builddir is no longer valid
+                touched = _absolute_target_file(stamp) if ct.working_directory else stamp
                 n.build(
                     [stamp],
                     "custom_command",
                     ct_depends,
                     order_only=ct_dep_order_only or None,
-                    variables={"cmd": f"{ct_cmd_str} && touch {stamp}"},
+                    variables={"cmd": f"{ct_cmd_str} && touch {touched}"},
                 )
                 n.build([ct.name], "phony", [stamp])
             else:
