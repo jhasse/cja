@@ -320,9 +320,8 @@ class BuildContext:
             return os.environ.get(var_name, "")
 
         result = value
-        nested_var_ref = bool(
-            re.search(r"\$\{[^{}]*\$\{[^{}]+\}[^{}]*\}", original_value)
-        )
+        # A "${" before the previous one is closed, e.g. ${A_${B}} or ${${A}${B}}
+        nested_var_ref = bool(re.search(r"\$\{[^}]*\$\{", original_value))
         max_passes = 10 if nested_var_ref else 1
         for _ in range(max_passes):
             # Expand $ENV{VAR} first

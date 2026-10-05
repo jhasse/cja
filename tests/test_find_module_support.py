@@ -20,6 +20,24 @@ def _run(ctx: BuildContext, *commands: tuple[str, list[str]]) -> None:
     )
 
 
+# --- nested variable references ---------------------------------------------
+
+
+def test_nested_reference_with_concatenated_name(tmp_path: Path) -> None:
+    """FindGTest's __gtest_import_library reads ${${_var}${_config_suffix}}."""
+    ctx = _ctx(tmp_path)
+
+    _run(
+        ctx,
+        ("set", ["GTEST_LIBRARY_RELEASE", "/x/libgtest.a"]),
+        ("set", ["_var", "GTEST_LIBRARY"]),
+        ("set", ["_suffix", "_RELEASE"]),
+        ("set", ["OUT", "${${_var}${_suffix}}"]),
+    )
+
+    assert ctx.variables["OUT"] == "/x/libgtest.a"
+
+
 # --- file(STRINGS) -----------------------------------------------------------
 
 
