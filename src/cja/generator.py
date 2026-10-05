@@ -2250,9 +2250,10 @@ def generate_ninja(
 
                 cmd_str = " ".join(cmd)
 
-                # Determine cd prefix for the working directory
+                # Determine the directory to cd into (None: ninja's, the source dir)
+                test_cwd: str | None = None
                 if is_builddir:
-                    cmd_str = f"cd $builddir && {cmd_str}"
+                    test_cwd = "$builddir"
                 elif test_wd:
                     try:
                         source_dir = ctx.source_dir.resolve()
@@ -2261,12 +2262,26 @@ def generate_ninja(
                             # Source dir itself: no cd needed
                             pass
                         elif wd_path.is_relative_to(source_dir):
-                            rel = wd_path.relative_to(source_dir)
-                            cmd_str = f"cd {to_posix_path(rel)} && {cmd_str}"
+                            test_cwd = to_posix_path(wd_path.relative_to(source_dir))
                         else:
-                            cmd_str = f"cd {to_posix_path(test_wd)} && {cmd_str}"
+                            test_cwd = to_posix_path(test_wd)
                     except (OSError, RuntimeError, ValueError):
-                        cmd_str = f"cd {to_posix_path(test_wd)} && {cmd_str}"
+                        test_cwd = to_posix_path(test_wd)
+
+                if test_cwd is not None:
+                    if platform.system() == "Windows":
+                        # Ninja runs the command with CreateProcess, without a
+                        # shell, so neither cd nor && exist. Change the
+                        # directory in a Python one-liner instead, like the ar
+                        # rule does.
+                        cmd_str = (
+                            'python -c "import os,subprocess,sys;'
+                            "os.chdir(sys.argv[1]);"
+                            'sys.exit(subprocess.call(sys.argv[2:]))"'
+                            f" {_quote_ninja_cmd_part(test_cwd)} {cmd_str}"
+                        )
+                    else:
+                        cmd_str = f"cd {test_cwd} && {cmd_str}"
 
                 test_target = f"test_{test.name}"
                 register_output(test_target, None, 0)

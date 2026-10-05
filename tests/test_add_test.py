@@ -1,12 +1,28 @@
 """Tests for add_test command."""
 
 import platform
+import re
 from pathlib import Path
 
 from cja.generator import BuildContext, generate_ninja, process_commands
 from cja.parser import Command
 
 EXE_EXT = ".exe" if platform.system() == "Windows" else ""
+
+
+def _in_dir(directory: str, command: str) -> str:
+    """The ninja command that runs command in directory, as the generator writes it."""
+    if platform.system() == "Windows":
+        return (
+            'python -c "import os,subprocess,sys;os.chdir(sys.argv[1]);'
+            f'sys.exit(subprocess.call(sys.argv[2:]))" {directory} {command}'
+        )
+    return f"cd {directory} && {command}"
+
+
+def _unwrap(ninja_content: str) -> str:
+    """Join the lines that ninja_syntax wraps with a trailing $."""
+    return re.sub(r" \$\n +", " ", ninja_content)
 
 
 def test_add_test(tmp_path: Path) -> None:
@@ -44,7 +60,7 @@ def test_add_test(tmp_path: Path) -> None:
     # Check for individual test build statements
     assert "build test_mytest: test_run" in ninja_content
     # It should have resolved 'myapp' to './myapp' (since we cd to $builddir)
-    assert f"./myapp{EXE_EXT} --arg" in ninja_content
+    assert _in_dir("$builddir", f"./myapp{EXE_EXT} --arg") in _unwrap(ninja_content)
     assert (
         f"implicit = $builddir/myapp{EXE_EXT}" in ninja_content
         or f"| $builddir/myapp{EXE_EXT}" in ninja_content
@@ -86,10 +102,10 @@ def test_add_test_working_directory(tmp_path: Path) -> None:
     ninja_path = tmp_path / "build.ninja"
     generate_ninja(ctx, ninja_path, "build")
 
-    ninja_content = ninja_path.read_text()
+    ninja_content = _unwrap(ninja_path.read_text())
 
     # Absolute path outside source dir: cd with full path
-    assert "cd /tmp/testdir && $builddir/myapp" in ninja_content
+    assert _in_dir("/tmp/testdir", f"$builddir/myapp{EXE_EXT}") in ninja_content
 
 
 def test_add_test_working_directory_source_dir(tmp_path: Path) -> None:
@@ -149,7 +165,7 @@ def test_add_test_working_directory_subdir(tmp_path: Path) -> None:
 
     ninja_content = ninja_path.read_text()
     # Should cd to relative path
-    assert "cd sub/dir && echo hello" in ninja_content
+    assert _in_dir("sub/dir", "echo hello") in _unwrap(ninja_content)
 
 
 def test_add_test_target_file_in_command(tmp_path: Path) -> None:
