@@ -1,6 +1,7 @@
 """Tests for add_custom_command support."""
 
 import platform
+import re
 from pathlib import Path
 
 import pytest
@@ -413,6 +414,52 @@ add_custom_command(TARGET audioplayer POST_BUILD
     assert "'/fake/python3 -m cja'" not in ninja_content
     assert "/fake/python3" in ninja_content
     assert "-m" in ninja_content
+
+
+def test_post_build_cmake_command_path_with_spaces(tmp_path: Path) -> None:
+    """A cja path containing spaces must stay one token in POST_BUILD and
+    reconfigure commands rather than being split at the space."""
+    from unittest.mock import patch
+
+    import cja.generator
+    from cja.generator import _quote_ninja_cmd_part, configure
+
+    source_dir = tmp_path
+    cmake_content = """\
+cmake_minimum_required(VERSION 3.10)
+project(PostBuildPathSpacesTest)
+
+add_executable(myapp main.c)
+
+add_custom_command(TARGET myapp POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E echo done
+)
+"""
+    (source_dir / "CMakeLists.txt").write_text(cmake_content)
+    (source_dir / "main.c").write_text("int main() { return 0; }\n")
+
+    cja_path = "/fake dir/My Tools/cja"
+    with patch.object(cja.generator, "_resolve_cja_cmd", return_value=[cja_path]):
+        configure(source_dir, "build")
+
+    # Unwrap ninja "$" line continuations (and their indent) so the full cmd
+    # is searchable.
+    unwrapped = re.sub(r"\$\n\s*", "", (source_dir / "build.ninja").read_text())
+    edge = unwrapped.find("CMakeFiles/myapp.post_build: custom_command")
+    assert edge != -1
+    cmd_start = unwrapped.find("cmd =", edge)
+    cmd = unwrapped[cmd_start : unwrapped.find("\n", cmd_start)]
+
+    quoted = _quote_ninja_cmd_part(cja_path)
+    assert f"{quoted} -E echo done" in cmd
+    assert f"{quoted} -E touch" in cmd
+    assert "/fake " not in cmd.replace(quoted, "")
+
+    reconfigure = unwrapped[unwrapped.find("rule reconfigure") :]
+    reconfigure = reconfigure[: reconfigure.find("\n", reconfigure.find("command ="))]
+    assert f"{quoted} --regenerate-during-build" in reconfigure
+
+
 def test_add_custom_command_output_strips_generator_expressions(
     tmp_path: Path,
 ) -> None:

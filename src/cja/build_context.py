@@ -191,6 +191,9 @@ class BuildContext:
     include_guarded_files: set[Path] = field(default_factory=set)
     c_compiler: str = field(default_factory=_default_c_compiler)
     cxx_compiler: str = field(default_factory=_default_cxx_compiler)
+    # argv behind CMAKE_COMMAND; kept as a list because the joined variable
+    # can't distinguish a path with spaces from a multi-word command.
+    cja_cmd: list[str] = field(default_factory=list)
     quiet: bool = False
 
     def __post_init__(self) -> None:

@@ -771,7 +771,7 @@ def generate_ninja(
                     return f"-D{name}="
                 return f"-D{name}={value}"
 
-            cja_cmd = shlex.split(ctx.variables.get("CMAKE_COMMAND") or " ".join(_resolve_cja_cmd()))
+            cja_cmd = ctx.cja_cmd or _resolve_cja_cmd()
             reconfigure_cmd_parts = cja_cmd + ["--regenerate-during-build"]
             if builddir != "build":
                 reconfigure_cmd_parts += ["-B", "$builddir"]
@@ -2125,13 +2125,13 @@ def generate_ninja(
                 stamp = f"$builddir/{stamp_rel}"
                 stamp_path = str(ctx.build_dir / stamp_rel)
                 cmake_cmd = ctx.variables["CMAKE_COMMAND"]
-                cmake_cmd_parts = shlex.split(cmake_cmd)
+                cmake_cmd_parts = ctx.cja_cmd or [cmake_cmd]
                 pb_cmd_parts: list[str] = []
                 for pb_cmd in exe.post_build_commands:
                     expanded_parts: list[str] = []
                     for a in pb_cmd:
                         expanded = _expand_genex(a)
-                        if expanded == cmake_cmd and len(cmake_cmd_parts) > 1:
+                        if expanded == cmake_cmd:
                             # CMAKE_COMMAND may be a multi-word command like
                             # "python3 -m cja"; expand it into separate tokens
                             expanded_parts.extend(cmake_cmd_parts)
@@ -2393,6 +2393,7 @@ def run_script(
         ctx.variables["UNIX"] = "TRUE"
 
     cja_cmd = _resolve_cja_cmd()
+    ctx.cja_cmd = cja_cmd
     ctx.variables["CMAKE_COMMAND"] = " ".join(cja_cmd)
 
     argv = [cja_cmd[0], "-P", str(script_path), *(script_args or [])]
@@ -2512,7 +2513,8 @@ def configure(
         ctx.c_compiler = ctx.variables["CMAKE_C_COMPILER"]
     if "CMAKE_CXX_COMPILER" in ctx.variables:
         ctx.cxx_compiler = ctx.variables["CMAKE_CXX_COMPILER"]
-    ctx.variables["CMAKE_COMMAND"] = " ".join(_resolve_cja_cmd())
+    ctx.cja_cmd = _resolve_cja_cmd()
+    ctx.variables["CMAKE_COMMAND"] = " ".join(ctx.cja_cmd)
     ctx.variables["CMAKE_C_COMPILER"] = ctx.c_compiler
     ctx.variables["CMAKE_CXX_COMPILER"] = ctx.cxx_compiler
     ctx.variables["CMAKE_C_COMPILER_ID"] = _infer_compiler_id(ctx.c_compiler)
