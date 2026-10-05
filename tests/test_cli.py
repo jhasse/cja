@@ -105,8 +105,8 @@ def test_cli_multiple_d_flags(tmp_path: Path) -> None:
     assert "-O3" in content
 
 
-def test_d_flag_overrides_cmake_set(tmp_path: Path) -> None:
-    """Test that -D flag overrides set() in CMakeLists.txt."""
+def test_cmake_set_overrides_d_flag(tmp_path: Path) -> None:
+    """Test that a normal set() in CMakeLists.txt hides a -D cache entry, like CMake."""
     source_dir = tmp_path / "hello"
     copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
 
@@ -119,15 +119,13 @@ def test_d_flag_overrides_cmake_set(tmp_path: Path) -> None:
     )
     cmake_file.write_text(content)
 
-    # Override with -D flag to Release
     configure(source_dir, "build", variables={"CMAKE_BUILD_TYPE": "Release"})
 
     build_ninja = source_dir / "build.ninja"
     content = build_ninja.read_text()
-    # Should have Release flags, not Debug
-    assert "-O3" in content
-    assert "-DNDEBUG" in content
-    assert "-O0" not in content
+    # Should have Debug flags, not Release
+    assert "-O0" in content
+    assert "-O3" not in content
 
 
 def test_custom_build_dir_ninja_name(tmp_path: Path) -> None:
@@ -183,6 +181,31 @@ def test_build_subcommand_release(tmp_path: Path) -> None:
 
     # Should have built the executable in build-release
     assert (source_dir / "build-release" / f"hello{EXE_EXT}").exists()
+
+
+def test_configure_release_flag(tmp_path: Path) -> None:
+    """Test cja --release configures like cja build --release (without building)."""
+    source_dir = tmp_path / "hello"
+    copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
+
+    result = subprocess.run(
+        [sys.executable, "-m", "cja", "--release"],
+        capture_output=True,
+        text=True,
+        cwd=source_dir,
+        check=False,
+    )
+    assert result.returncode == 0
+
+    # Should have created build-release.ninja with Release flags
+    assert (source_dir / "build-release.ninja").exists()
+    assert not (source_dir / "build.ninja").exists()
+    content = (source_dir / "build-release.ninja").read_text()
+    assert "-O3" in content
+    assert "-DNDEBUG" in content
+
+    # Configure-only: should not have built the executable
+    assert not (source_dir / "build-release" / f"hello{EXE_EXT}").exists()
 
 
 def test_build_subcommand_skips_configure_if_ninja_exists(tmp_path: Path) -> None:
@@ -483,3 +506,27 @@ add_executable(myexe main.c)
         check=False,
     )
     assert result.returncode == 42
+
+
+def test_run_subcommand_without_executable(tmp_path: Path) -> None:
+    """Test cja run reports an error when there is no executable target."""
+    source_dir = tmp_path
+    (source_dir / "lib.c").write_text("int foo() { return 0; }")
+    (source_dir / "CMakeLists.txt").write_text(
+        """
+cmake_minimum_required(VERSION 3.10)
+project(run_prj)
+add_library(mylib lib.c)
+"""
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-m", "cja", "run"],
+        capture_output=True,
+        text=True,
+        cwd=source_dir,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert "No executable target to run" in result.stderr
+    assert "Traceback" not in result.stderr

@@ -30,6 +30,18 @@ class TrackedDict(dict[str, str]):
     ) -> None:
         super().__init__(*args, **kwargs)
         self._tracker: set[str] = _tracker if _tracker is not None else set()
+        # Names with a normal binding in this scope. Such a binding hides a
+        # cache entry of the same name, like in CMake. Every assignment
+        # creates one; cache entries are written via BuildContext.set_cache().
+        self.normal_bindings: set[str] = set()
+
+    def __setitem__(self, key: str, value: str) -> None:
+        self.normal_bindings.add(key)
+        super().__setitem__(key, value)
+
+    def pop(self, key: str, *args: Any) -> Any:  # type: ignore[override]
+        self.normal_bindings.discard(key)
+        return super().pop(key, *args)
 
     def __getitem__(self, key: str) -> str:
         self._tracker.add(key)
@@ -52,6 +64,7 @@ class TrackedDict(dict[str, str]):
         new = TrackedDict(_tracker=self._tracker)
         for k, v in dict.items(self):
             dict.__setitem__(new, k, v)
+        new.normal_bindings = set(self.normal_bindings)
         return new
 
 
@@ -106,6 +119,18 @@ class CustomTarget:
 
 
 @dataclass
+class ConfigureDependGlob:
+    """A file(GLOB ... CONFIGURE_DEPENDS) call, re-checked at build time."""
+
+    pattern: str
+    base_dir: Path
+    recursive: bool
+    list_directories: bool | None
+    files: list[str]
+    dirs: list[str]
+
+
+@dataclass
 class BuildContext:
     """Context for processing CMake commands."""
 
@@ -115,7 +140,9 @@ class BuildContext:
     current_list_file: Path = field(init=False)
     project_name: str = ""
     variables: TrackedDict = field(default_factory=TrackedDict)
-    cache_variables: set[str] = field(default_factory=set)  # Variables from -D flags
+    # Cache entries. Their values are visible through `variables` unless a
+    # normal binding of the same name hides them.
+    cache_values: dict[str, str] = field(default_factory=dict)
     cli_variables: dict[str, str] = field(
         default_factory=dict
     )  # Original -D flag values
@@ -160,6 +187,7 @@ class BuildContext:
     parent_directory: str = ""  # Path to parent directory (if in subdirectory)
     cmake_files: set[Path] = field(default_factory=set)
     configure_depends: set[Path] = field(default_factory=set)
+    configure_depend_globs: list[ConfigureDependGlob] = field(default_factory=list)
     include_guarded_files: set[Path] = field(default_factory=set)
     c_compiler: str = field(default_factory=_default_c_compiler)
     cxx_compiler: str = field(default_factory=_default_cxx_compiler)
@@ -185,6 +213,22 @@ class BuildContext:
         except OSError:
             resolved = path
         self.configure_depends.add(resolved)
+
+    def set_cache(self, name: str, value: str) -> None:
+        """Set a cache entry; a normal binding of the same name keeps hiding it."""
+        self.cache_values[name] = value
+        if name not in self.variables.normal_bindings:
+            dict.__setitem__(self.variables, name, value)
+
+    def cache_updates(self) -> dict[str, str]:
+        """Cache entries to carry over to the parent when leaving a scope."""
+        return dict(self.cache_values)
+
+    def apply_cache_updates(self, updates: dict[str, str]) -> None:
+        """Make cache entries visible unless a normal binding hides them."""
+        for name, value in updates.items():
+            if name not in self.variables.normal_bindings:
+                dict.__setitem__(self.variables, name, value)
 
     def get_library(self, name: str) -> Library | None:
         for lib in self.libraries:

@@ -6,10 +6,8 @@ import shlex
 import shutil
 import subprocess
 import sys
-import tarfile
 import typing
 import urllib.request
-import zipfile
 from contextlib import suppress
 from pathlib import Path
 
@@ -56,8 +54,10 @@ from .commands import (
     handle_target_include_directories,
     handle_target_link_directories,
     handle_target_link_libraries,
+    handle_target_precompile_headers,
     handle_target_sources,
     handle_unset,
+    init_compiler_flag_cache_vars,
 )
 from .config_utils import (
     _render_basic_package_version_file,
@@ -71,7 +71,11 @@ from .find_commands import (
     handle_find_path,
     handle_find_program,
 )
-from .find_package import handle_builtin_find_package
+from .find_package import (
+    handle_builtin_find_package,
+    handle_find_package_handle_standard_args,
+    setup_find_module_request,
+)
 from .frame import Frame
 from .parser import Command
 from .syntax import (
@@ -82,11 +86,15 @@ from .syntax import (
 from .targets import ImportedTarget, InstallTarget
 from .utils import (
     UNDEFINED_VAR_SENTINEL,
+    archive_filename_from_url,
+    extract_archive,
+    flatten_single_extracted_subdir,
     is_truthy,
     make_relative,
     split_unquoted_list_args,
     status_marker,
     to_posix_path,
+    write_if_changed,
 )
 
 
@@ -275,39 +283,88 @@ def process_commands(
                     sys.exit(1)
                 continue
 
+            fetch_cmd_line = (
+                frame.fetchcontent_cmd.line if frame.fetchcontent_cmd else 0
+            )
+
             url = None
             url_hash = None
             git_repo = None
             git_tag = None
+            declared_source_dir: str | None = None
+            declared_binary_dir: str | None = None
             src_dir: Path | None = None
             arg_idx = 0
             while arg_idx < len(info.args):
-                if info.args[arg_idx] == "URL" and arg_idx + 1 < len(info.args):
-                    url = info.args[arg_idx + 1]
-                    arg_idx += 2
-                elif info.args[arg_idx] == "URL_HASH" and arg_idx + 1 < len(info.args):
-                    url_hash = info.args[arg_idx + 1]
-                    arg_idx += 2
-                elif info.args[arg_idx] == "GIT_REPOSITORY" and arg_idx + 1 < len(
-                    info.args
+                key = info.args[arg_idx]
+                if arg_idx + 1 < len(info.args) and key in (
+                    "URL",
+                    "URL_HASH",
+                    "GIT_REPOSITORY",
+                    "GIT_TAG",
+                    "SOURCE_DIR",
+                    "BINARY_DIR",
                 ):
-                    git_repo = info.args[arg_idx + 1]
+                    val = info.args[arg_idx + 1]
                     arg_idx += 2
-                elif info.args[arg_idx] == "GIT_TAG" and arg_idx + 1 < len(info.args):
-                    git_tag = info.args[arg_idx + 1]
-                    arg_idx += 2
+                    if key == "URL":
+                        url = val
+                    elif key == "URL_HASH":
+                        url_hash = val
+                    elif key == "GIT_REPOSITORY":
+                        git_repo = val
+                    elif key == "GIT_TAG":
+                        git_tag = val
+                    elif key == "SOURCE_DIR":
+                        declared_source_dir = val
+                    else:
+                        declared_binary_dir = val
                 else:
                     arg_idx += 1
 
+            def resolve_fetch_path(path: str, cmd_line: int) -> Path:
+                expanded = ctx.expand_variables(path, strict, cmd_line)
+                resolved = Path(expanded)
+                if not resolved.is_absolute():
+                    base = Path(
+                        ctx.variables.get(
+                            "CMAKE_CURRENT_BINARY_DIR", str(ctx.build_dir)
+                        )
+                    )
+                    resolved = (base / resolved).resolve()
+                return resolved.resolve()
+
+            binary_dir = (
+                resolve_fetch_path(declared_binary_dir, fetch_cmd_line)
+                if declared_binary_dir
+                else ctx.build_dir / "_deps" / f"{name.lower()}-build"
+            )
+
+            def fetch_source_needs_populate(directory: Path) -> bool:
+                if not directory.exists():
+                    return True
+                if any(directory.iterdir()):
+                    return False
+                # Empty dirs are left behind when a previous download skipped
+                # extraction (e.g. SourceForge ``…/archive.tar.xz/download``).
+                directory.rmdir()
+                return True
+
             if url:
-                deps_dir = ctx.build_dir / "_deps"
+                if declared_source_dir:
+                    src_dir = resolve_fetch_path(declared_source_dir, fetch_cmd_line)
+                    deps_dir = src_dir.parent
+                else:
+                    deps_dir = ctx.build_dir / "_deps"
+                    src_dir = deps_dir / f"{name.lower()}-src"
                 deps_dir.mkdir(parents=True, exist_ok=True)
 
-                src_dir = deps_dir / f"{name.lower()}-src"
-
-                if not src_dir.exists():
+                if fetch_source_needs_populate(src_dir):
                     print(f"Downloading {name} from {url}")
-                    download_file = deps_dir / Path(url).name
+                    archive_name = archive_filename_from_url(url) or Path(url).name
+                    if not archive_name or archive_name in (".", "/", "download"):
+                        archive_name = f"{name.lower()}-download"
+                    download_file = deps_dir / archive_name
 
                     with Progress(
                         TextColumn("[bold blue]{task.description}"),
@@ -343,22 +400,32 @@ def process_commands(
                             )
 
                     src_dir.mkdir(parents=True, exist_ok=True)
-                    if url.endswith(".zip"):
-                        with zipfile.ZipFile(download_file, "r") as zip_ref:
-                            zip_ref.extractall(src_dir)
-                    elif url.endswith((".tar.gz", ".tgz", ".tar.xz", ".tar.bz2")):
-                        with tarfile.open(download_file, "r:*") as tar_ref:
-                            tar_ref.extractall(src_dir)
+                    try:
+                        extract_archive(download_file, src_dir)
+                        flatten_single_extracted_subdir(src_dir)
+                    except Exception:
+                        # Don't leave an empty source dir that blocks retries.
+                        with suppress(OSError):
+                            if src_dir.exists() and not any(src_dir.iterdir()):
+                                src_dir.rmdir()
+                        raise
+                    if not any(src_dir.iterdir()):
+                        with suppress(OSError):
+                            src_dir.rmdir()
+                        raise RuntimeError(
+                            f"Extracted archive for {name} from {url} into an empty directory"
+                        )
             elif git_repo:
-                deps_dir = ctx.build_dir / "_deps"
+                if declared_source_dir:
+                    src_dir = resolve_fetch_path(declared_source_dir, fetch_cmd_line)
+                    deps_dir = src_dir.parent
+                else:
+                    deps_dir = ctx.build_dir / "_deps"
+                    src_dir = deps_dir / f"{name.lower()}-src"
                 deps_dir.mkdir(parents=True, exist_ok=True)
-                src_dir = deps_dir / f"{name.lower()}-src"
 
-                if not src_dir.exists():
+                if fetch_source_needs_populate(src_dir):
                     print(f"Cloning {name} from {git_repo}")
-                    fetch_cmd_line = (
-                        frame.fetchcontent_cmd.line if frame.fetchcontent_cmd else 0
-                    )
                     try:
                         clone_cmd = ["git", "clone", git_repo, str(src_dir)]
                         subprocess.run(clone_cmd, check=True)
@@ -381,9 +448,6 @@ def process_commands(
                             )
                             sys.exit(1)
                 elif git_tag:
-                    fetch_cmd_line = (
-                        frame.fetchcontent_cmd.line if frame.fetchcontent_cmd else 0
-                    )
                     try:
                         subprocess.run(
                             ["git", "-C", str(src_dir), "checkout", git_tag], check=True
@@ -395,23 +459,17 @@ def process_commands(
                                 fetch_cmd_line,
                             )
                             sys.exit(1)
+            elif declared_source_dir:
+                src_dir = resolve_fetch_path(declared_source_dir, fetch_cmd_line)
 
-            if (url or git_repo) and src_dir is not None:
-                ctx.variables[f"{name.lower()}_SOURCE_DIR"] = str(src_dir)
-                ctx.variables[f"{name.lower()}_BINARY_DIR"] = str(
-                    ctx.build_dir / "_deps" / f"{name.lower()}-build"
-                )
-                ctx.variables[f"{name.lower()}_POPULATED"] = "TRUE"
-
+            if src_dir is not None and (url or git_repo or declared_source_dir):
                 actual_src_dir = src_dir
                 contents = [p for p in src_dir.iterdir() if not p.name.startswith(".")]
                 if len(contents) == 1 and contents[0].is_dir():
                     actual_src_dir = contents[0]
 
                 ctx.variables[f"{name.lower()}_SOURCE_DIR"] = str(actual_src_dir)
-                ctx.variables[f"{name.lower()}_BINARY_DIR"] = str(
-                    ctx.build_dir / "_deps" / f"{name.lower()}-build"
-                )
+                ctx.variables[f"{name.lower()}_BINARY_DIR"] = str(binary_dir)
                 ctx.variables[f"{name.lower()}_POPULATED"] = "TRUE"
 
                 if frame.fetchcontent_make_available:
@@ -432,9 +490,7 @@ def process_commands(
                         saved_parent_scope_vars = ctx.parent_scope_vars
                         ctx.parent_scope_vars = {}
 
-                        fc_binary_dir = (
-                            ctx.build_dir / "_deps" / f"{name.lower()}-build"
-                        )
+                        fc_binary_dir = binary_dir
                         fc_binary_dir.mkdir(parents=True, exist_ok=True)
 
                         ctx.current_source_dir = actual_src_dir
@@ -457,18 +513,14 @@ def process_commands(
                                 str, str | None
                             ] = saved_parent_scope_vars,
                         ) -> None:
-                            cache_updates = {
-                                k: v
-                                for k, v in ctx.variables.items()
-                                if k in ctx.cache_variables
-                            }
+                            cache_updates = ctx.cache_updates()
                             parent_scope_updates = ctx.parent_scope_vars
                             ctx.parent_scope_vars = saved_parent_scope_vars
                             ctx.current_source_dir = saved_current_source_dir
                             ctx.current_list_file = saved_current_list_file
                             ctx.parent_directory = saved_parent_directory
                             ctx.variables = saved_vars
-                            ctx.variables.update(cache_updates)
+                            ctx.apply_cache_updates(cache_updates)
                             for var, val in parent_scope_updates.items():
                                 if val is None:
                                     ctx.variables[var] = UNDEFINED_VAR_SENTINEL
@@ -725,22 +777,7 @@ def process_commands(
                     ctx.project_name = project_name
                     ctx.variables["PROJECT_NAME"] = project_name
                     ctx.variables["CMAKE_PROJECT_NAME"] = project_name
-                    ctx.variables["CMAKE_C_FLAGS"] = (
-                        ""  # TODO: Only set when C is enabled
-                    )
-                    ctx.variables["CMAKE_C_FLAGS_DEBUG"] = ""
-                    ctx.variables["CMAKE_C_FLAGS_RELEASE"] = ""
-                    ctx.variables["CMAKE_C_FLAGS_RELWITHDEBINFO"] = ""
-                    ctx.variables["CMAKE_C_FLAGS_MINSIZEREL"] = ""
-                    ctx.variables["CMAKE_CXX_FLAGS"] = (
-                        ""  # TODO: Only set when CXX is enabled
-                    )
-                    ctx.variables["CMAKE_CXX_FLAGS_DEBUG"] = ""
-                    ctx.variables["CMAKE_CXX_FLAGS_RELEASE"] = ""
-                    ctx.variables["CMAKE_CXX_FLAGS_RELWITHDEBINFO"] = ""
-                    ctx.variables["CMAKE_CXX_FLAGS_MINSIZEREL"] = ""
-                    ctx.variables["CMAKE_EXE_LINKER_FLAGS"] = ""
-                    ctx.variables["CMAKE_LINKER_FLAGS"] = ""
+                    init_compiler_flag_cache_vars(ctx)
                     current_binary_dir = ctx.variables.get(
                         "CMAKE_CURRENT_BINARY_DIR", str(ctx.build_dir)
                     )
@@ -748,12 +785,10 @@ def process_commands(
                     ctx.variables["PROJECT_BINARY_DIR"] = current_binary_dir
                     source_var = f"{project_name}_SOURCE_DIR"
                     binary_var = f"{project_name}_BINARY_DIR"
-                    ctx.variables[source_var] = str(ctx.current_source_dir)
-                    ctx.variables[binary_var] = current_binary_dir
                     # Keep project source/binary dirs globally visible across scopes
                     # (e.g. when project() is called in add_subdirectory()).
-                    ctx.cache_variables.add(source_var)
-                    ctx.cache_variables.add(binary_var)
+                    ctx.set_cache(source_var, str(ctx.current_source_dir))
+                    ctx.set_cache(binary_var, current_binary_dir)
 
                     if "VERSION" in args:
                         ver_idx = args.index("VERSION")
@@ -859,18 +894,14 @@ def process_commands(
                                 str, str | None
                             ] = saved_parent_scope_vars,
                         ) -> None:
-                            cache_updates = {
-                                k: v
-                                for k, v in ctx.variables.items()
-                                if k in ctx.cache_variables
-                            }
+                            cache_updates = ctx.cache_updates()
                             parent_scope_updates = ctx.parent_scope_vars
                             ctx.parent_scope_vars = saved_parent_scope_vars
                             ctx.current_source_dir = saved_current_source_dir
                             ctx.current_list_file = saved_current_list_file
                             ctx.parent_directory = saved_parent_directory
                             ctx.variables = saved_vars
-                            ctx.variables.update(cache_updates)
+                            ctx.apply_cache_updates(cache_updates)
                             for var, val in parent_scope_updates.items():
                                 if val is None:
                                     ctx.variables[var] = UNDEFINED_VAR_SENTINEL
@@ -975,6 +1006,7 @@ def process_commands(
                         "CheckCCompilerFlag",
                         "CheckCXXSymbolExists",
                         "CheckSymbolExists",
+                        "CheckIncludeFile",
                         "CheckIncludeFiles",
                         "CheckLibraryExists",
                         "CheckFunctionExists",
@@ -1608,14 +1640,21 @@ int main() {{
                             f"{colored(status_marker(found), color)} {symbol}"
                         )
 
-            case "check_include_files":
+            case "check_include_file" | "check_include_files":
+                # check_include_file(<include> <variable> [<flags>])
                 # check_include_files(<includes> <variable> [LANGUAGE <language>])
                 # <includes> may be a single semicolon-separated string or multiple args.
                 if len(args) >= 2:
-                    # Determine language (default C)
                     language = "C"
+                    extra_flags: list[str] = []
                     trimmed_args = list(args)
-                    if "LANGUAGE" in trimmed_args:
+
+                    if cmd.name.lower() == "check_include_file":
+                        # Optional third argument is compile flags (CMake CheckIncludeFile).
+                        if len(trimmed_args) >= 3:
+                            extra_flags = shlex.split(trimmed_args[2])
+                            trimmed_args = trimmed_args[:2]
+                    elif "LANGUAGE" in trimmed_args:
                         lang_idx = trimmed_args.index("LANGUAGE")
                         if lang_idx + 1 < len(trimmed_args):
                             language = trimmed_args[lang_idx + 1].upper()
@@ -1646,7 +1685,7 @@ int main() {{
                             temp_src = tmp.name
                         temp_out = temp_src.replace(suffix, "")
                         result = subprocess.run(
-                            [compiler, "-o", temp_out, temp_src],
+                            [compiler, *extra_flags, "-o", temp_out, temp_src],
                             capture_output=True,
                             text=True,
                             check=False,
@@ -1742,6 +1781,9 @@ int main() {{
             case "target_compile_options":
                 handle_target_compile_options(ctx, cmd, args, strict)
 
+            case "target_precompile_headers":
+                handle_target_precompile_headers(ctx, cmd, args, strict)
+
             case "include_directories":
                 handle_include_directories(ctx, cmd, args, strict)
 
@@ -1792,14 +1834,14 @@ int main() {{
                         )
                     )
                     output_path = current_binary_dir / output_path
-                output_path.parent.mkdir(parents=True, exist_ok=True)
-                output_path.write_text(
+                write_if_changed(
+                    output_path,
                     _render_basic_package_version_file(
                         version,
                         compatibility,
                         arch_independent,
                         ctx,
-                    )
+                    ),
                 )
 
             case "file":
@@ -2302,6 +2344,10 @@ int main() {{
                                     file_props.compile_definitions.extend(
                                         expanded_values
                                     )
+                                elif prop_name == "SKIP_PRECOMPILE_HEADERS":
+                                    file_props.skip_precompile_headers = is_truthy(
+                                        ";".join(expanded_values)
+                                    )
                             else:
                                 ctx.print_warning(
                                     f"property '{prop_name}' has no value",
@@ -2325,90 +2371,7 @@ int main() {{
                 handle_find_library(ctx, cmd, args)
 
             case "find_package_handle_standard_args":
-                # Minimal implementation modeled after CMake's
-                # FindPackageHandleStandardArgs. Supports the signatures used in
-                # our tests and in common Find<Package>.cmake modules.
-                if not args:
-                    frame.pc += 1
-                    continue
-
-                pkg_name = args[0]
-                extended_keywords = {
-                    "REQUIRED_VARS",
-                    "FOUND_VAR",
-                    "HANDLE_COMPONENTS",
-                    "CONFIG_MODE",
-                    "FAIL_MESSAGE",
-                    "REQUIRED_VERSIONS",
-                    "NAME_MISMATCHED",
-                    "REASON_FAILURE_MESSAGE",
-                    "VERSION_VAR",
-                }
-                # Basic signature:
-                #   find_package_handle_standard_args(Pkg DEFAULT_MSG VAR1 VAR2 ...)
-                # Detected when arg[1] is not an extended-signature keyword.
-                is_basic = len(args) >= 3 and args[1] not in extended_keywords
-                if is_basic:
-                    required_vars = args[2:]
-                    found = True
-                    for var in required_vars:
-                        value = ctx.variables.get(var, "")
-                        if not value or value.endswith("-NOTFOUND"):
-                            found = False
-                            break
-                    ctx.variables[f"{pkg_name}_FOUND"] = "TRUE" if found else "FALSE"
-
-                # Extended signature:
-                #   find_package_handle_standard_args(Pkg
-                #       REQUIRED_VARS VAR1 VAR2 ...
-                #       FOUND_VAR <var-name>
-                #       [...])
-                required_vars_ext: list[str] = []
-                found_var_name = ""
-                idx_fph = 1
-                while idx_fph < len(args):
-                    token = args[idx_fph]
-                    if token == "REQUIRED_VARS":
-                        idx_fph += 1
-                        while (
-                            idx_fph < len(args)
-                            and args[idx_fph] not in extended_keywords
-                        ):
-                            required_vars_ext.append(args[idx_fph])
-                            idx_fph += 1
-                        continue
-                    if token == "FOUND_VAR" and idx_fph + 1 < len(args):
-                        found_var_name = args[idx_fph + 1]
-                        idx_fph += 2
-                        continue
-                    idx_fph += 1
-
-                if required_vars_ext:
-                    found_ext = True
-                    for var in required_vars_ext:
-                        value = ctx.variables.get(var, "")
-                        if not value or value.endswith("-NOTFOUND"):
-                            found_ext = False
-                            break
-                    if found_var_name:
-                        ctx.variables[found_var_name] = "TRUE" if found_ext else "FALSE"
-                    # If no basic signature was used, also populate <Pkg>_FOUND.
-                    if f"{pkg_name}_FOUND" not in ctx.variables:
-                        ctx.variables[f"{pkg_name}_FOUND"] = (
-                            "TRUE" if found_ext else "FALSE"
-                        )
-
-                # If the package was required and not found, fail the configure step.
-                pkg_required_var = f"{pkg_name}_FIND_REQUIRED"
-                if (
-                    ctx.variables.get(pkg_required_var) == "TRUE"
-                    and ctx.variables.get(f"{pkg_name}_FOUND") != "TRUE"
-                ):
-                    ctx.print_error(
-                        f"could not find package: {pkg_name}",
-                        cmd.line,
-                    )
-                    raise SystemExit(1)
+                handle_find_package_handle_standard_args(ctx, cmd, args)
 
             case "install":
                 if len(args) >= 2 and args[0] == "TARGETS":
@@ -2579,6 +2542,7 @@ int main() {{
                         if found_file:
                             from .parser import parse_file
 
+                            setup_find_module_request(ctx, package_name, args)
                             ctx.record_cmake_file(found_file)
                             find_commands = parse_file(found_file)
 
@@ -3310,11 +3274,7 @@ int main() {{
                             str, str | None
                         ] = saved_parent_scope_vars,
                     ) -> None:
-                        cache_updates = {
-                            k: v
-                            for k, v in ctx.variables.items()
-                            if k in ctx.cache_variables
-                        }
+                        cache_updates = ctx.cache_updates()
                         for var_name, var_value in ctx.parent_scope_vars.items():
                             if var_value is None:
                                 saved_vars[var_name] = UNDEFINED_VAR_SENTINEL
@@ -3325,7 +3285,7 @@ int main() {{
                         ctx.current_list_file = saved_current_list_file
                         ctx.parent_directory = saved_parent_directory
                         ctx.variables = saved_vars
-                        ctx.variables.update(cache_updates)
+                        ctx.apply_cache_updates(cache_updates)
                         ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = str(
                             saved_current_source_dir
                         )

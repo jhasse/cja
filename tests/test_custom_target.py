@@ -1,5 +1,6 @@
 """Tests for add_custom_target support."""
 
+import re
 from pathlib import Path
 
 from cja.generator import BuildContext, process_commands
@@ -303,3 +304,41 @@ add_custom_target(
 
     assert "$builddir/myapp" in ninja_content
     assert "TARGET_FILE" not in ninja_content
+
+
+def test_add_custom_target_target_file_with_working_directory(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """$<TARGET_FILE:...> and the stamp must stay valid after a WORKING_DIRECTORY cd."""
+    from cja.generator import configure
+
+    cmake_content = """\
+cmake_minimum_required(VERSION 3.10)
+project(TargetFileWorkingDirTest)
+
+add_executable(myapp main.c)
+
+add_custom_target(
+    run_app
+    COMMAND env FOO=1 $<TARGET_FILE:myapp> --flag
+    DEPENDS myapp
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    VERBATIM
+)
+"""
+    (tmp_path / "CMakeLists.txt").write_text(cmake_content)
+    (tmp_path / "main.c").write_text("int main() { return 0; }\n")
+
+    # The CLI passes a relative source dir, so build paths must still end up absolute
+    monkeypatch.chdir(tmp_path)
+    configure(Path("."), "build")
+
+    # Join ninja's "$\n" line continuations
+    ninja_content = re.sub(r"\$\n *", "", (tmp_path / "build.ninja").read_text())
+    build_dir = (tmp_path / "build").as_posix()
+
+    cmd_line = next(line for line in ninja_content.splitlines() if "--flag" in line)
+    assert cmd_line.strip().startswith("cmd = cd build && ")
+    assert f"{build_dir}/myapp" in cmd_line
+    assert "'$builddir/myapp'" not in cmd_line
+    assert cmd_line.endswith(f"&& touch {build_dir}/run_app.stamp")

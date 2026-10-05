@@ -1,5 +1,6 @@
 """Tests for configure_file command."""
 
+import os
 from pathlib import Path
 
 from cja.generator import BuildContext, process_commands
@@ -158,3 +159,27 @@ def test_configure_file_undefined_vars_warn_in_strict(
     assert "warning:" in captured.err
     assert "undefined variable referenced: MISSING_A" in captured.err
     assert "undefined variable referenced: MISSING_B" in captured.err
+
+
+def test_configure_file_keeps_mtime_when_unchanged(tmp_path: Path) -> None:
+    """configure_file should only rewrite the output when its content changes."""
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / "config.in").write_text("A=${FOO}\r\nB=2\r\n")
+    out = tmp_path / "build" / "config.out"
+    commands = [Command(name="configure_file", args=["config.in", "config.out"], line=1)]
+
+    def configure(foo: str) -> None:
+        ctx = BuildContext(source_dir=src_dir, build_dir=tmp_path / "build")
+        ctx.variables["FOO"] = foo
+        process_commands(commands, ctx)
+
+    configure("hello")
+    os.utime(out, ns=(0, 0))
+
+    configure("hello")
+    assert out.stat().st_mtime_ns == 0
+
+    configure("world")
+    assert out.stat().st_mtime_ns != 0
+    assert out.read_bytes().startswith(b"A=world")

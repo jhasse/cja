@@ -56,9 +56,14 @@ Limitations to keep cja simple:
 
 cja supports a `build` subcommand, which runs `ninja` automatically afterward.
 
-### `cja build --release`
+### `cja --release` / `cja build --release`
 
-Equivalent to calling:
+`cja --release` is equivalent to:
+```sh
+cja -Bbuild-release -DCMAKE_BUILD_TYPE=Release
+```
+
+`cja build --release` additionally runs ninja:
 ```sh
 cja -Bbuild-release -DCMAKE_BUILD_TYPE=Release
 ninja -f build-release.ninja

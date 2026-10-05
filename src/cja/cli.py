@@ -11,7 +11,7 @@ from pathlib import Path
 from termcolor import colored
 
 from . import __version__
-from .generator import configure, run_script
+from .generator import configure, run_script, verify_globs
 
 
 def _get_version() -> str:
@@ -35,10 +35,16 @@ def parse_define(value: str) -> tuple[str, str]:
 def cmd_configure(args: argparse.Namespace) -> int:
     """Run the configure command."""
     source_dir = Path(".")
-    build_dir = args.build_dir
 
-    # Parse -D arguments into variables dict
-    variables: dict[str, str] = {}
+    # Determine build directory and variables based on --release flag
+    if args.release:
+        build_dir = "build-release"
+        variables: dict[str, str] = {"CMAKE_BUILD_TYPE": "Release"}
+    else:
+        build_dir = args.build_dir
+        variables = {}
+
+    # Parse -D arguments into variables dict (-D can override --release settings)
     for define in args.defines:
         name, value = parse_define(define)
         variables[name] = value
@@ -127,6 +133,11 @@ def cmd_run(args: argparse.Namespace) -> int:
                 error_label = colored("error:", "red", attrs=["bold"])
                 print(f"{error_label} Parse error: {e}", file=sys.stderr)
             return 1
+
+    if not cja_json_path.exists():
+        error_label = colored("error:", "red", attrs=["bold"])
+        print(f"{error_label} No executable target to run", file=sys.stderr)
+        return 1
 
     cja_config = json.loads(cja_json_path.read_text())
     exe_path = cja_config["run_executable"]
@@ -334,6 +345,12 @@ def main() -> int:
     )
 
     parser.add_argument(
+        "--release",
+        action="store_true",
+        help="Configure in release mode (CMAKE_BUILD_TYPE=Release)",
+    )
+
+    parser.add_argument(
         "-E",
         nargs="+",
         metavar="command",
@@ -356,13 +373,22 @@ def main() -> int:
         help=argparse.SUPPRESS,
     )
 
+    parser.add_argument(
+        "--verify-globs",
+        nargs=2,
+        metavar=("MANIFEST", "STAMP"),
+        help=argparse.SUPPRESS,
+    )
+
     # Build subcommand
+    # default=SUPPRESS so `cja --release build` keeps the parent flag
     build_parser = subparsers.add_parser(
         "build", help="Configure and build the project"
     )
     build_parser.add_argument(
         "--release",
         action="store_true",
+        default=argparse.SUPPRESS,
         help="Build in release mode (CMAKE_BUILD_TYPE=Release)",
     )
 
@@ -371,6 +397,7 @@ def main() -> int:
     test_parser.add_argument(
         "--release",
         action="store_true",
+        default=argparse.SUPPRESS,
         help="Run tests in release mode (CMAKE_BUILD_TYPE=Release)",
     )
 
@@ -381,6 +408,7 @@ def main() -> int:
     run_parser.add_argument(
         "--release",
         action="store_true",
+        default=argparse.SUPPRESS,
         help="Run in release mode (CMAKE_BUILD_TYPE=Release)",
     )
 
@@ -406,6 +434,10 @@ def main() -> int:
     try:
         if args.E:
             return cmd_command_mode(args.E)
+
+        if args.verify_globs:
+            manifest, stamp = args.verify_globs
+            return verify_globs(Path(manifest), Path(stamp))
 
         if script_path is not None:
             return cmd_script(

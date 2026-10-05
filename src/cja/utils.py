@@ -1,10 +1,93 @@
+import os
 import re
+import shlex
+import shutil
 import sys
+import tarfile
+import zipfile
+from collections.abc import Iterable
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 _DRIVE_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
 _UNC_PATH_RE = re.compile(r"^[\\/]{2}[^\\/]+[\\/][^\\/]+")
 UNDEFINED_VAR_SENTINEL = "__CJA_UNDEFINED_VAR__"
+
+# Longest suffixes first so ".tar.gz" wins over ".gz".
+_ARCHIVE_SUFFIXES = (
+    ".tar.gz",
+    ".tar.xz",
+    ".tar.bz2",
+    ".tgz",
+    ".zip",
+)
+
+
+def archive_filename_from_url(url: str) -> str | None:
+    """Return an archive basename embedded in *url*, if recognizable.
+
+    Walks path segments from the end so mirrors that append a meaningless
+    segment (e.g. SourceForge's ``…/foo.tar.xz/download``) still resolve.
+    """
+    path = unquote(urlparse(url).path)
+    for part in reversed(path.strip("/").split("/")):
+        lower = part.lower()
+        if any(lower.endswith(suffix) for suffix in _ARCHIVE_SUFFIXES):
+            return part
+    return None
+
+
+def extract_archive(archive: Path, destination: Path) -> None:
+    """Extract a zip or tar archive into *destination*.
+
+    Format is taken from the filename when possible; otherwise zip/tar are
+    probed from the file contents so URLs without a normal extension still work.
+    """
+    name = archive.name.lower()
+    if name.endswith(".zip"):
+        with zipfile.ZipFile(archive, "r") as zip_ref:
+            zip_ref.extractall(destination)
+        return
+    if name.endswith((".tar.gz", ".tgz", ".tar.xz", ".tar.bz2", ".tar")):
+        with tarfile.open(archive, "r:*") as tar_ref:
+            tar_ref.extractall(destination)
+        return
+
+    if zipfile.is_zipfile(archive):
+        with zipfile.ZipFile(archive, "r") as zip_ref:
+            zip_ref.extractall(destination)
+        return
+    try:
+        with tarfile.open(archive, "r:*") as tar_ref:
+            tar_ref.extractall(destination)
+        return
+    except tarfile.TarError as exc:
+        raise RuntimeError(
+            f"Could not extract archive {archive}: unrecognized format"
+        ) from exc
+
+
+def flatten_single_extracted_subdir(directory: Path) -> None:
+    """Hoist a lone top-level directory after archive extraction.
+
+    Many upstream tarballs ship as ``name-version/…``; CMake and CPM expect
+    ``SOURCE_DIR`` to contain the project root directly so cache hits work.
+    """
+    if (directory / "CMakeLists.txt").exists():
+        return
+    contents = [p for p in directory.iterdir() if not p.name.startswith(".")]
+    if len(contents) != 1 or not contents[0].is_dir():
+        return
+    nested = contents[0]
+    for item in nested.iterdir():
+        dest = directory / item.name
+        if dest.exists():
+            if dest.is_dir():
+                shutil.rmtree(dest)
+            else:
+                dest.unlink()
+        shutil.move(str(item), str(dest))
+    nested.rmdir()
 
 
 def status_marker(success: bool | None) -> str:
@@ -73,9 +156,84 @@ def cmake_regex_to_python(pattern: str) -> str:
     return "".join(result)
 
 
+def write_if_changed(path: Path, content: str) -> None:
+    """Write ``content`` to ``path`` unless the file already holds it.
+
+    Like CMake's copy-if-different: an unchanged generated file keeps its
+    mtime, so regenerating doesn't force everything that depends on it to
+    rebuild.
+    """
+    # Compare against what write_text() would put on disk (text mode turns
+    # "\n" into os.linesep); read without newline translation so CRLF content
+    # compares correctly.
+    expected = content if os.linesep == "\n" else content.replace("\n", os.linesep)
+    try:
+        with path.open(newline="") as f:
+            if f.read() == expected:
+                return
+    except (OSError, UnicodeDecodeError):
+        pass
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+
+
 def to_posix_path(path: str | Path) -> str:
     """Normalize path separators to forward slashes."""
     return str(path).replace("\\", "/")
+
+
+def split_flags(value: str) -> list[str]:
+    """Split a stored flag string (e.g. ``ImportedTarget.libs``) into tokens.
+
+    The format is shell-like: tokens are separated by whitespace and may be
+    single- or double-quoted.  On Windows a backslash is an ordinary path
+    character, so (unlike ``shlex.split``) it never acts as an escape there.
+    """
+    if sys.platform != "win32":
+        try:
+            return shlex.split(value)
+        except ValueError:
+            return value.split()
+    tokens: list[str] = []
+    current: list[str] = []
+    quote = ""
+    has_token = False
+    for ch in value:
+        if quote:
+            if ch == quote:
+                quote = ""
+            else:
+                current.append(ch)
+        elif ch in "'\"":
+            quote = ch
+            has_token = True
+        elif ch.isspace():
+            if current or has_token:
+                tokens.append("".join(current))
+                current = []
+                has_token = False
+        else:
+            current.append(ch)
+    if current or has_token:
+        tokens.append("".join(current))
+    return tokens
+
+
+def join_flags(tokens: Iterable[str]) -> str:
+    """Join flag tokens into a stored flag string, dropping duplicates.
+
+    Tokens that contain whitespace (e.g. ``C:/Program Files/...``) are quoted
+    so :func:`split_flags` round-trips them.  On Windows, tokens without
+    whitespace or quote characters are kept verbatim so backslashes in paths
+    survive.
+    """
+
+    def quote(token: str) -> str:
+        if sys.platform == "win32" and token and not re.search(r"""[\s'"]""", token):
+            return token
+        return shlex.quote(token)
+
+    return " ".join(dict.fromkeys(quote(t) for t in tokens))
 
 
 def is_cmake_absolute_path(path_str: str) -> bool:
@@ -115,6 +273,13 @@ def make_relative(path_str: str, root: Path) -> str:
     if not Path(path_str).is_absolute():
         return to_posix_path(path_str)
     return path_str
+
+
+def is_verbatim_include(header: str) -> bool:
+    """Check if a precompile header entry is an include spec like <x> or "x"."""
+    return (header.startswith("<") and header.endswith(">")) or (
+        len(header) >= 2 and header.startswith('"') and header.endswith('"')
+    )
 
 
 def is_truthy(value: str) -> bool:

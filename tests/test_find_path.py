@@ -27,7 +27,7 @@ def test_find_path_basic(tmp_path: Path) -> None:
 
     process_commands(commands, ctx)
 
-    assert ctx.variables["MY_HEADER_PATH"] == str(include_dir.absolute())
+    assert ctx.variables["MY_HEADER_PATH"] == include_dir.absolute().as_posix()
 
 
 def test_find_path_with_names(tmp_path: Path) -> None:
@@ -56,7 +56,7 @@ def test_find_path_with_names(tmp_path: Path) -> None:
 
     process_commands(commands, ctx)
 
-    assert ctx.variables["MY_HEADER_PATH"] == str(include_dir.absolute())
+    assert ctx.variables["MY_HEADER_PATH"] == include_dir.absolute().as_posix()
 
 
 def test_find_path_with_suffixes(tmp_path: Path) -> None:
@@ -87,7 +87,7 @@ def test_find_path_with_suffixes(tmp_path: Path) -> None:
 
     process_commands(commands, ctx)
 
-    assert ctx.variables["FOO_PATH"] == str(include_dir.absolute())
+    assert ctx.variables["FOO_PATH"] == include_dir.absolute().as_posix()
 
 
 def test_find_path_not_found(tmp_path: Path) -> None:
@@ -142,7 +142,7 @@ def test_find_path_uses_cmake_prefix_path(tmp_path: Path) -> None:
 
     process_commands(commands, ctx)
 
-    assert ctx.variables["PREF_HEADER_PATH"] == str(include_dir.absolute())
+    assert ctx.variables["PREF_HEADER_PATH"] == include_dir.absolute().as_posix()
 
 
 def test_find_path_persists_from_function_scope(tmp_path: Path) -> None:
@@ -166,7 +166,7 @@ def test_find_path_persists_from_function_scope(tmp_path: Path) -> None:
 
     process_commands(commands, ctx)
 
-    assert ctx.variables["INNER_HEADER_PATH"] == str(include_dir.absolute())
+    assert ctx.variables["INNER_HEADER_PATH"] == include_dir.absolute().as_posix()
 
 
 def test_find_path_skips_when_already_set(tmp_path: Path) -> None:
@@ -185,3 +185,25 @@ def test_find_path_skips_when_already_set(tmp_path: Path) -> None:
     process_commands(commands, ctx)
 
     assert ctx.variables["MY_HEADER_PATH"] == "/preset/include"
+
+
+def test_find_path_searches_again_after_notfound(tmp_path: Path) -> None:
+    """A NOTFOUND cache entry doesn't stop a later search, like in CMake."""
+    (tmp_path / "inc").mkdir()
+    (tmp_path / "inc" / "foo.h").touch()
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    commands = [
+        Command(name="find_path", args=["H", "foo.h", "PATHS", "/nonexistent"], line=1),
+        Command(
+            name="find_path", args=["H", "foo.h", "PATHS", str(tmp_path / "inc")], line=2
+        ),
+        Command(
+            name="find_path",
+            args=["N", "foo.h", "PATHS", str(tmp_path / "inc"), "NO_CACHE"],
+            line=3,
+        ),
+    ]
+    process_commands(commands, ctx)
+    assert ctx.variables["H"] == (tmp_path / "inc").absolute().as_posix()
+    assert ctx.variables["N"] == (tmp_path / "inc").absolute().as_posix()
+    assert "N" not in ctx.cache_values

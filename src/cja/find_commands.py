@@ -7,17 +7,40 @@ The richer ``find_package`` command lives in :mod:`cja.find_package`.
 import os
 import platform
 import shutil
+from collections.abc import Iterator
 from pathlib import Path
 
 from .build_context import BuildContext
 from .parser import Command
-from .utils import split_unquoted_list_args
+from .utils import UNDEFINED_VAR_SENTINEL, split_unquoted_list_args, to_posix_path
+
+
+def _pop_find_options(args: list[str]) -> tuple[list[str], bool, bool, bool]:
+    """Strip the flag-like options shared by the find_* commands.
+
+    Returns ``(args, no_cache, no_default_path, names_per_dir)``.
+    """
+    options = {"NO_CACHE", "NO_DEFAULT_PATH", "NAMES_PER_DIR"}
+    remaining = [arg for arg in args if arg not in options]
+    return (
+        remaining,
+        "NO_CACHE" in args,
+        "NO_DEFAULT_PATH" in args,
+        "NAMES_PER_DIR" in args,
+    )
 
 
 def _search_dirs_with_defaults(
-    ctx: BuildContext, kind: str, hints: list[str], paths: list[str]
+    ctx: BuildContext,
+    kind: str,
+    hints: list[str],
+    paths: list[str],
+    no_default_path: bool = False,
 ) -> list[str]:
-    """Build search dirs in CMake-like order: hints, paths, then defaults."""
+    """Build search dirs in CMake-like order: hints, paths, then defaults.
+
+    With ``no_default_path`` only the explicit hints and paths are searched.
+    """
     dirs: list[str] = []
     seen: set[str] = set()
 
@@ -38,6 +61,9 @@ def _search_dirs_with_defaults(
         add_dir(d)
     for d in paths:
         add_dir(d)
+
+    if no_default_path:
+        return dirs
 
     cmake_prefix_path = ctx.variables.get("CMAKE_PREFIX_PATH", "")
     for prefix in (
@@ -87,6 +113,24 @@ def _search_dirs_with_defaults(
             add_dir("/lib64")
 
     return dirs
+
+
+def _name_dir_pairs(
+    names: list[str], search_dirs: list[str], names_per_dir: bool
+) -> Iterator[tuple[str, str]]:
+    """Yield ``(name, directory)`` candidates in CMake's search order.
+
+    By default every directory is tried for the first name before moving on to
+    the next name; ``NAMES_PER_DIR`` flips that to all names per directory.
+    """
+    if names_per_dir:
+        for d in search_dirs:
+            for name in names:
+                yield name, d
+    else:
+        for name in names:
+            for d in search_dirs:
+                yield name, d
 
 
 def _parse_find_args(
@@ -174,11 +218,32 @@ def _parse_find_args(
 
 
 def _is_already_resolved(ctx: BuildContext, var_name: str) -> bool:
-    """Return True if a cache var has already been resolved to a non-NOTFOUND value."""
-    existing = ctx.variables.get(var_name, "")
-    return var_name in ctx.cache_variables or (
-        bool(existing) and not existing.endswith("-NOTFOUND")
-    )
+    """Return True if the variable is set to a non-NOTFOUND value, so the search is skipped.
+
+    Like CMake, this looks at the visible value (normal or cache) and treats an
+    empty value as found.
+    """
+    existing = ctx.variables.get(var_name)
+    if existing is None or existing == UNDEFINED_VAR_SENTINEL:
+        return False
+    return existing != "NOTFOUND" and not existing.endswith("-NOTFOUND")
+
+
+def _store_find_result(
+    ctx: BuildContext, var_name: str, value: str, no_cache: bool
+) -> None:
+    """Store a find result in the cache, or as a normal variable with NO_CACHE.
+
+    Like CMake, found paths always use forward slashes, even on Windows.
+    """
+    value = to_posix_path(value)
+    if no_cache:
+        ctx.variables[var_name] = value
+        return
+    ctx.set_cache(var_name, value)
+    # CMake also updates an existing normal binding (CMP0125 NEW)
+    if var_name in ctx.variables.normal_bindings:
+        ctx.variables[var_name] = value
 
 
 def handle_find_program(ctx: BuildContext, cmd: Command, args: list[str]) -> None:
@@ -187,7 +252,9 @@ def handle_find_program(ctx: BuildContext, cmd: Command, args: list[str]) -> Non
         return
 
     var_name = args[0]
-    ctx.cache_variables.add(var_name)
+    if _is_already_resolved(ctx, var_name):
+        return
+    no_cache = "NO_CACHE" in args
     # Parse arguments: find_program(VAR name1 [name2...] [NAMES name1...] [REQUIRED])
     names: list[str] = []
     required = False
@@ -219,9 +286,9 @@ def handle_find_program(ctx: BuildContext, cmd: Command, args: list[str]) -> Non
             break
 
     if found_path:
-        ctx.variables[var_name] = found_path
+        _store_find_result(ctx, var_name, found_path, no_cache)
     else:
-        ctx.variables[var_name] = f"{var_name}-NOTFOUND"
+        _store_find_result(ctx, var_name, f"{var_name}-NOTFOUND", no_cache)
         if required:
             raise FileNotFoundError(f"Could not find program: {' or '.join(names)}")
 
@@ -234,29 +301,28 @@ def handle_find_path(ctx: BuildContext, cmd: Command, args: list[str]) -> None:
     var_name = args[0]
     if _is_already_resolved(ctx, var_name):
         return
-    ctx.cache_variables.add(var_name)
+    args, no_cache, no_default_path, names_per_dir = _pop_find_options(args)
 
     names, paths, hints, suffixes, required = _parse_find_args(args)
 
-    search_dirs = _search_dirs_with_defaults(ctx, "path", hints, paths)
+    search_dirs = _search_dirs_with_defaults(
+        ctx, "path", hints, paths, no_default_path
+    )
 
     found_dir = None
-    for name in names:
-        for d in search_dirs:
-            for suffix in [""] + suffixes:
-                base_path = Path(d) / suffix
-                if (base_path / name).exists():
-                    found_dir = str(base_path.absolute())
-                    break
-            if found_dir:
+    for name, d in _name_dir_pairs(names, search_dirs, names_per_dir):
+        for suffix in [""] + suffixes:
+            base_path = Path(d) / suffix
+            if (base_path / name).exists():
+                found_dir = str(base_path.absolute())
                 break
         if found_dir:
             break
 
     if found_dir:
-        ctx.variables[var_name] = found_dir
+        _store_find_result(ctx, var_name, found_dir, no_cache)
     else:
-        ctx.variables[var_name] = f"{var_name}-NOTFOUND"
+        _store_find_result(ctx, var_name, f"{var_name}-NOTFOUND", no_cache)
         if required:
             raise FileNotFoundError(f"Could not find path for: {', '.join(names)}")
 
@@ -272,31 +338,80 @@ def handle_find_file(ctx: BuildContext, cmd: Command, args: list[str]) -> None:
     var_name = args[0]
     if _is_already_resolved(ctx, var_name):
         return
-    ctx.cache_variables.add(var_name)
+    args, no_cache, no_default_path, names_per_dir = _pop_find_options(args)
 
     names, paths, hints, suffixes, required = _parse_find_args(args)
 
-    search_dirs = _search_dirs_with_defaults(ctx, "path", hints, paths)
+    search_dirs = _search_dirs_with_defaults(
+        ctx, "path", hints, paths, no_default_path
+    )
 
     found_file = None
-    for name in names:
-        for d in search_dirs:
-            for suffix in [""] + suffixes:
-                candidate = Path(d) / suffix / name
-                if candidate.exists():
-                    found_file = str(candidate.absolute())
-                    break
-            if found_file:
+    for name, d in _name_dir_pairs(names, search_dirs, names_per_dir):
+        for suffix in [""] + suffixes:
+            candidate = Path(d) / suffix / name
+            if candidate.exists():
+                found_file = str(candidate.absolute())
                 break
         if found_file:
             break
 
     if found_file:
-        ctx.variables[var_name] = found_file
+        _store_find_result(ctx, var_name, found_file, no_cache)
     else:
-        ctx.variables[var_name] = f"{var_name}-NOTFOUND"
+        _store_find_result(ctx, var_name, f"{var_name}-NOTFOUND", no_cache)
         if required:
             raise FileNotFoundError(f"Could not find file for: {', '.join(names)}")
+
+
+def _library_extensions(ctx: BuildContext) -> list[str]:
+    """Return the library file suffixes to try, in order of preference.
+
+    ``CMAKE_FIND_LIBRARY_SUFFIXES`` (e.g. set to ``.a`` by Find modules that
+    prefer static libraries) overrides the platform defaults.
+    """
+    configured = ctx.variables.get("CMAKE_FIND_LIBRARY_SUFFIXES", "")
+    if configured and configured != UNDEFINED_VAR_SENTINEL:
+        return [s for s in split_unquoted_list_args(configured) if s]
+    if platform.system() == "Darwin":
+        return [".dylib", ".tbd", ".a"]
+    if platform.system() == "Windows":
+        return [".lib", ".dll.a", ".a"]
+    return [".so", ".a"]
+
+
+def _find_library_file(
+    search_dirs: list[str],
+    suffixes: list[str],
+    extensions: list[str],
+    name: str,
+) -> str | None:
+    """Look for the library ``name`` (or a framework) in ``search_dirs``."""
+    if platform.system() == "Darwin":
+        framework_name = name if name.endswith(".framework") else f"{name}.framework"
+        for d in search_dirs:
+            for suffix in [""] + suffixes:
+                framework_path = Path(d) / suffix / framework_name
+                if framework_path.exists():
+                    return str(framework_path.absolute())
+
+    lib_filenames: list[str] = []
+    if name.startswith("lib") and name.endswith((".a", ".so", ".dylib")):
+        lib_filenames.append(name)
+    else:
+        for ext in extensions:
+            lib_filenames.append(f"lib{name}{ext}")
+            if platform.system() == "Windows":
+                lib_filenames.append(f"{name}{ext}")
+
+    for d in search_dirs:
+        for suffix in [""] + suffixes:
+            base_path = Path(d) / suffix
+            for filename in lib_filenames:
+                candidate = base_path / filename
+                if candidate.exists():
+                    return str(candidate.absolute())
+    return None
 
 
 def handle_find_library(ctx: BuildContext, cmd: Command, args: list[str]) -> None:
@@ -307,13 +422,13 @@ def handle_find_library(ctx: BuildContext, cmd: Command, args: list[str]) -> Non
     var_name = args[0]
     if _is_already_resolved(ctx, var_name):
         return
-    ctx.cache_variables.add(var_name)
+    args, no_cache, no_default_path, names_per_dir = _pop_find_options(args)
 
     names, paths, hints, suffixes, required = _parse_find_args(args)
 
-    search_dirs = _search_dirs_with_defaults(ctx, "lib", hints, paths)
+    search_dirs = _search_dirs_with_defaults(ctx, "lib", hints, paths, no_default_path)
 
-    if platform.system() == "Darwin":
+    if platform.system() == "Darwin" and not no_default_path:
         default_framework_dirs = [
             "/System/Library/Frameworks",
             "/Library/Frameworks",
@@ -322,58 +437,26 @@ def handle_find_library(ctx: BuildContext, cmd: Command, args: list[str]) -> Non
             if d not in search_dirs:
                 search_dirs.append(d)
 
-    if platform.system() == "Darwin":
-        extensions = [".dylib", ".tbd", ".a"]
-    elif platform.system() == "Windows":
-        extensions = [".lib", ".dll.a", ".a"]
-    else:
-        extensions = [".so", ".a"]
+    extensions = _library_extensions(ctx)
 
-    found_lib = None
-    for name in names:
-        if platform.system() == "Darwin":
-            framework_name = (
-                name if name.endswith(".framework") else f"{name}.framework"
-            )
-            for d in search_dirs:
-                for suffix in [""] + suffixes:
-                    base_path = Path(d) / suffix
-                    framework_path = base_path / framework_name
-                    if framework_path.exists():
-                        found_lib = str(framework_path.absolute())
-                        break
-                if found_lib:
-                    break
-            if found_lib:
-                break
-
-        lib_filenames: list[str] = []
-        if name.startswith("lib") and name.endswith((".a", ".so", ".dylib")):
-            lib_filenames.append(name)
-        else:
-            for ext in extensions:
-                lib_filenames.append(f"lib{name}{ext}")
-                if platform.system() == "Windows":
-                    lib_filenames.append(f"{name}{ext}")
-
+    found_lib: str | None = None
+    if names_per_dir:
         for d in search_dirs:
-            for suffix in [""] + suffixes:
-                base_path = Path(d) / suffix
-                for filename in lib_filenames:
-                    candidate = base_path / filename
-                    if candidate.exists():
-                        found_lib = str(candidate.absolute())
-                        break
+            for name in names:
+                found_lib = _find_library_file([d], suffixes, extensions, name)
                 if found_lib:
                     break
             if found_lib:
                 break
-        if found_lib:
-            break
+    else:
+        for name in names:
+            found_lib = _find_library_file(search_dirs, suffixes, extensions, name)
+            if found_lib:
+                break
 
     if found_lib:
-        ctx.variables[var_name] = found_lib
+        _store_find_result(ctx, var_name, found_lib, no_cache)
     else:
-        ctx.variables[var_name] = f"{var_name}-NOTFOUND"
+        _store_find_result(ctx, var_name, f"{var_name}-NOTFOUND", no_cache)
         if required:
             raise FileNotFoundError(f"Could not find library: {', '.join(names)}")

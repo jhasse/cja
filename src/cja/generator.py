@@ -16,10 +16,21 @@ from termcolor import colored
 from .build_context import (
     BuildContext,
 )
+from .commands import evaluate_glob, glob_watch_dirs
 from .configurator import process_commands
 from .ninja_syntax import Writer
 from .parser import Command
-from .utils import is_truthy, make_relative, strip_generator_expressions, to_posix_path
+from .targets import Executable, Library
+from .utils import (
+    is_truthy,
+    is_verbatim_include,
+    make_relative,
+    resolve_cmake_path,
+    split_flags,
+    strip_generator_expressions,
+    to_posix_path,
+    write_if_changed,
+)
 
 
 def _quote_ninja_cmd_part(part: str) -> str:
@@ -38,6 +49,18 @@ def _quote_ninja_cmd_part(part: str) -> str:
             return f'"{escaped}"'
         return normalized
     return shlex.quote(part)
+
+
+def _format_imported_flags(flags: str) -> str:
+    """Prepare an ImportedTarget flag string for a Ninja command line.
+
+    Imported flags are stored as a shell-like string.  Only when it contains
+    quotes (i.e. a path with spaces) do the tokens need re-quoting for the
+    target platform; otherwise the string is used verbatim.
+    """
+    if "'" not in flags and '"' not in flags:
+        return flags
+    return " ".join(_quote_if_spaced(token) for token in split_flags(flags))
 
 
 def _infer_compiler_id(compiler: str) -> str:
@@ -167,6 +190,63 @@ def _resolve_cja_cmd() -> list[str]:
     return cmd
 
 
+VERIFY_GLOBS_MANIFEST = "CMakeFiles/VerifyGlobs.json"
+VERIFY_GLOBS_STAMP = "CMakeFiles/cja.verify_globs"
+
+
+def _write_verify_globs(ctx: BuildContext) -> None:
+    """Record CONFIGURE_DEPENDS glob results for ``cja --verify-globs``.
+
+    The stamp is written too, before build.ninja, so it isn't newer than
+    build.ninja and a fresh configure doesn't trigger a reconfigure.
+    """
+    manifest = ctx.build_dir / VERIFY_GLOBS_MANIFEST
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(
+        json.dumps(
+            [
+                {
+                    "pattern": glob.pattern,
+                    "base_dir": str(glob.base_dir),
+                    "recursive": glob.recursive,
+                    "list_directories": glob.list_directories,
+                    "files": glob.files,
+                    "dirs": glob.dirs,
+                }
+                for glob in ctx.configure_depend_globs
+            ],
+            indent=2,
+        )
+    )
+    (ctx.build_dir / VERIFY_GLOBS_STAMP).touch()
+
+
+def verify_globs(manifest: Path, stamp: Path) -> int:
+    """Touch ``stamp`` if a CONFIGURE_DEPENDS glob no longer matches the same paths.
+
+    Watched directories are compared too, so that a new subdirectory of a
+    GLOB_RECURSE gets watched after the reconfigure.
+    """
+    try:
+        globs = json.loads(manifest.read_text())
+    except (OSError, ValueError):
+        globs = None
+    changed = globs is None or not stamp.exists()
+    for glob in globs or []:
+        if changed:
+            break
+        base_dir = Path(glob["base_dir"])
+        files = evaluate_glob(
+            glob["pattern"], base_dir, glob["recursive"], glob["list_directories"]
+        )
+        dirs = glob_watch_dirs(glob["pattern"], base_dir, glob["recursive"])
+        changed = files != glob["files"] or dirs != glob["dirs"]
+    if changed:
+        stamp.parent.mkdir(parents=True, exist_ok=True)
+        stamp.touch()
+    return 0
+
+
 def _detect_host_system_processor() -> str:
     """Detect host CPU architecture string for CMAKE_HOST_SYSTEM_PROCESSOR."""
     machine = platform.machine().strip()
@@ -212,6 +292,19 @@ def is_compilable_source(filename: str) -> bool:
     return filename.endswith(source_extensions)
 
 
+def _source_language(source: str) -> str:
+    """Return the CMake language (C, CXX or ASM) a source is compiled as."""
+    if source.endswith((".s", ".S")):
+        return "ASM"
+    if source.endswith((".cpp", ".cxx", ".cc", ".C", ".mm", ".MM")):
+        return "CXX"
+    return "C"
+
+
+def _is_objc(source: str) -> bool:
+    return source.endswith((".m", ".M", ".mm", ".MM"))
+
+
 def _obj_subdir(source_rel: PurePath) -> str:
     """Return a $builddir-relative subdir for a source's object file.
 
@@ -253,18 +346,38 @@ def _rc_manifest_deps(ctx: BuildContext, rc_path: str) -> list[str]:
     return deps
 
 
-def compile_feature_to_flag(feature: str) -> str | None:
-    """Translate a CMake compile feature to a compiler flag."""
+def compile_feature_to_flag(
+    feature: str, properties: dict[str, str] | None = None
+) -> str | None:
+    """Translate a CMake compile feature to a compiler flag.
+
+    ``properties`` are those of the target being compiled; they decide whether
+    GNU extensions are enabled (C_EXTENSIONS defaults to ON, like in CMake).
+    """
     # Map cxx_std_XX features to -std=c++XX flags
     if feature.startswith("cxx_std_"):
         std_version = feature[8:]  # Extract "11", "14", "17", "20", "23", etc.
         return f"-std=c++{std_version}"
-    # Map c_std_XX features to -std=cXX flags
+    # Map c_std_XX features to -std=gnuXX or -std=cXX flags
     if feature.startswith("c_std_"):
         std_version = feature[6:]
-        return f"-std=c{std_version}"
+        extensions = (properties or {}).get("C_EXTENSIONS", "").strip()
+        prefix = "gnu" if not extensions or is_truthy(extensions) else "c"
+        return f"-std={prefix}{std_version}"
     # Other features could be added here
     return None
+
+
+def target_std_flags(properties: dict[str, str]) -> list[str]:
+    """Translate C_STANDARD/CXX_STANDARD target properties to compiler flags."""
+    flags: list[str] = []
+    for prop, prefix in (("C_STANDARD", "c_std_"), ("CXX_STANDARD", "cxx_std_")):
+        std = properties.get(prop, "").strip()
+        if std.isdigit():
+            flag = compile_feature_to_flag(f"{prefix}{std}", properties)
+            if flag:
+                flags.append(flag)
+    return flags
 
 
 def _is_windows_clangxx(cxx: str) -> bool:
@@ -280,6 +393,25 @@ def _normalize_windows_clang_cxx_std(flag: str, enabled: bool) -> str:
     if not enabled:
         return flag
     return re.sub(r"(?<!\S)-std=c\+\+11(?=\s|$)", "-std=c++14", flag)
+
+
+def _windows_subsystem_link_flag(
+    ctx: BuildContext, win32_executable: bool
+) -> str | None:
+    """Return the Windows subsystem linker flag for an executable.
+
+    LLVM clang on Windows usually targets ``*-windows-msvc``.  That driver
+    ignores GCC's ``-mwindows`` and emits LNK4031 unless ``/SUBSYSTEM`` is
+    set explicitly, so pass ``/SUBSYSTEM:WINDOWS`` or ``/SUBSYSTEM:CONSOLE``
+    through to the linker.  MinGW-style toolchains only need ``-mwindows``
+    for GUI apps.
+    """
+    if ctx.variables.get("MSVC_VERSION"):
+        subsystem = "WINDOWS" if win32_executable else "CONSOLE"
+        return f"-Wl,/SUBSYSTEM:{subsystem}"
+    if win32_executable:
+        return "-mwindows"
+    return None
 
 
 def _std_level(lang: str, token: str) -> int:
@@ -314,6 +446,10 @@ def _std_level(lang: str, token: str) -> int:
         except ValueError:
             return -1
     return -1
+
+
+_CXX_STD_FLAG_RE = re.compile(r"^-std=(?:gnu\+\+|c\+\+)")
+_C_STD_FLAG_RE = re.compile(r"^-std=(?:gnu|c)(?!\+\+)")
 
 
 def _keep_highest_std_flag(flags: list[str], lang: str) -> list[str]:
@@ -385,6 +521,16 @@ def _ninja_flag_path(path: str, source_dir: Path) -> str:
         if sep:
             return f"{head}/{tail}"
     return path
+
+
+def _quote_if_spaced(part: str) -> str:
+    """Quote a flag or path for a Ninja command line if it contains whitespace."""
+    return _quote_ninja_cmd_part(part) if re.search(r"\s", part) else part
+
+
+def _include_flag(path: str, source_dir: Path) -> str:
+    """Return the ``-I`` flag for an include directory, quoted if needed."""
+    return _quote_if_spaced(f"-I{_ninja_flag_path(path, source_dir)}")
 
 
 def _cd_prefix(working_dir: str, source_dir: Path) -> str:
@@ -605,13 +751,18 @@ def generate_ninja(
                 if rel not in seen_deps:
                     cmake_deps.append(rel)
                     seen_deps.add(rel)
-        # Directory mtimes (CONFIGURE_DEPENDS globs): ninja restats directories
-        # and rebuilds when entries are added, removed, or renamed.
-        for depend_path in sorted(ctx.configure_depends, key=lambda p: str(p)):
-            rel = make_relative(str(depend_path), ctx.source_dir)
-            if rel not in seen_deps:
-                cmake_deps.append(rel)
-                seen_deps.add(rel)
+        # CONFIGURE_DEPENDS globs: ninja restats the watched directories, which
+        # change when entries are added, removed, or renamed. That only runs the
+        # glob check, which touches its stamp (and so triggers reconfigure) when
+        # a glob result actually differs.
+        glob_deps: list[str] = []
+        if ctx.configure_depend_globs:
+            _write_verify_globs(ctx)
+            for depend_path in sorted(ctx.configure_depends, key=lambda p: str(p)):
+                rel = make_relative(str(depend_path), ctx.source_dir)
+                if rel not in glob_deps:
+                    glob_deps.append(rel)
+            cmake_deps.append(f"$builddir/{VERIFY_GLOBS_STAMP}")
 
         if cmake_deps:
 
@@ -644,6 +795,23 @@ def generate_ninja(
                 description="\x1b[35mRe-running cja\x1b[0m",
             )
             n.newline()
+
+            if ctx.configure_depend_globs:
+                verify_cmd = " ".join(
+                    quote_part(part) for part in cja_cmd + ["--verify-globs"]
+                )
+                # The manifest isn't an input: configure rewrites it along
+                # with the stamp, so it must not make this step dirty.
+                n.rule(
+                    "verify_globs",
+                    command=f"{verify_cmd} $builddir/{VERIFY_GLOBS_MANIFEST} $out",
+                    generator=True,
+                    restat=True,
+                    description="\x1b[35mChecking globs\x1b[0m",
+                )
+                n.newline()
+                n.build(f"$builddir/{VERIFY_GLOBS_STAMP}", "verify_globs", glob_deps)
+                n.newline()
 
             output_name = make_relative(str(output_path), ctx.source_dir)
             n.build(output_name, "reconfigure", cmake_deps)
@@ -689,6 +857,31 @@ def generate_ninja(
             description="\x1b[32mCompiling $in\x1b[0m",
         )
         n.newline()
+
+        has_pch = any(
+            prop in t.properties
+            for t in (*ctx.libraries, *ctx.executables)
+            for prop in (
+                "PRECOMPILE_HEADERS",
+                "INTERFACE_PRECOMPILE_HEADERS",
+                "PRECOMPILE_HEADERS_REUSE_FROM",
+            )
+        )
+        if has_pch:
+            for pch_rule, compiler, lang_flags, header_lang in (
+                ("cc_pch", "$cc", c_flags, "c-header"),
+                ("cxx_pch", "$cxx", cxx_flags, "c++-header"),
+            ):
+                n.rule(
+                    pch_rule,
+                    command=f"{compiler} -MMD -MF $out.d {base_cflags} {lang_flags} $cflags -x {header_lang} -c $in -o $out".replace(
+                        "  ", " "
+                    ).strip(),
+                    depfile="$out.d",
+                    deps="gcc",
+                    description="\x1b[32mPrecompiling $in\x1b[0m",
+                )
+                n.newline()
 
         # Assembly: compilers typically do not write a depfile for .s/.S, and a
         # missing depfile makes ninja rebuild the object on every invocation.
@@ -894,15 +1087,27 @@ def generate_ninja(
             """Convert a $builddir/... ninja path to an absolute filesystem path."""
             if ninja_path.startswith("$builddir/"):
                 return to_posix_path(
-                    str(ctx.build_dir / ninja_path[len("$builddir/") :])
+                    str(ctx.build_dir.absolute() / ninja_path[len("$builddir/") :])
                 )
             if ninja_path == "$builddir":
-                return to_posix_path(str(ctx.build_dir))
+                return to_posix_path(str(ctx.build_dir.absolute()))
             return ninja_path
+
+        # Like CMake, $<TARGET_FILE:...> and $<TARGET_FILE_DIR:...> in COMMAND
+        # arguments are absolute, so they stay valid after a WORKING_DIRECTORY cd.
+        target_file_dirs_abs = {
+            k: _absolute_target_file(v) for k, v in target_file_dirs.items()
+        }
+        target_files_abs = {k: _absolute_target_file(v) for k, v in target_files.items()}
 
         def _format_command(command: list[str], *, verbatim: bool) -> str:
             """Format one COMMAND argv, substituting target names with their files."""
-            expanded = [_expand_genex(c) for c in command]
+            expanded = [
+                strip_generator_expressions(
+                    c, ctx.variables, target_file_dirs_abs, target_files_abs
+                )
+                for c in command
+            ]
             if expanded and expanded[0] in target_files:
                 expanded[0] = _absolute_target_file(target_files[expanded[0]])
             if verbatim:
@@ -911,7 +1116,7 @@ def generate_ninja(
                     if arg in shell_operators:
                         parts.append(str(arg))
                     else:
-                        parts.append(shlex.quote(str(arg)))
+                        parts.append(_quote_ninja_cmd_part(str(arg)))
                 return " ".join(parts)
             return " ".join(str(c) for c in expanded)
 
@@ -992,12 +1197,14 @@ def generate_ninja(
 
                 # Use a stamp file so ninja can track when the target last ran
                 stamp = f"$builddir/{ct.name}.stamp"
+                # After a WORKING_DIRECTORY cd, the relative $builddir is no longer valid
+                touched = _absolute_target_file(stamp) if ct.working_directory else stamp
                 n.build(
                     [stamp],
                     "custom_command",
                     ct_depends,
                     order_only=ct_dep_order_only or None,
-                    variables={"cmd": f"{ct_cmd_str} && touch {stamp}"},
+                    variables={"cmd": f"{ct_cmd_str} && touch {touched}"},
                 )
                 n.build([ct.name], "phony", [stamp])
             else:
@@ -1013,9 +1220,8 @@ def generate_ninja(
             n.newline()
 
         # Helper to expand link libraries recursively
-        def expand_link_libraries(
-            initial: list[str], follow_private_of_static: bool
-        ) -> list[str]:
+        def expand_link_libraries(initial: list[str]) -> list[str]:
+            """Link items plus their transitive public dependencies, for usage requirements."""
             expanded: list[str] = []
             seen: set[str] = set()
             queue = list(initial)
@@ -1027,20 +1233,71 @@ def generate_ninja(
                 expanded.append(name)
                 lib = ctx.get_library(name)
                 if lib:
-                    # For static libraries, even private dependencies propagate to the consumer
-                    # but only when we are expanding for linking, not for compile flags
-                    if follow_private_of_static and lib.lib_type == "STATIC":
-                        deps = list(
-                            dict.fromkeys(
-                                lib.link_libraries + lib.public_link_libraries
-                            )
-                        )
-                    else:
-                        deps = lib.public_link_libraries
-                    for dep in deps:
+                    for dep in lib.public_link_libraries:
                         if dep not in seen:
                             queue.append(dep)
             return expanded
+
+        def order_link_libraries(initial: list[str]) -> list[str]:
+            """Order link items so each static library precedes its dependencies.
+
+            Like CMake, the declared order is kept where dependencies allow and
+            libraries with circular dependencies are listed twice.
+            """
+
+            def canonical(name: str) -> str:
+                lib = ctx.get_library(name)
+                return lib.name if lib else name
+
+            def deps(name: str) -> list[str]:
+                lib = ctx.get_library(name)
+                if not lib:
+                    return []
+                # For static libraries, even private dependencies propagate to the consumer
+                if lib.lib_type == "STATIC":
+                    names = lib.link_libraries + lib.public_link_libraries
+                else:
+                    names = lib.public_link_libraries
+                return list(dict.fromkeys(canonical(dep) for dep in names))
+
+            # Tarjan's algorithm: emits strongly connected components with
+            # dependencies first. Visiting in reverse keeps the declared order
+            # once the result is reversed.
+            index: dict[str, int] = {}
+            low: dict[str, int] = {}
+            stack: list[str] = []
+            on_stack: set[str] = set()
+            components: list[list[str]] = []
+
+            def visit(name: str) -> None:
+                index[name] = low[name] = len(index)
+                stack.append(name)
+                on_stack.add(name)
+                for dep in reversed(deps(name)):
+                    if dep not in index:
+                        visit(dep)
+                        low[name] = min(low[name], low[dep])
+                    elif dep in on_stack:
+                        low[name] = min(low[name], index[dep])
+                if low[name] == index[name]:
+                    component: list[str] = []
+                    while True:
+                        member = stack.pop()
+                        on_stack.discard(member)
+                        component.append(member)
+                        if member == name:
+                            break
+                    components.append(component)
+
+            for name in reversed(list(dict.fromkeys(canonical(n) for n in initial))):
+                if name not in index:
+                    visit(name)
+
+            ordered: list[str] = []
+            for component in reversed(components):
+                members = list(reversed(component))
+                ordered.extend(members * 2 if len(members) > 1 else members)
+            return ordered
 
         def _collect_directory_property_chain(
             target_dir: Path, prop_name: str
@@ -1098,6 +1355,17 @@ def generate_ninja(
                     return f"$builddir/{stripped}", stripped
             return source, source
 
+        def _sources_with_interface_sources(
+            sources: list[str], usage_libraries: list[str]
+        ) -> list[str]:
+            """A target's sources plus the INTERFACE sources of the libraries it uses."""
+            combined = list(sources)
+            for dep_name in usage_libraries:
+                dep_lib = ctx.get_library(dep_name)
+                if dep_lib:
+                    combined.extend(dep_lib.interface_sources)
+            return list(dict.fromkeys(combined))
+
         def _generated_source_deps(sources: list[str]) -> list[str]:
             """Ninja nodes for custom-command outputs listed among target sources.
 
@@ -1111,6 +1379,130 @@ def generate_ninja(
                 if resolved.startswith("$builddir/") and resolved not in deps:
                     deps.append(resolved)
             return deps
+
+        def _language_compile_flags(
+            base_flags: list[str], raw_options: list[str], language: str
+        ) -> list[str]:
+            """Target compile flags for sources of the given language."""
+            flags = list(base_flags)
+            for option in raw_options:
+                opt = strip_generator_expressions(
+                    option,
+                    ctx.variables,
+                    compile_language=language,
+                )
+                for sub_opt in opt.split(";"):
+                    sub_opt = sub_opt.strip()
+                    if sub_opt and sub_opt not in flags:
+                        flags.append(sub_opt)
+            if language in ("C", "ASM"):
+                flags = [flag for flag in flags if not _CXX_STD_FLAG_RE.match(flag)]
+                return _keep_highest_std_flag(flags, "c")
+            flags = [flag for flag in flags if not _C_STD_FLAG_RE.match(flag)]
+            flags = [
+                _normalize_windows_clang_cxx_std(flag, windows_clangxx)
+                for flag in flags
+            ]
+            return _keep_highest_std_flag(flags, "cxx")
+
+        def _target_pch_headers(
+            target: Library | Executable, seen: frozenset[str] = frozenset()
+        ) -> list[str]:
+            """PRECOMPILE_HEADERS of a target plus those its dependencies export."""
+            reuse_from = target.properties.get("PRECOMPILE_HEADERS_REUSE_FROM")
+            if reuse_from:
+                # Build our own PCH from the same headers instead of sharing
+                # the other target's, which could have been compiled with
+                # different flags.
+                other = ctx.get_library(reuse_from) or ctx.get_executable(reuse_from)
+                if other is None or other.name in seen:
+                    return []
+                return _target_pch_headers(other, seen | {target.name})
+            headers = [
+                h for h in target.properties.get("PRECOMPILE_HEADERS", "").split(";") if h
+            ]
+            for dep_name in expand_link_libraries(target.link_libraries):
+                dep_lib = ctx.get_library(dep_name)
+                if dep_lib:
+                    headers.extend(
+                        h
+                        for h in dep_lib.properties.get(
+                            "INTERFACE_PRECOMPILE_HEADERS", ""
+                        ).split(";")
+                        if h
+                    )
+            return list(dict.fromkeys(headers))
+
+        def _emit_pch(
+            target: Library | Executable,
+            target_dir: Path,
+            sources: list[str],
+            base_flags: list[str],
+            raw_options: list[str],
+            order_only: list[str],
+        ) -> dict[str, tuple[list[str], str]]:
+            """Write cmake_pch.h/.hxx for a target and emit rules to precompile them.
+
+            Returns the compile flags and the precompiled header node per language.
+            GCC and Clang both pick up <header>.gch next to an -include'd header.
+            """
+            if is_truthy(target.properties.get("DISABLE_PRECOMPILE_HEADERS", "")):
+                return {}
+            raw_headers = _target_pch_headers(target)
+            if not raw_headers:
+                return {}
+            pch: dict[str, tuple[list[str], str]] = {}
+            languages = {
+                _source_language(s)
+                for s in sources
+                if not _is_objc(s)
+            }
+            for language in ("C", "CXX"):
+                if language not in languages:
+                    continue
+                includes: list[str] = []
+                for raw in raw_headers:
+                    evaluated = strip_generator_expressions(
+                        raw, ctx.variables, compile_language=language
+                    )
+                    for header in evaluated.split(";"):
+                        header = header.strip()
+                        if not header:
+                            continue
+                        if not is_verbatim_include(header):
+                            header = f'"{resolve_cmake_path(header, target_dir)}"'
+                        includes.append(f"#include {header}")
+                if not includes:
+                    continue
+                header_rel = (
+                    f"CMakeFiles/{target.name}.dir/"
+                    f"cmake_pch.{'hxx' if language == 'CXX' else 'h'}"
+                )
+                header_path = ctx.build_dir / header_rel
+                content = "/* generated by cja */\n\n" + "\n".join(includes) + "\n"
+                # Only rewrite on change so the PCH isn't rebuilt on every configure
+                write_if_changed(header_path, content)
+                header_node = f"$builddir/{header_rel}"
+                pch_node = f"{header_node}.gch"
+                register_output(pch_node, target.defined_file, target.defined_line)
+                pch_flags = _language_compile_flags(base_flags, raw_options, language)
+                n.build(
+                    pch_node,
+                    "cxx_pch" if language == "CXX" else "cc_pch",
+                    header_node,
+                    order_only=order_only or None,
+                    variables=cast(
+                        dict[str, str | list[str] | None],
+                        {"cflags": " ".join(pch_flags)},
+                    )
+                    if pch_flags
+                    else None,
+                )
+                include_flags = [f"-include {header_node}"]
+                if ctx.variables.get(f"CMAKE_{language}_COMPILER_ID") == "GNU":
+                    include_flags.insert(0, "-Winvalid-pch")
+                pch[language] = (include_flags, pch_node)
+            return pch
 
         # Generate build statements for libraries
         for lib in ctx.libraries:
@@ -1162,28 +1554,27 @@ def generate_ninja(
                 if opt:
                     lib_compile_flags.append(opt)
             for feature in lib.compile_features:
-                flag = compile_feature_to_flag(feature)
+                flag = compile_feature_to_flag(feature, lib.properties)
                 if flag:
                     lib_compile_flags.append(flag)
+            lib_compile_flags.extend(target_std_flags(lib.properties))
             for inc_dir in lib.include_directories:
                 inc = strip_generator_expressions(inc_dir)
-                lib_compile_flags.append(f"-I{_ninja_flag_path(inc, ctx.source_dir)}")
+                lib_compile_flags.append(_include_flag(inc, ctx.source_dir))
 
             # Propagate flags from dependencies
             # For compilation, we only follow public dependencies
-            expanded_lib_link_libraries = expand_link_libraries(
-                lib.link_libraries, follow_private_of_static=False
-            )
+            expanded_lib_link_libraries = expand_link_libraries(lib.link_libraries)
             for dep_name in expanded_lib_link_libraries:
                 dep_lib = ctx.get_library(dep_name)
                 if dep_lib:
                     for feature in dep_lib.public_compile_features:
-                        flag = compile_feature_to_flag(feature)
+                        flag = compile_feature_to_flag(feature, lib.properties)
                         if flag and flag not in lib_compile_flags:
                             lib_compile_flags.append(flag)
                     for inc_dir in dep_lib.public_include_directories:
                         inc = strip_generator_expressions(inc_dir)
-                        inc_flag = f"-I{_ninja_flag_path(inc, ctx.source_dir)}"
+                        inc_flag = _include_flag(inc, ctx.source_dir)
                         if inc_flag not in lib_compile_flags:
                             lib_compile_flags.append(inc_flag)
                     for definition in dep_lib.public_compile_definitions:
@@ -1198,12 +1589,15 @@ def generate_ninja(
                 if dep_name in ctx.imported_targets:
                     imported = ctx.imported_targets[dep_name]
                     if imported.cflags:
-                        lib_compile_flags.append(imported.cflags)
+                        lib_compile_flags.append(_format_imported_flags(imported.cflags))
 
+            lib_sources = _sources_with_interface_sources(
+                lib.sources, expanded_lib_link_libraries
+            )
             # Filter out headers, .rc, and .manifest files from compileable sources
             compileable_sources: list[str] = [
                 s
-                for s in lib.sources
+                for s in lib_sources
                 if is_compilable_source(s)
                 and not is_header(s)
                 and not is_rc(s)
@@ -1216,9 +1610,17 @@ def generate_ninja(
             c_clang_tidy = lib.properties.get("C_CLANG_TIDY")
 
             lib_dep_order_only = _target_order_only(lib.dependencies)
-            lib_generated_deps = _generated_source_deps(lib.sources)
+            lib_generated_deps = _generated_source_deps(lib_sources)
             lib_order_only = list(
                 dict.fromkeys([*lib_dep_order_only, *lib_generated_deps])
+            )
+            lib_pch = _emit_pch(
+                lib,
+                target_dir,
+                compileable_sources,
+                lib_compile_flags,
+                lib_compile_options_raw,
+                lib_order_only,
             )
 
             for source in compileable_sources:
@@ -1235,34 +1637,24 @@ def generate_ninja(
                 objects.append(obj_name)
 
                 # Determine if C, C++, or assembly
-                is_cxx = source.endswith((".cpp", ".cxx", ".cc", ".C", ".mm", ".MM"))
-                is_asm = source.endswith((".s", ".S"))
+                source_language = _source_language(source)
+                is_cxx = source_language == "CXX"
+                is_asm = source_language == "ASM"
                 if is_asm:
                     rule = "asm"
-                    source_language = "ASM"
                 elif is_cxx:
                     rule = "cxx"
                     uses_cxx = True
-                    source_language = "CXX"
                 else:
                     rule = "cc"
-                    source_language = "C"
 
                 # Check for source file properties
                 abs_source = str(ctx.source_dir / source)
                 file_props = ctx.source_file_properties.get(abs_source)
 
-                source_compile_flags = list(lib_compile_flags)
-                for option in lib_compile_options_raw:
-                    opt = strip_generator_expressions(
-                        option,
-                        ctx.variables,
-                        compile_language=source_language,
-                    )
-                    for sub_opt in opt.split(";"):
-                        sub_opt = sub_opt.strip()
-                        if sub_opt and sub_opt not in source_compile_flags:
-                            source_compile_flags.append(sub_opt)
+                source_compile_flags = _language_compile_flags(
+                    lib_compile_flags, lib_compile_options_raw, source_language
+                )
                 source_depends = []
 
                 if file_props:
@@ -1272,7 +1664,7 @@ def generate_ninja(
                         )
                     for inc_dir in file_props.include_directories:
                         source_compile_flags.append(
-                            f"-I{_ninja_flag_path(inc_dir, ctx.source_dir)}"
+                            _include_flag(inc_dir, ctx.source_dir)
                         )
                     for d in file_props.object_depends:
                         if d in custom_command_outputs:
@@ -1280,37 +1672,23 @@ def generate_ninja(
                         else:
                             source_depends.append(d)
 
-                if rule in ("cc", "asm"):
-                    source_compile_flags = [
-                        flag
-                        for flag in source_compile_flags
-                        if not flag.startswith("-std=c++")
-                    ]
-                    source_compile_flags = _keep_highest_std_flag(
-                        source_compile_flags, "c"
-                    )
-                else:
-                    source_compile_flags = [
-                        flag
-                        for flag in source_compile_flags
-                        if not (
-                            flag.startswith("-std=c")
-                            and not flag.startswith("-std=c++")
-                        )
-                    ]
-                    source_compile_flags = [
-                        _normalize_windows_clang_cxx_std(flag, windows_clangxx)
-                        for flag in source_compile_flags
-                    ]
-                    source_compile_flags = _keep_highest_std_flag(
-                        source_compile_flags, "cxx"
-                    )
+                # Precompiled header flags go only to the compile edge, not to
+                # clang-tidy, which can't load a PCH built by another compiler.
+                obj_compile_flags = source_compile_flags
+                pch = lib_pch.get(source_language)
+                if (
+                    pch
+                    and not _is_objc(source)
+                    and not (file_props and file_props.skip_precompile_headers)
+                ):
+                    obj_compile_flags = [*source_compile_flags, *pch[0]]
+                    source_depends.append(pch[1])
 
                 source_vars: dict[str, str | list[str] | None] | None = None
-                if source_compile_flags:
+                if obj_compile_flags:
                     source_vars = cast(
                         dict[str, str | list[str] | None],
-                        {"cflags": " ".join(source_compile_flags)},
+                        {"cflags": " ".join(obj_compile_flags)},
                     )
 
                 # Generate clang-tidy validation node if applicable
@@ -1392,13 +1770,9 @@ def generate_ninja(
             objects: list[str] = []
             uses_cxx = False
             # For compile flags, we only follow public dependencies
-            expanded_compile_libraries = expand_link_libraries(
-                exe.link_libraries, follow_private_of_static=False
-            )
+            expanded_compile_libraries = expand_link_libraries(exe.link_libraries)
             # For linking, static libraries propagate their private dependencies
-            expanded_link_libraries = expand_link_libraries(
-                exe.link_libraries, follow_private_of_static=True
-            )
+            expanded_link_libraries = order_link_libraries(exe.link_libraries)
 
             # Collect cflags from global options, compile definitions, compile features, include dirs, linked libraries, and imported targets
             target_dir = (
@@ -1430,12 +1804,13 @@ def generate_ninja(
                 if opt:
                     compile_flags.append(opt)
             for feature in exe.compile_features:
-                flag = compile_feature_to_flag(feature)
+                flag = compile_feature_to_flag(feature, exe.properties)
                 if flag:
                     compile_flags.append(flag)
+            compile_flags.extend(target_std_flags(exe.properties))
             for inc_dir in exe.include_directories:
                 inc = strip_generator_expressions(inc_dir)
-                compile_flags.append(f"-I{_ninja_flag_path(inc, ctx.source_dir)}")
+                compile_flags.append(_include_flag(inc, ctx.source_dir))
 
             for lib_name in expanded_compile_libraries:
                 # Check for public compile features from linked libraries
@@ -1443,13 +1818,13 @@ def generate_ninja(
 
                 if linked_lib:
                     for feature in linked_lib.public_compile_features:
-                        flag = compile_feature_to_flag(feature)
+                        flag = compile_feature_to_flag(feature, exe.properties)
                         if flag and flag not in compile_flags:
                             compile_flags.append(flag)
                     # Check for public include directories from linked libraries
                     for inc_dir in linked_lib.public_include_directories:
                         inc = strip_generator_expressions(inc_dir)
-                        inc_flag = f"-I{_ninja_flag_path(inc, ctx.source_dir)}"
+                        inc_flag = _include_flag(inc, ctx.source_dir)
                         if inc_flag not in compile_flags:
                             compile_flags.append(inc_flag)
                     # Check for public compile definitions from linked libraries
@@ -1466,20 +1841,23 @@ def generate_ninja(
                 if lib_name in ctx.imported_targets:
                     imported = ctx.imported_targets[lib_name]
                     if imported.cflags:
-                        compile_flags.append(imported.cflags)
+                        compile_flags.append(_format_imported_flags(imported.cflags))
                     elif lib_name.startswith("GTest::"):
                         gtest_includes = ctx.variables.get("GTEST_INCLUDE_DIRS", "")
                         if gtest_includes:
                             for inc_dir in gtest_includes.split(";"):
                                 if inc_dir:
                                     compile_flags.append(
-                                        f"-I{_ninja_flag_path(inc_dir, ctx.source_dir)}"
+                                        _include_flag(inc_dir, ctx.source_dir)
                                     )
 
+            exe_sources = _sources_with_interface_sources(
+                exe.sources, expanded_compile_libraries
+            )
             # Filter out headers, .rc, and .manifest files from compileable sources
             compileable_sources: list[str] = [
                 s
-                for s in exe.sources
+                for s in exe_sources
                 if is_compilable_source(s)
                 and not is_header(s)
                 and not is_rc(s)
@@ -1487,16 +1865,24 @@ def generate_ninja(
             ]
             # CMake tolerates duplicate source entries on a target. Keep first occurrence.
             compileable_sources = list(dict.fromkeys(compileable_sources))
-            rc_sources: list[str] = [s for s in exe.sources if is_rc(s)]
-            manifest_sources: list[str] = [s for s in exe.sources if is_manifest(s)]
+            rc_sources: list[str] = [s for s in exe_sources if is_rc(s)]
+            manifest_sources: list[str] = [s for s in exe_sources if is_manifest(s)]
 
             cxx_clang_tidy = exe.properties.get("CXX_CLANG_TIDY")
             c_clang_tidy = exe.properties.get("C_CLANG_TIDY")
 
             exe_dep_order_only = _target_order_only(exe.dependencies)
-            exe_generated_deps = _generated_source_deps(exe.sources)
+            exe_generated_deps = _generated_source_deps(exe_sources)
             exe_order_only = list(
                 dict.fromkeys([*exe_dep_order_only, *exe_generated_deps])
+            )
+            exe_pch = _emit_pch(
+                exe,
+                target_dir,
+                compileable_sources,
+                compile_flags,
+                exe_compile_options_raw,
+                exe_order_only,
             )
 
             for source in compileable_sources:
@@ -1513,34 +1899,24 @@ def generate_ninja(
                 objects.append(obj_name)
 
                 # Determine if C, C++, or assembly
-                is_cxx = source.endswith((".cpp", ".cxx", ".cc", ".C", ".mm", ".MM"))
-                is_asm = source.endswith((".s", ".S"))
+                source_language = _source_language(source)
+                is_cxx = source_language == "CXX"
+                is_asm = source_language == "ASM"
                 if is_asm:
                     rule = "asm"
-                    source_language = "ASM"
                 elif is_cxx:
                     rule = "cxx"
                     uses_cxx = True
-                    source_language = "CXX"
                 else:
                     rule = "cc"
-                    source_language = "C"
 
                 # Check for source file properties
                 abs_source = str(ctx.source_dir / source)
                 file_props = ctx.source_file_properties.get(abs_source)
 
-                source_compile_flags = list(compile_flags)
-                for option in exe_compile_options_raw:
-                    opt = strip_generator_expressions(
-                        option,
-                        ctx.variables,
-                        compile_language=source_language,
-                    )
-                    for sub_opt in opt.split(";"):
-                        sub_opt = sub_opt.strip()
-                        if sub_opt and sub_opt not in source_compile_flags:
-                            source_compile_flags.append(sub_opt)
+                source_compile_flags = _language_compile_flags(
+                    compile_flags, exe_compile_options_raw, source_language
+                )
                 source_depends = []
 
                 if file_props:
@@ -1550,7 +1926,7 @@ def generate_ninja(
                         )
                     for inc_dir in file_props.include_directories:
                         source_compile_flags.append(
-                            f"-I{_ninja_flag_path(inc_dir, ctx.source_dir)}"
+                            _include_flag(inc_dir, ctx.source_dir)
                         )
                     for d in file_props.object_depends:
                         if d in custom_command_outputs:
@@ -1558,37 +1934,23 @@ def generate_ninja(
                         else:
                             source_depends.append(d)
 
-                if rule in ("cc", "asm"):
-                    source_compile_flags = [
-                        flag
-                        for flag in source_compile_flags
-                        if not flag.startswith("-std=c++")
-                    ]
-                    source_compile_flags = _keep_highest_std_flag(
-                        source_compile_flags, "c"
-                    )
-                else:
-                    source_compile_flags = [
-                        flag
-                        for flag in source_compile_flags
-                        if not (
-                            flag.startswith("-std=c")
-                            and not flag.startswith("-std=c++")
-                        )
-                    ]
-                    source_compile_flags = [
-                        _normalize_windows_clang_cxx_std(flag, windows_clangxx)
-                        for flag in source_compile_flags
-                    ]
-                    source_compile_flags = _keep_highest_std_flag(
-                        source_compile_flags, "cxx"
-                    )
+                # Precompiled header flags go only to the compile edge, not to
+                # clang-tidy, which can't load a PCH built by another compiler.
+                obj_compile_flags = source_compile_flags
+                pch = exe_pch.get(source_language)
+                if (
+                    pch
+                    and not _is_objc(source)
+                    and not (file_props and file_props.skip_precompile_headers)
+                ):
+                    obj_compile_flags = [*source_compile_flags, *pch[0]]
+                    source_depends.append(pch[1])
 
                 source_vars: dict[str, str | list[str] | None] | None = None
-                if source_compile_flags:
+                if obj_compile_flags:
                     source_vars = cast(
                         dict[str, str | list[str] | None],
-                        {"cflags": " ".join(source_compile_flags)},
+                        {"cflags": " ".join(obj_compile_flags)},
                     )
 
                 # Generate clang-tidy validation node if applicable
@@ -1632,7 +1994,9 @@ def generate_ninja(
                             exe.link_directories.append(link_dir)
 
             for link_dir in exe.link_directories:
-                link_flags.append(f"-L{_ninja_flag_path(link_dir, ctx.source_dir)}")
+                link_flags.append(
+                    _quote_if_spaced(f"-L{_ninja_flag_path(link_dir, ctx.source_dir)}")
+                )
             for lib_name in expanded_link_libraries:
                 linked_lib = ctx.get_library(lib_name)
                 if linked_lib and linked_lib.lib_type == "INTERFACE":
@@ -1648,7 +2012,7 @@ def generate_ninja(
                     # Imported target (e.g., Threads::Threads): add link flags
                     imported = ctx.imported_targets[lib_name]
                     if imported.libs:
-                        link_flags.append(imported.libs)
+                        link_flags.append(_format_imported_flags(imported.libs))
                     if lib_name == "GTest::gtest_main":
                         main_libs = ctx.variables.get("GTEST_MAIN_LIBRARIES", "")
                         gtest_libs = ctx.variables.get("GTEST_LIBRARIES", "")
@@ -1674,7 +2038,7 @@ def generate_ninja(
                         if framework_flags:
                             link_flags.extend(framework_flags)
                         else:
-                            link_flags.append(lib_name)
+                            link_flags.append(_quote_if_spaced(lib_name))
                     else:
                         link_flags.append(f"-l{lib_name}")
 
@@ -1721,6 +2085,20 @@ def generate_ninja(
                     )
                     link_inputs.append(res_name)
 
+            # Windows subsystem: GUI when WIN32_EXECUTABLE is truthy (supports
+            # genex such as $<CONFIG:Release>), otherwise console.  MSVC-style
+            # clang requires an explicit /SUBSYSTEM to avoid LNK4031.
+            win32_executable = is_truthy(
+                strip_generator_expressions(
+                    exe.properties.get("WIN32_EXECUTABLE", ""),
+                    ctx.variables,
+                )
+            )
+            if platform.system() == "Windows":
+                subsystem_flag = _windows_subsystem_link_flag(ctx, win32_executable)
+                if subsystem_flag:
+                    link_flags.append(subsystem_flag)
+
             # Link
             prefix = _output_prefix(exe.binary_dir)
             exe_name = f"{prefix}/{exe.name}{exe_ext}"
@@ -1759,10 +2137,14 @@ def generate_ninja(
                             expanded_parts.extend(cmake_cmd_parts)
                         else:
                             expanded_parts.append(expanded)
-                    pb_cmd_parts.append(" ".join(shlex.quote(p) for p in expanded_parts))
+                    pb_cmd_parts.append(
+                        " ".join(_quote_ninja_cmd_part(p) for p in expanded_parts)
+                    )
                 # Touch the stamp so ninja skips this step when nothing has changed
-                cmake_cmd_quoted = " ".join(shlex.quote(p) for p in cmake_cmd_parts)
-                pb_cmd_parts.append(f"{cmake_cmd_quoted} -E touch {shlex.quote(stamp_path)}")
+                cmake_cmd_quoted = " ".join(_quote_ninja_cmd_part(p) for p in cmake_cmd_parts)
+                pb_cmd_parts.append(
+                    f"{cmake_cmd_quoted} -E touch {_quote_ninja_cmd_part(stamp_path)}"
+                )
                 pb_cmd_str = " && ".join(pb_cmd_parts)
                 n.build([stamp], "custom_command", [exe_name], variables={"cmd": pb_cmd_str})
                 n.newline()
@@ -1927,7 +2309,8 @@ def generate_ninja(
             n.build("install", "phony", install_files)
             n.newline()
 
-        # Write cja.json with run executable info
+        # Write cja.json with run executable info, removing a stale one first
+        (ctx.build_dir / "cja.json").unlink(missing_ok=True)
         if ctx.executables:
             run_target = ctx.executables[0].name
 
@@ -1982,8 +2365,8 @@ def run_script(
     ctx.record_cmake_file(script_path)
 
     if variables:
-        ctx.variables.update(variables)
-        ctx.cache_variables.update(variables.keys())
+        for name, value in variables.items():
+            ctx.set_cache(name, value)
         ctx.cli_variables = dict(variables)
 
     ctx.variables["CMAKE_SOURCE_DIR"] = str(cwd)
@@ -2076,8 +2459,8 @@ def configure(
     # Set variables from command line (-D flags) first
     # These are cache variables that won't be overridden by set()
     if variables:
-        ctx.variables.update(variables)
-        ctx.cache_variables.update(variables.keys())
+        for name, value in variables.items():
+            ctx.set_cache(name, value)
         ctx.cli_variables = dict(variables)
 
     # Set up standard CMake variables
@@ -2109,6 +2492,20 @@ def configure(
     else:
         ctx.variables["CMAKE_SYSTEM_NAME"] = "Linux"
         ctx.variables["UNIX"] = "TRUE"
+
+    # Platform library conventions used by Find modules (e.g. FindOpenSSL).
+    if host_system == "Windows":
+        ctx.variables.setdefault("CMAKE_STATIC_LIBRARY_SUFFIX", ".lib")
+        ctx.variables.setdefault("CMAKE_SHARED_LIBRARY_SUFFIX", ".dll")
+        ctx.variables.setdefault("CMAKE_DL_LIBS", "")
+    elif host_system == "Darwin":
+        ctx.variables.setdefault("CMAKE_STATIC_LIBRARY_SUFFIX", ".a")
+        ctx.variables.setdefault("CMAKE_SHARED_LIBRARY_SUFFIX", ".dylib")
+        ctx.variables.setdefault("CMAKE_DL_LIBS", "")
+    else:
+        ctx.variables.setdefault("CMAKE_STATIC_LIBRARY_SUFFIX", ".a")
+        ctx.variables.setdefault("CMAKE_SHARED_LIBRARY_SUFFIX", ".so")
+        ctx.variables.setdefault("CMAKE_DL_LIBS", "dl")
 
     # Set up compilers from variables if provided
     if "CMAKE_C_COMPILER" in ctx.variables:

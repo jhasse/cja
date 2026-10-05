@@ -9,6 +9,8 @@ class Library:
     name: str
     sources: list[str]
     lib_type: str = "STATIC"  # STATIC, SHARED, OBJECT, MODULE, or INTERFACE
+    # INTERFACE/PUBLIC sources, compiled into every target that uses this library
+    interface_sources: list[str] = field(default_factory=list)
     defined_file: Path | None = None
     defined_line: int = 0
     binary_dir: str = ""

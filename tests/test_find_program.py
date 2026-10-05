@@ -65,3 +65,60 @@ def test_find_program_followed_by_if(capsys: pytest.CaptureFixture[str]) -> None
     captured = capsys.readouterr()
     assert "version is not greater" in captured.out
     assert ctx.variables["MY_PROG"] == "MY_PROG-NOTFOUND"
+
+
+def _run(commands: list[Command]) -> BuildContext:
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    process_commands(commands, ctx)
+    return ctx
+
+
+def test_find_program_searches_again_after_notfound() -> None:
+    """A NOTFOUND cache entry doesn't stop a later search, like in CMake."""
+    ctx = _run(
+        [
+            Command(name="find_program", args=["PY", "nonexistent_prog_xyz"], line=1),
+            Command(name="find_program", args=["PY", "python3", "python"], line=2),
+        ]
+    )
+    assert "NOTFOUND" not in ctx.variables["PY"]
+    assert ctx.cache_values["PY"] == ctx.variables["PY"]
+
+
+def test_find_program_skips_when_already_set() -> None:
+    """An existing non-NOTFOUND value (cache, normal or empty) skips the search."""
+    ctx = _run(
+        [
+            Command(name="set", args=["P1", "/custom", "CACHE", "FILEPATH", ""], line=1),
+            Command(name="find_program", args=["P1", "python3"], line=2),
+            Command(name="set", args=["P2", "/normal"], line=3),
+            Command(name="find_program", args=["P2", "python3"], line=4),
+            Command(name="set", args=["P3", "", "CACHE", "FILEPATH", ""], line=5),
+            Command(name="find_program", args=["P3", "python3"], line=6),
+        ]
+    )
+    assert ctx.variables["P1"] == "/custom"
+    assert ctx.variables["P2"] == "/normal"
+    assert "P2" not in ctx.cache_values
+    assert ctx.variables["P3"] == ""
+
+
+def test_find_program_updates_notfound_normal_variable() -> None:
+    """A result is cached and also replaces a NOTFOUND normal variable (CMP0125)."""
+    ctx = _run(
+        [
+            Command(name="set", args=["PY", "PY-NOTFOUND"], line=1),
+            Command(name="find_program", args=["PY", "python3", "python"], line=2),
+        ]
+    )
+    assert "NOTFOUND" not in ctx.variables["PY"]
+    assert ctx.cache_values["PY"] == ctx.variables["PY"]
+
+
+def test_find_program_no_cache() -> None:
+    """NO_CACHE stores the result as a normal variable only."""
+    ctx = _run(
+        [Command(name="find_program", args=["PY", "python3", "python", "NO_CACHE"], line=1)]
+    )
+    assert "NOTFOUND" not in ctx.variables["PY"]
+    assert "PY" not in ctx.cache_values

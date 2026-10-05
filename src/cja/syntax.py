@@ -47,6 +47,7 @@ class SourceFileProperties:
     object_depends: list[str] = field(default_factory=list)
     include_directories: list[str] = field(default_factory=list)
     compile_definitions: list[str] = field(default_factory=list)
+    skip_precompile_headers: bool = False
 
 
 @dataclass

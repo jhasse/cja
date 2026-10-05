@@ -1,10 +1,21 @@
 """Tests for file command."""
 
+import json
+import os
+import shutil
 import subprocess
 import time
 from pathlib import Path
 
-from cja.generator import BuildContext, configure, generate_ninja, process_commands
+import pytest
+
+from cja.generator import (
+    BuildContext,
+    configure,
+    generate_ninja,
+    process_commands,
+    verify_globs,
+)
 from cja.parser import Command
 
 
@@ -137,7 +148,7 @@ def test_file_glob_without_configure_depends_does_not_record_dir(
 
 
 def test_file_glob_configure_depends_in_ninja(tmp_path: Path) -> None:
-    """CONFIGURE_DEPENDS glob directories are reconfigure inputs in build.ninja."""
+    """CONFIGURE_DEPENDS glob directories feed a glob check before reconfigure."""
     src = tmp_path / "src"
     src.mkdir()
     (src / "a.cpp").touch()
@@ -158,7 +169,16 @@ def test_file_glob_configure_depends_in_ninja(tmp_path: Path) -> None:
     generate_ninja(ctx, ninja_path, "build")
 
     ninja = ninja_path.read_text()
-    assert "build build.ninja: reconfigure CMakeLists.txt src" in ninja
+    assert "build $builddir/CMakeFiles/cja.verify_globs: verify_globs src\n" in ninja
+    assert (
+        "build build.ninja: reconfigure CMakeLists.txt $\n"
+        "    $builddir/CMakeFiles/cja.verify_globs\n"
+    ) in ninja
+    manifest = json.loads(
+        (tmp_path / "build" / "CMakeFiles" / "VerifyGlobs.json").read_text()
+    )
+    assert manifest[0]["files"] == [str(src / "a.cpp")]
+    assert (tmp_path / "build" / "CMakeFiles" / "cja.verify_globs").exists()
 
 
 def test_file_glob_recurse_configure_depends_records_subdirs(tmp_path: Path) -> None:
@@ -198,7 +218,7 @@ def test_file_glob_configure_depends_reconfigure_on_new_file(tmp_path: Path) -> 
 
     configure(source_dir, "build")
     ninja = (source_dir / "build.ninja").read_text()
-    assert "build build.ninja: reconfigure CMakeLists.txt src" in ninja
+    assert "verify_globs src\n" in ninja
     assert "extra.cpp" not in ninja
 
     time.sleep(0.05)
@@ -214,6 +234,126 @@ def test_file_glob_configure_depends_reconfigure_on_new_file(tmp_path: Path) -> 
     assert result.returncode == 0, result.stderr + result.stdout
     rebuilt = (source_dir / "build.ninja").read_text()
     assert "extra.cpp" in rebuilt
+
+
+def test_file_glob_configure_depends_no_reconfigure_on_unmatched_file(
+    tmp_path: Path,
+) -> None:
+    """A new file the glob doesn't match only runs the glob check, not cja."""
+    source_dir = tmp_path / "proj"
+    src = source_dir / "src"
+    src.mkdir(parents=True)
+    (src / "main.cpp").write_text("int main() { return 0; }\n")
+    (source_dir / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.10)\n"
+        "project(glob_cfg)\n"
+        "file(GLOB SRC CONFIGURE_DEPENDS src/*.cpp)\n"
+        "add_executable(app ${SRC})\n"
+    )
+
+    configure(source_dir, "build")
+    subprocess.run(["ninja"], cwd=source_dir, check=True, capture_output=True)
+
+    time.sleep(0.05)
+    (src / "notes.txt").write_text("not a source\n")
+
+    result = subprocess.run(
+        ["ninja"],
+        cwd=source_dir,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "Checking globs" in result.stdout
+    assert "Re-running cja" not in result.stdout
+
+
+@pytest.mark.skip(reason="Will be fixed once we have proper directory support in ninja")
+def test_file_glob_configure_depends_missing_dir_still_reconfigures(
+    tmp_path: Path,
+) -> None:
+    """A deleted glob directory must not block reconfigure when CMakeLists changes."""
+    source_dir = tmp_path / "proj"
+    music = source_dir / "data" / "music"
+    music.mkdir(parents=True)
+    (music / "theme.ogg").write_text("x")
+    src = source_dir / "src"
+    src.mkdir()
+    (src / "main.cpp").write_text("int main() { return 0; }\n")
+    cmake = source_dir / "CMakeLists.txt"
+    cmake.write_text(
+        "cmake_minimum_required(VERSION 3.10)\n"
+        "project(glob_missing_dir)\n"
+        "file(GLOB MUSIC CONFIGURE_DEPENDS data/music/*.ogg)\n"
+        "file(GLOB SRC CONFIGURE_DEPENDS src/*.cpp)\n"
+        "add_executable(app ${SRC})\n"
+    )
+
+    configure(source_dir, "build")
+    ninja = (source_dir / "build.ninja").read_text()
+    assert "verify_globs cja_check_globs\n" in ninja
+    assert "verify_globs data/music" not in ninja
+    manifest = json.loads(
+        (source_dir / "build" / "CMakeFiles" / "VerifyGlobs.json").read_text()
+    )
+    assert any("music" in f for g in manifest for f in g["files"])
+
+    shutil.rmtree(music)
+    time.sleep(0.05)
+    cmake.write_text(
+        "cmake_minimum_required(VERSION 3.10)\n"
+        "project(glob_missing_dir)\n"
+        "file(GLOB SRC CONFIGURE_DEPENDS src/*.cpp)\n"
+        "add_executable(app ${SRC})\n"
+    )
+
+    result = subprocess.run(
+        ["ninja"],
+        cwd=source_dir,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "Re-running cja" in result.stdout
+    assert "missing and no known rule" not in result.stderr
+    rebuilt_manifest = json.loads(
+        (source_dir / "build" / "CMakeFiles" / "VerifyGlobs.json").read_text()
+    )
+    assert not any("music" in f for g in rebuilt_manifest for f in g["files"])
+    assert len(rebuilt_manifest) == 1
+
+
+def test_verify_globs_touches_stamp_only_on_change(tmp_path: Path) -> None:
+    """cja --verify-globs leaves the stamp alone while glob results match."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.cpp").touch()
+
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    process_commands(
+        [
+            Command(
+                name="file",
+                args=["GLOB", "SRC", "CONFIGURE_DEPENDS", "src/*.cpp"],
+                line=1,
+            )
+        ],
+        ctx,
+    )
+    generate_ninja(ctx, tmp_path / "build.ninja", "build")
+    manifest = tmp_path / "build" / "CMakeFiles" / "VerifyGlobs.json"
+    stamp = tmp_path / "build" / "CMakeFiles" / "cja.verify_globs"
+    os.utime(stamp, (0, 0))
+
+    (src / "notes.txt").touch()
+    verify_globs(manifest, stamp)
+    assert stamp.stat().st_mtime == 0
+
+    (src / "b.cpp").touch()
+    verify_globs(manifest, stamp)
+    assert stamp.stat().st_mtime > 0
 
 
 def test_file_glob_recurse_literal_path(tmp_path: Path) -> None:
@@ -330,8 +470,10 @@ def test_file_generate_with_config_genex(tmp_path: Path) -> None:
             args=[
                 "GENERATE",
                 "OUTPUT",
-                ("${SDL3_BINARY_DIR}/include-config-$<LOWER_CASE:$<CONFIG>>"
-                "/build_config/SDL_build_config.h"),
+                (
+                    "${SDL3_BINARY_DIR}/include-config-$<LOWER_CASE:$<CONFIG>>"
+                    "/build_config/SDL_build_config.h"
+                ),
                 "INPUT",
                 str(intermediate),
             ],

@@ -32,7 +32,7 @@ def test_find_library_basic(tmp_path: Path) -> None:
 
     process_commands(commands, ctx)
 
-    assert ctx.variables["MY_LIB"] == str(lib_file.absolute())
+    assert ctx.variables["MY_LIB"] == lib_file.absolute().as_posix()
 
 
 def test_find_library_with_names(tmp_path: Path) -> None:
@@ -55,7 +55,7 @@ def test_find_library_with_names(tmp_path: Path) -> None:
 
     process_commands(commands, ctx)
 
-    assert ctx.variables["MY_LIB"] == str(lib_file.absolute())
+    assert ctx.variables["MY_LIB"] == lib_file.absolute().as_posix()
 
 
 def test_find_library_with_suffixes(tmp_path: Path) -> None:
@@ -80,7 +80,7 @@ def test_find_library_with_suffixes(tmp_path: Path) -> None:
 
     process_commands(commands, ctx)
 
-    assert ctx.variables["FOO_LIB"] == str(lib_file.absolute())
+    assert ctx.variables["FOO_LIB"] == lib_file.absolute().as_posix()
 
 
 def test_find_library_not_found(tmp_path: Path) -> None:
@@ -141,7 +141,7 @@ def test_find_library_uses_cmake_prefix_path(tmp_path: Path) -> None:
 
     process_commands(commands, ctx)
 
-    assert ctx.variables["PREF_LIB"] == str(lib_file.absolute())
+    assert ctx.variables["PREF_LIB"] == lib_file.absolute().as_posix()
 
 
 def test_find_library_persists_from_function_scope(tmp_path: Path) -> None:
@@ -165,7 +165,7 @@ def test_find_library_persists_from_function_scope(tmp_path: Path) -> None:
 
     process_commands(commands, ctx)
 
-    assert ctx.variables["INNER_LIB"] == str(lib_file.absolute())
+    assert ctx.variables["INNER_LIB"] == lib_file.absolute().as_posix()
 
 
 def test_find_library_skips_when_already_set(tmp_path: Path) -> None:

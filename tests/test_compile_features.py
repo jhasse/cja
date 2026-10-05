@@ -22,9 +22,15 @@ def test_compile_feature_to_flag_cxx_std() -> None:
 
 def test_compile_feature_to_flag_c_std() -> None:
     """Test translating c_std_XX to compiler flags."""
-    assert compile_feature_to_flag("c_std_99") == "-std=c99"
-    assert compile_feature_to_flag("c_std_11") == "-std=c11"
-    assert compile_feature_to_flag("c_std_17") == "-std=c17"
+    assert compile_feature_to_flag("c_std_99") == "-std=gnu99"
+    assert compile_feature_to_flag("c_std_11") == "-std=gnu11"
+    assert compile_feature_to_flag("c_std_17") == "-std=gnu17"
+
+
+def test_compile_feature_to_flag_c_extensions() -> None:
+    """C_EXTENSIONS decides between -std=gnuXX and -std=cXX, like in CMake."""
+    assert compile_feature_to_flag("c_std_17", {"C_EXTENSIONS": "ON"}) == "-std=gnu17"
+    assert compile_feature_to_flag("c_std_17", {"C_EXTENSIONS": "OFF"}) == "-std=c17"
 
 
 def test_compile_feature_to_flag_unknown() -> None:
@@ -175,3 +181,110 @@ def test_cmake_cxx_standard_applies_to_new_targets(tmp_path: Path) -> None:
     cxx_line_idx = next(i for i, line in enumerate(lines) if " main.cpp" in line)
     cxx_line_block = "\n".join(lines[cxx_line_idx : cxx_line_idx + 2])
     assert "-std=c++17" in cxx_line_block
+
+
+def _c_compile_line(content: str, source: str) -> str:
+    lines = content.splitlines()
+    idx = next(i for i, line in enumerate(lines) if f" {source}" in line)
+    return "\n".join(lines[idx : idx + 2])
+
+
+def test_c_standard_target_property(tmp_path: Path) -> None:
+    """C_STANDARD target property should add -std=gnuXX to C sources."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    (source_dir / "main.c").write_text("int main(void) { return 0; }\n")
+    (source_dir / "lib.c").write_text("int f(void) { return 1; }\n")
+    (source_dir / "CMakeLists.txt").write_text(
+        "project(cstd LANGUAGES C)\n"
+        "add_library(mylib STATIC lib.c)\n"
+        "set_property(TARGET mylib PROPERTY C_STANDARD 17)\n"
+        "add_executable(app main.c)\n"
+        "set_target_properties(app PROPERTIES C_STANDARD 99)\n"
+        "target_link_libraries(app PRIVATE mylib)\n"
+    )
+
+    from cja.generator import configure
+
+    configure(source_dir, "build")
+    content = (source_dir / "build.ninja").read_text()
+    main_block = _c_compile_line(content, "main.c")
+    assert "-std=gnu99" in main_block
+    assert "-std=gnu17" not in main_block
+    lib_block = _c_compile_line(content, "lib.c")
+    assert "-std=gnu17" in lib_block
+    assert "-std=gnu99" not in lib_block
+
+
+def test_c_standard_overrides_cmake_c_standard(tmp_path: Path) -> None:
+    """C_STANDARD on a target replaces the CMAKE_C_STANDARD default, even if lower."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    (source_dir / "main.c").write_text("int main(void) { return 0; }\n")
+    (source_dir / "other.c").write_text("int main(void) { return 0; }\n")
+    (source_dir / "CMakeLists.txt").write_text(
+        "project(cstd LANGUAGES C)\n"
+        "set(CMAKE_C_STANDARD 11)\n"
+        "add_executable(app main.c)\n"
+        "set_target_properties(app PROPERTIES C_STANDARD 99)\n"
+        "add_executable(other other.c)\n"
+        "get_target_property(OTHER_STD other C_STANDARD)\n"
+    )
+
+    from cja.generator import configure
+
+    ctx = configure(source_dir, "build")
+    assert ctx.variables["OTHER_STD"] == "11"
+    content = (source_dir / "build.ninja").read_text()
+    main_block = _c_compile_line(content, "main.c")
+    assert "-std=gnu99" in main_block
+    assert "-std=gnu11" not in main_block
+    assert "-std=gnu11" in _c_compile_line(content, "other.c")
+
+
+def test_c_standard_raised_by_compile_features(tmp_path: Path) -> None:
+    """A higher c_std_XX compile feature wins over a lower C_STANDARD."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    (source_dir / "main.c").write_text("int main(void) { return 0; }\n")
+    (source_dir / "CMakeLists.txt").write_text(
+        "project(cstd LANGUAGES C)\n"
+        "add_executable(app main.c)\n"
+        "set_target_properties(app PROPERTIES C_STANDARD 99)\n"
+        "target_compile_features(app PRIVATE c_std_11)\n"
+    )
+
+    from cja.generator import configure
+
+    configure(source_dir, "build")
+    main_block = _c_compile_line((source_dir / "build.ninja").read_text(), "main.c")
+    assert "-std=gnu11" in main_block
+    assert "-std=gnu99" not in main_block
+
+
+def test_c_extensions_off(tmp_path: Path) -> None:
+    """C_EXTENSIONS OFF (or CMAKE_C_EXTENSIONS OFF) selects -std=cXX."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    (source_dir / "main.c").write_text("int main(void) { return 0; }\n")
+    (source_dir / "other.c").write_text("int main(void) { return 0; }\n")
+    (source_dir / "CMakeLists.txt").write_text(
+        "project(cstd LANGUAGES C)\n"
+        "set(CMAKE_C_STANDARD 11)\n"
+        "add_executable(app main.c)\n"
+        "set_target_properties(app PROPERTIES C_EXTENSIONS OFF)\n"
+        "set(CMAKE_C_EXTENSIONS OFF)\n"
+        "add_executable(other other.c)\n"
+        "target_compile_features(other PRIVATE c_std_17)\n"
+    )
+
+    from cja.generator import configure
+
+    configure(source_dir, "build")
+    content = (source_dir / "build.ninja").read_text()
+    main_block = _c_compile_line(content, "main.c")
+    assert "-std=c11" in main_block
+    assert "-std=gnu11" not in main_block
+    other_block = _c_compile_line(content, "other.c")
+    assert "-std=c17" in other_block
+    assert "-std=c11" not in other_block
