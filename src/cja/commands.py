@@ -634,9 +634,11 @@ def _link_imported_target(
         if entry in ctx.imported_targets or "::" in entry:
             if entry not in imported_target.link_targets:
                 imported_target.link_targets.append(entry)
+        elif entry.startswith("-"):
+            # May hold several flags, e.g. "-L<dir> -lfoo" from pkg-config
+            flags.extend(split_flags(entry))
         elif (
-            entry.startswith("-")
-            or "/" in entry
+            "/" in entry
             or "\\" in entry
             or entry.endswith((".a", ".so", ".dylib", ".lib", ".dll"))
         ):

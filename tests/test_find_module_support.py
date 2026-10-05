@@ -211,6 +211,29 @@ def test_imported_interface_link_libraries_propagate_other_targets(
     assert foo.link_targets == ["Foo::bar"]
 
 
+def test_imported_link_flag_strings_are_split(tmp_path: Path) -> None:
+    """A flag string like "-L<dir> -lfoo" in INTERFACE_LINK_LIBRARIES gives
+    separate link arguments, not one quoted token."""
+    from cja.generator import generate_ninja
+
+    ctx = _ctx(tmp_path)
+    _run(
+        ctx,
+        ("add_library", ["Bar::bar", "UNKNOWN", "IMPORTED"]),
+        (
+            "set_target_properties",
+            ["Bar::bar", "PROPERTIES", "INTERFACE_LINK_LIBRARIES", "-L/x/lib -lbar"],
+        ),
+        ("add_executable", ["app", "main.cpp"]),
+        ("target_link_libraries", ["app", "PRIVATE", "Bar::bar"]),
+    )
+
+    assert split_flags(ctx.imported_targets["Bar::bar"].libs) == ["-L/x/lib", "-lbar"]
+    ninja_path = tmp_path / "build.ninja"
+    generate_ninja(ctx, ninja_path, "build")
+    assert " -L/x/lib -lbar" in ninja_path.read_text()
+
+
 def test_imported_location_uses_forward_slashes(tmp_path: Path) -> None:
     """On Windows, IMPORTED_LOCATION built from CMAKE_CURRENT_LIST_DIR has
     backslashes; like find_* results, it's stored with forward slashes."""
