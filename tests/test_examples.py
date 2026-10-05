@@ -29,11 +29,6 @@ EXAMPLE_MARKS = {
     "frameworks": pytest.mark.skipif(
         platform.system() != "Darwin", reason="Apple frameworks require macOS"
     ),
-    "gtest": pytest.mark.xfail(
-        reason="INTERFACE_COMPILE_FEATURES of imported targets is ignored, so "
-        "GTest's cxx_std_17 isn't applied; passes where C++17 is the default",
-        strict=False,
-    ),
 }
 
 EXAMPLES = [

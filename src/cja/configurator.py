@@ -72,6 +72,7 @@ from .find_commands import (
     handle_find_program,
 )
 from .find_package import (
+    find_package_config_file,
     handle_builtin_find_package,
     handle_find_package_handle_standard_args,
     setup_find_module_request,
@@ -96,6 +97,9 @@ from .utils import (
     to_posix_path,
     write_if_changed,
 )
+
+# Modules bundled with cja (e.g. FindGTest.cmake, CMakeFindDependencyMacro.cmake)
+BUILTIN_MODULES_DIR = Path(__file__).parent / "cmake" / "Modules"
 
 
 class ReturnFromFunction(Exception):
@@ -1129,6 +1133,10 @@ def process_commands(
                             if candidate.exists():
                                 found_file = candidate
                                 break
+                        if found_file is None:
+                            candidate = BUILTIN_MODULES_DIR / f"{module_name}.cmake"
+                            if candidate.exists():
+                                found_file = candidate
 
                         if found_file:
                             from .parser import parse_file
@@ -2489,28 +2497,15 @@ int main() {{
                         required=required,
                         quiet=quiet,
                     ):
-                        # NO_MODULE requests config-mode lookup only; do not load
-                        # Find<Package>.cmake from CMAKE_MODULE_PATH to avoid recursion.
-                        if no_module:
-                            ctx.variables[f"{package_name}_FOUND"] = "FALSE"
-                            if required:
-                                ctx.print_error(
-                                    f"could not find package: {package_name}", cmd.line
-                                )
-                                raise SystemExit(1)
-                            frame.pc += 1
-                            continue
-
                         # Search for Find<PackageName>.cmake in CMAKE_MODULE_PATH
+                        # and the built-in CJA modules (e.g. bundled FindGTest.cmake).
+                        # NO_MODULE requests config-mode lookup only, which also
+                        # avoids recursing into a Find module that calls it.
                         module_path = ctx.variables.get("CMAKE_MODULE_PATH", "")
                         search_dirs = module_path.split(";") if module_path else []
-
-                        # Also search built-in CJA modules (e.g. bundled FindGTest.cmake)
-                        builtin_modules_dir = (
-                            Path(__file__).parent / "cmake" / "Modules"
-                        )
-                        if builtin_modules_dir.exists():
-                            search_dirs.append(str(builtin_modules_dir))
+                        search_dirs.append(str(BUILTIN_MODULES_DIR))
+                        if no_module:
+                            search_dirs = []
 
                         found_file = None
                         for d in search_dirs:
@@ -2568,6 +2563,84 @@ int main() {{
                                 Frame(
                                     commands=find_commands,
                                     on_exit=on_exit_find_package,
+                                    kind="include",
+                                )
+                            )
+                            frame.pc += 1
+                            continue
+                        config = find_package_config_file(ctx, package_name, args)
+                        if config is not None:
+                            from .parser import parse_file
+
+                            config_file, config_version = config
+                            setup_find_module_request(ctx, package_name, args)
+                            ctx.record_cmake_file(config_file)
+                            config_commands = parse_file(config_file)
+                            config_dir = to_posix_path(str(config_file.parent))
+                            ctx.variables[f"{package_name}_DIR"] = config_dir
+                            ctx.variables[f"{package_name}_CONFIG"] = to_posix_path(
+                                str(config_file)
+                            )
+                            if config_version:
+                                ctx.variables[f"{package_name}_VERSION"] = (
+                                    config_version
+                                )
+                            # A config file only sets <Pkg>_FOUND to reject itself.
+                            ctx.variables[f"{package_name}_FOUND"] = "TRUE"
+                            saved_find_package_name = ctx.variables.get(
+                                "CMAKE_FIND_PACKAGE_NAME"
+                            )
+                            ctx.variables["CMAKE_FIND_PACKAGE_NAME"] = package_name
+
+                            saved_list_file = ctx.current_list_file
+                            ctx.current_list_file = config_file
+                            ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(config_file)
+                            ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
+                                config_file.parent
+                            )
+
+                            def on_exit_config(
+                                saved_list_file: Path = saved_list_file,
+                                saved_find_package_name: str
+                                | None = saved_find_package_name,
+                                package_name: str = package_name,
+                                required: bool = required,
+                                quiet: bool = quiet,
+                                line: int = cmd.line,
+                            ) -> None:
+                                ctx.current_list_file = saved_list_file
+                                ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(
+                                    saved_list_file
+                                )
+                                ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
+                                    saved_list_file.parent
+                                )
+                                if saved_find_package_name is None:
+                                    ctx.variables.pop("CMAKE_FIND_PACKAGE_NAME", None)
+                                else:
+                                    ctx.variables["CMAKE_FIND_PACKAGE_NAME"] = (
+                                        saved_find_package_name
+                                    )
+                                found = is_truthy(
+                                    ctx.variables.get(f"{package_name}_FOUND", "")
+                                )
+                                value = "TRUE" if found else "FALSE"
+                                ctx.variables[f"{package_name}_FOUND"] = value
+                                ctx.variables[f"{package_name.upper()}_FOUND"] = value
+                                if not found and required:
+                                    ctx.print_error(
+                                        f"could not find package: {package_name}", line
+                                    )
+                                    raise SystemExit(1)
+                                if not quiet:
+                                    marker = status_marker(found)
+                                    color = "green" if found else "red"
+                                    print(f"{colored(marker, color)} {package_name}")
+
+                            stack.append(
+                                Frame(
+                                    commands=config_commands,
+                                    on_exit=on_exit_config,
                                     kind="include",
                                 )
                             )

@@ -464,6 +464,110 @@ def _compare_versions(left: str, right: str) -> int:
     return (a > b) - (a < b)
 
 
+_PACKAGE_VERSION_RE = re.compile(r'set\(\s*PACKAGE_VERSION\s+"?(\d[^")\s]*)"?\s*\)')
+
+
+def _config_file_in(directory: Path, package_name: str) -> Path | None:
+    for filename in (
+        f"{package_name}Config.cmake",
+        f"{package_name.lower()}-config.cmake",
+    ):
+        candidate = directory / filename
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _name_dirs(parent: Path, package_name: str) -> list[Path]:
+    """Subdirectories matching CMake's case-insensitive ``<name>*`` pattern."""
+    try:
+        return sorted(
+            p
+            for p in parent.iterdir()
+            if p.is_dir() and p.name.lower().startswith(package_name.lower())
+        )
+    except OSError:
+        return []
+
+
+def _config_search_prefixes(ctx: BuildContext, package_name: str) -> list[Path]:
+    prefixes: list[str] = []
+    root = _var_or_env(ctx, f"{package_name}_ROOT", f"{package_name.upper()}_ROOT")
+    if root:
+        prefixes.extend(split_unquoted_list_args(root))
+    prefixes.extend(_prefix_path_entries(ctx))
+    if platform.system() == "Windows":
+        prefixes.extend(["C:/Program Files", "C:/Program Files (x86)"])
+    else:
+        if platform.system() == "Darwin" and Path("/opt/homebrew").is_dir():
+            prefixes.append("/opt/homebrew")
+        prefixes.extend(["/usr/local", "/usr"])
+    return [Path(p) for p in dict.fromkeys(prefixes) if p]
+
+
+def _config_version_compatible(
+    config_file: Path, package_name: str, requested: str, exact: bool
+) -> tuple[bool, str]:
+    """Read PACKAGE_VERSION from the config's version file, if there is one.
+
+    The version file isn't evaluated; a found version satisfies a request when
+    it's at least as new (or equal, for EXACT), like AnyNewerVersion.
+    """
+    for filename in (
+        f"{package_name}ConfigVersion.cmake",
+        f"{package_name.lower()}-config-version.cmake",
+    ):
+        version_file = config_file.parent / filename
+        if version_file.is_file():
+            match = _PACKAGE_VERSION_RE.search(version_file.read_text(errors="replace"))
+            if match:
+                found = match.group(1)
+                if not requested:
+                    return True, found
+                cmp = _compare_versions(found, requested)
+                return (cmp == 0 if exact else cmp >= 0), found
+    return True, ""
+
+
+def find_package_config_file(
+    ctx: BuildContext, package_name: str, args: list[str]
+) -> tuple[Path, str] | None:
+    """Locate ``<Pkg>Config.cmake``/``<pkg>-config.cmake`` for config mode.
+
+    Searches ``<Pkg>_DIR``, then ``<Pkg>_ROOT``, ``CMAKE_PREFIX_PATH`` and the
+    system prefixes using CMake's (Unix and Windows) directory layouts.
+    Returns the file and the version read from its version file, if any.
+    """
+    requested, exact = _requested_version(args)
+    candidates: list[Path] = []
+    package_dir = ctx.variables.get(f"{package_name}_DIR", "")
+    if package_dir and not package_dir.endswith("NOTFOUND"):
+        candidates.append(Path(package_dir))
+    for prefix in _config_search_prefixes(ctx, package_name):
+        candidates.extend([prefix, prefix / "cmake", prefix / "CMake"])
+        if platform.system() == "Windows":
+            for d in _name_dirs(prefix, package_name):
+                candidates.extend([d, d / "cmake", d / "CMake"])
+        lib_dirs = sorted(p for p in prefix.glob("lib*") if p.is_dir())
+        lib_dirs += sorted((prefix / "lib").glob("*-linux-*"))
+        lib_dirs.append(prefix / "share")
+        for lib_dir in lib_dirs:
+            candidates.extend(_name_dirs(lib_dir / "cmake", package_name))
+            for d in _name_dirs(lib_dir, package_name):
+                candidates.extend([d, d / "cmake", d / "CMake"])
+
+    for directory in candidates:
+        config_file = _config_file_in(directory, package_name)
+        if config_file is None:
+            continue
+        compatible, version = _config_version_compatible(
+            config_file, package_name, requested, exact
+        )
+        if compatible:
+            return config_file, version
+    return None
+
+
 def setup_find_module_request(
     ctx: BuildContext, package_name: str, args: list[str]
 ) -> None:
