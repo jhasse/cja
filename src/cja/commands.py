@@ -4,7 +4,6 @@ import os
 import re
 import shutil
 import sys
-from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -257,12 +256,8 @@ def handle_target_link_libraries(
                         if exe:
                             exe.link_libraries.append(part)
                         elif target_name in ctx.imported_targets:
-                            imported_target = ctx.imported_targets[target_name]
-                            imported_target.libs = join_flags(
-                                [
-                                    *split_flags(imported_target.libs),
-                                    *_imported_link_flags(ctx, [part]),
-                                ]
+                            _link_imported_target(
+                                ctx, ctx.imported_targets[target_name], [part]
                             )
 
 
@@ -394,6 +389,10 @@ def handle_target_compile_features(
                 # Executables don't propagate, so all features go to compile_features
                 exe.compile_features.extend(target_features)
                 exe.compile_features.extend(public_features)
+            elif target_name in ctx.imported_targets:
+                ctx.imported_targets[target_name].compile_features.extend(
+                    public_features
+                )
 
 
 def handle_target_include_directories(
@@ -619,15 +618,22 @@ def handle_target_precompile_headers(
             )
 
 
-def _imported_link_flags(ctx: BuildContext, entries: Iterable[str]) -> list[str]:
-    """Translate link-library entries of an imported target into link flags."""
-    flags: list[str] = []
+def _link_imported_target(
+    ctx: BuildContext, imported_target: ImportedTarget, entries: list[str]
+) -> None:
+    """Add link-library entries to an imported target.
+
+    Other imported targets are kept by name and resolved at generation time,
+    because their properties may still be set later (e.g. IMPORTED_LOCATION
+    from a ``<Pkg>Targets-release.cmake`` included after the link interface).
+    """
+    flags = split_flags(imported_target.libs)
     for entry in entries:
         if not entry:
             continue
-        dependency = ctx.imported_targets.get(entry)
-        if dependency is not None and dependency.libs:
-            flags.extend(split_flags(dependency.libs))
+        if entry in ctx.imported_targets or "::" in entry:
+            if entry not in imported_target.link_targets:
+                imported_target.link_targets.append(entry)
         elif (
             entry.startswith("-")
             or "/" in entry
@@ -637,7 +643,7 @@ def _imported_link_flags(ctx: BuildContext, entries: Iterable[str]) -> list[str]
             flags.append(entry)
         else:
             flags.append(f"-l{entry}")
-    return flags
+    imported_target.libs = join_flags(flags)
 
 
 def _apply_imported_target_property(
@@ -666,11 +672,10 @@ def _apply_imported_target_property(
             [*split_flags(imported_target.cflags), *include_flags]
         )
     elif prop_name == "INTERFACE_LINK_LIBRARIES":
-        imported_target.libs = join_flags(
-            [
-                *split_flags(imported_target.libs),
-                *_imported_link_flags(ctx, prop_value.split(";")),
-            ]
+        _link_imported_target(ctx, imported_target, prop_value.split(";"))
+    elif prop_name == "INTERFACE_COMPILE_FEATURES":
+        imported_target.compile_features.extend(
+            f for f in prop_value.split(";") if f
         )
 
 
@@ -720,6 +725,10 @@ def handle_set_target_properties(
                         lib.compile_definitions.extend(defs)
                     elif exe:
                         exe.compile_definitions.extend(defs)
+                elif prop_name == "INTERFACE_COMPILE_FEATURES" and lib:
+                    lib.public_compile_features = [
+                        f for f in prop_value.split(";") if f
+                    ]
                 else:
                     if lib:
                         lib.properties[prop_name] = prop_value
@@ -837,6 +846,12 @@ def handle_set_property(
                         exe.compile_definitions.extend(prop_values)
                     else:
                         exe.compile_definitions = list(prop_values)
+            elif prop_name == "INTERFACE_COMPILE_FEATURES" and lib:
+                features = [f for v in prop_values for f in v.split(";") if f]
+                if append_mode:
+                    lib.public_compile_features.extend(features)
+                else:
+                    lib.public_compile_features = features
             else:
                 value = ";".join(prop_values)
                 if lib:

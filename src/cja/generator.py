@@ -1235,9 +1235,11 @@ def generate_ninja(
                 expanded.append(name)
                 lib = ctx.get_library(name)
                 if lib:
-                    for dep in lib.public_link_libraries:
-                        if dep not in seen:
-                            queue.append(dep)
+                    queue.extend(d for d in lib.public_link_libraries if d not in seen)
+                elif name in ctx.imported_targets:
+                    queue.extend(
+                        d for d in ctx.imported_targets[name].link_targets if d not in seen
+                    )
             return expanded
 
         def order_link_libraries(initial: list[str]) -> list[str]:
@@ -1254,7 +1256,8 @@ def generate_ninja(
             def deps(name: str) -> list[str]:
                 lib = ctx.get_library(name)
                 if not lib:
-                    return []
+                    imported = ctx.imported_targets.get(name)
+                    return list(imported.link_targets) if imported else []
                 # For static libraries, even private dependencies propagate to the consumer
                 if lib.lib_type == "STATIC":
                     names = lib.link_libraries + lib.public_link_libraries
@@ -1590,8 +1593,13 @@ def generate_ninja(
                             lib_compile_flags.append(opt)
                 if dep_name in ctx.imported_targets:
                     imported = ctx.imported_targets[dep_name]
-                    if imported.cflags:
-                        lib_compile_flags.append(_format_imported_flags(imported.cflags))
+                    imported_cflags = _format_imported_flags(imported.cflags)
+                    if imported_cflags and imported_cflags not in lib_compile_flags:
+                        lib_compile_flags.append(imported_cflags)
+                    for feature in imported.compile_features:
+                        flag = compile_feature_to_flag(feature, lib.properties)
+                        if flag and flag not in lib_compile_flags:
+                            lib_compile_flags.append(flag)
 
             lib_sources = _sources_with_interface_sources(
                 lib.sources, expanded_lib_link_libraries
@@ -1842,8 +1850,14 @@ def generate_ninja(
                 # Check for cflags from imported targets
                 if lib_name in ctx.imported_targets:
                     imported = ctx.imported_targets[lib_name]
+                    for feature in imported.compile_features:
+                        flag = compile_feature_to_flag(feature, exe.properties)
+                        if flag and flag not in compile_flags:
+                            compile_flags.append(flag)
                     if imported.cflags:
-                        compile_flags.append(_format_imported_flags(imported.cflags))
+                        imported_cflags = _format_imported_flags(imported.cflags)
+                        if imported_cflags not in compile_flags:
+                            compile_flags.append(imported_cflags)
                     elif lib_name.startswith("GTest::"):
                         gtest_includes = ctx.variables.get("GTEST_INCLUDE_DIRS", "")
                         if gtest_includes:
@@ -2015,17 +2029,18 @@ def generate_ninja(
                     imported = ctx.imported_targets[lib_name]
                     if imported.libs:
                         link_flags.append(_format_imported_flags(imported.libs))
-                    if lib_name == "GTest::gtest_main":
-                        main_libs = ctx.variables.get("GTEST_MAIN_LIBRARIES", "")
-                        gtest_libs = ctx.variables.get("GTEST_LIBRARIES", "")
-                        if main_libs:
-                            link_flags.append(main_libs.replace(";", " "))
-                        if gtest_libs:
-                            link_flags.append(gtest_libs.replace(";", " "))
-                    elif lib_name == "GTest::gtest":
-                        gtest_libs = ctx.variables.get("GTEST_LIBRARIES", "")
-                        if gtest_libs:
-                            link_flags.append(gtest_libs.replace(";", " "))
+                    gtest_vars = {
+                        "GTest::gtest_main": ("GTEST_MAIN_LIBRARIES", "GTEST_LIBRARIES"),
+                        "GTest::gtest": ("GTEST_LIBRARIES",),
+                    }.get(lib_name, ())
+                    for var in gtest_vars:
+                        # In config mode these name the imported targets, whose
+                        # IMPORTED_LOCATION is already in imported.libs.
+                        link_flags.extend(
+                            lib
+                            for lib in ctx.variables.get(var, "").split(";")
+                            if lib and "::" not in lib
+                        )
                 else:
                     # Generic library name or path
                     if (

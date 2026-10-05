@@ -143,7 +143,7 @@ def test_find_openssl_ssl_target_propagates_crypto(
 
     ssl = ctx.imported_targets["OpenSSL::SSL"]
     assert "libssl.a" in ssl.libs
-    assert "libcrypto.a" in ssl.libs
+    assert ssl.link_targets == ["OpenSSL::Crypto"]
     ninja = (source / "build.ninja").read_text()
     assert "libcrypto.a" in ninja
 

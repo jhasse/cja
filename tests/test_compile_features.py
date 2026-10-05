@@ -288,3 +288,67 @@ def test_c_extensions_off(tmp_path: Path) -> None:
     other_block = _c_compile_line(content, "other.c")
     assert "-std=c17" in other_block
     assert "-std=c11" not in other_block
+
+
+def _flags_for_source(content: str, source: str) -> str:
+    """Return the build edge for ``source`` plus its indented variables."""
+    lines = content.splitlines()
+    idx = next(i for i, line in enumerate(lines) if line.endswith(f" {source}"))
+    block = [lines[idx]]
+    for line in lines[idx + 1 :]:
+        if not line.startswith("  "):
+            break
+        block.append(line)
+    return "\n".join(block)
+
+
+def test_imported_target_interface_compile_features(tmp_path: Path) -> None:
+    """INTERFACE_COMPILE_FEATURES of imported targets apply to consumers, also
+    through INTERFACE_LINK_LIBRARIES (like GTest::gtest_main -> GTest::gtest)."""
+    (tmp_path / "lib.cpp").write_text("int f() { return 1; }\n")
+    (tmp_path / "main.cpp").write_text("int main() { return 0; }\n")
+    (tmp_path / "other.cpp").write_text("int main() { return 0; }\n")
+    (tmp_path / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.10)\n"
+        "project(importedfeatures LANGUAGES CXX)\n"
+        "add_library(Foo::base STATIC IMPORTED)\n"
+        "set_target_properties(Foo::base PROPERTIES\n"
+        "  IMPORTED_LOCATION /opt/foo/lib/libbase.a\n"
+        "  INTERFACE_COMPILE_FEATURES cxx_std_17)\n"
+        "add_library(Foo::main STATIC IMPORTED)\n"
+        "set_target_properties(Foo::main PROPERTIES\n"
+        "  IMPORTED_LOCATION /opt/foo/lib/libmain.a\n"
+        "  INTERFACE_LINK_LIBRARIES Foo::base)\n"
+        "add_library(Bar::bar INTERFACE IMPORTED)\n"
+        "set_property(TARGET Bar::bar PROPERTY INTERFACE_COMPILE_FEATURES cxx_std_20)\n"
+        "add_library(mylib STATIC lib.cpp)\n"
+        "target_link_libraries(mylib PRIVATE Foo::main)\n"
+        "add_executable(app main.cpp)\n"
+        "target_link_libraries(app PRIVATE Foo::main)\n"
+        "add_executable(other other.cpp)\n"
+        "target_link_libraries(other PRIVATE Bar::bar)\n"
+    )
+
+    from cja.generator import configure
+
+    configure(tmp_path, "build")
+    content = (tmp_path / "build.ninja").read_text()
+    assert "-std=c++17" in _flags_for_source(content, "lib.cpp")
+    assert "-std=c++17" in _flags_for_source(content, "main.cpp")
+    assert "-std=c++20" in _flags_for_source(content, "other.cpp")
+
+
+def test_imported_target_compile_features_command() -> None:
+    """target_compile_features on an imported target sets its interface."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="add_library", args=["Foo::foo", "UNKNOWN", "IMPORTED"], line=1),
+        Command(
+            name="target_compile_features",
+            args=["Foo::foo", "INTERFACE", "cxx_std_17"],
+            line=2,
+        ),
+    ]
+    process_commands(commands, ctx)
+
+    assert ctx.imported_targets["Foo::foo"].compile_features == ["cxx_std_17"]

@@ -206,9 +206,42 @@ def test_imported_interface_link_libraries_propagate_other_targets(
         ),
     )
 
-    libs = split_flags(ctx.imported_targets["Foo::foo"].libs)
-    assert "/x/libfoo.a" in libs
-    assert "/x/libbar.a" in libs
+    foo = ctx.imported_targets["Foo::foo"]
+    assert split_flags(foo.libs) == ["/x/libfoo.a"]
+    assert foo.link_targets == ["Foo::bar"]
+
+
+def test_imported_link_targets_resolved_at_generation(tmp_path: Path) -> None:
+    """Like <Pkg>Targets.cmake, set the link interface before the dependency's
+    IMPORTED_LOCATION (which comes from <Pkg>Targets-release.cmake)."""
+    from cja.generator import generate_ninja
+
+    ctx = _ctx(tmp_path)
+    _run(
+        ctx,
+        ("add_library", ["Foo::bar", "STATIC", "IMPORTED"]),
+        ("add_library", ["Foo::foo", "STATIC", "IMPORTED"]),
+        (
+            "set_target_properties",
+            ["Foo::foo", "PROPERTIES", "INTERFACE_LINK_LIBRARIES", "Foo::bar"],
+        ),
+        (
+            "set_target_properties",
+            ["Foo::foo", "PROPERTIES", "IMPORTED_LOCATION_RELEASE", "/x/libfoo.a"],
+        ),
+        (
+            "set_target_properties",
+            ["Foo::bar", "PROPERTIES", "IMPORTED_LOCATION_RELEASE", "/x/libbar.a"],
+        ),
+        ("add_executable", ["app", "main.cpp"]),
+        ("target_link_libraries", ["app", "PRIVATE", "Foo::foo"]),
+    )
+
+    ninja_path = tmp_path / "build.ninja"
+    generate_ninja(ctx, ninja_path, "build")
+    content = ninja_path.read_text()
+    assert "/x/libfoo.a /x/libbar.a" in content
+    assert "Foo::" not in content
 
 
 # --- find_* options -----------------------------------------------------------

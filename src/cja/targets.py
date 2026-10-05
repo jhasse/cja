@@ -71,6 +71,9 @@ class ImportedTarget:
 
     cflags: str = ""  # Compile flags (e.g., -I/path/to/include)
     libs: str = ""  # Link flags (e.g., -lgtest -pthread)
+    compile_features: list[str] = field(default_factory=list)  # INTERFACE ones
+    # Imported targets in INTERFACE_LINK_LIBRARIES, resolved when generating
+    link_targets: list[str] = field(default_factory=list)
 
 
 @dataclass
