@@ -460,6 +460,52 @@ add_custom_command(TARGET myapp POST_BUILD
     assert f"{quoted} --regenerate-during-build" in reconfigure
 
 
+@pytest.mark.parametrize("verbatim", [True, False])
+@pytest.mark.parametrize(
+    "cja_cmd",
+    [["/fake dir/My Tools/cja"], ["/fake/python3", "-m", "cja"]],
+    ids=["path-with-spaces", "multi-word"],
+)
+def test_add_custom_command_cmake_command_argv(
+    tmp_path: Path, cja_cmd: list[str], verbatim: bool
+) -> None:
+    """${CMAKE_COMMAND} in OUTPUT and custom target commands must expand to
+    the individually quoted cja argv, with or without VERBATIM."""
+    from unittest.mock import patch
+
+    import cja.generator
+    from cja.generator import _quote_ninja_cmd_part, configure
+
+    verbatim_kw = "VERBATIM" if verbatim else ""
+    source_dir = tmp_path
+    cmake_content = f"""\
+cmake_minimum_required(VERSION 3.10)
+project(CustomCommandArgvTest)
+
+add_custom_command(
+    OUTPUT out.txt
+    COMMAND ${{CMAKE_COMMAND}} -E touch out.txt
+    {verbatim_kw}
+)
+add_custom_target(gen ALL
+    COMMAND ${{CMAKE_COMMAND}} -E echo hi
+    DEPENDS out.txt
+    {verbatim_kw}
+)
+"""
+    (source_dir / "CMakeLists.txt").write_text(cmake_content)
+
+    with patch.object(cja.generator, "_resolve_cja_cmd", return_value=cja_cmd):
+        configure(source_dir, "build")
+
+    unwrapped = re.sub(r"\$\n\s*", "", (source_dir / "build.ninja").read_text())
+    quoted = " ".join(_quote_ninja_cmd_part(p) for p in cja_cmd)
+    assert f"{quoted} -E touch out.txt" in unwrapped
+    assert f"{quoted} -E echo hi" in unwrapped
+    if len(cja_cmd) > 1:
+        assert _quote_ninja_cmd_part(" ".join(cja_cmd)) not in unwrapped
+
+
 def test_add_custom_command_output_strips_generator_expressions(
     tmp_path: Path,
 ) -> None:

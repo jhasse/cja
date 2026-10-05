@@ -1110,15 +1110,17 @@ def generate_ninja(
             ]
             if expanded and expanded[0] in target_files:
                 expanded[0] = _absolute_target_file(target_files[expanded[0]])
-            if verbatim:
-                parts = []
-                for arg in expanded:
-                    if arg in shell_operators:
-                        parts.append(str(arg))
-                    else:
-                        parts.append(_quote_ninja_cmd_part(str(arg)))
-                return " ".join(parts)
-            return " ".join(str(c) for c in expanded)
+            parts = []
+            for arg in expanded:
+                if ctx.cja_cmd and arg == ctx.variables.get("CMAKE_COMMAND"):
+                    # Expand to the real argv so neither a multi-word command
+                    # nor a path with spaces gets mangled.
+                    parts.extend(_quote_ninja_cmd_part(p) for p in ctx.cja_cmd)
+                elif verbatim and arg not in shell_operators:
+                    parts.append(_quote_ninja_cmd_part(str(arg)))
+                else:
+                    parts.append(str(arg))
+            return " ".join(parts)
 
         # Generate custom commands
         for custom_cmd in ctx.custom_commands:
