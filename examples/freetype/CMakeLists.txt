@@ -13,7 +13,7 @@ target_include_directories(mylib
 )
 
 target_link_libraries(mylib
-    PRIVATE ${FREETYPE_LIBRARIES}
+    PRIVATE ${FREETYPE_LINK_LIBRARIES}
 )
 
 add_executable(myapp
