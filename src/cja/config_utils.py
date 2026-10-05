@@ -59,7 +59,6 @@ def select_if_block(
                 strict,
                 cmd.line,
                 allow_undefined_empty=allow_undefined,
-                allow_undefined_warning="${${" in arg,
             )
         )
     if evaluate_condition(if_args, ctx.variables, target_exists=target_exists):
@@ -85,7 +84,6 @@ def select_if_block(
                         strict,
                         commands[block_idx].line,
                         allow_undefined_empty=allow_undefined,
-                        allow_undefined_warning="${${" in arg,
                     )
                 )
             if evaluate_condition(

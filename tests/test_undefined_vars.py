@@ -52,6 +52,23 @@ def test_nested_undefined_variable_warns_in_strict_mode(capsys) -> None:
     assert ctx.variables["RESULT"] == ""
 
 
+def test_nested_undefined_variable_silent_in_normal_mode(capsys) -> None:
+    """${${VAR}} should be silent in normal mode, like CMake (e.g. the
+    check_required_components("") in GTestConfig.cmake)."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="set", args=["VAR", "UNDEFINED_VAR"], line=1),
+        Command(name="set", args=["RESULT", "${${VAR}}"], line=2),
+        Command(name="if", args=["${${VAR}}"], line=3),
+        Command(name="endif", args=[], line=4),
+    ]
+    process_commands(commands, ctx, strict=False)
+
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert ctx.variables["RESULT"] == ""
+
+
 def test_escaped_variable_marker_is_literal_in_strict_mode(capsys) -> None:
     """\\${VAR} should remain literal and not trigger strict undefined warnings."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))

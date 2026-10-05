@@ -564,7 +564,6 @@ def process_commands(
                 expanded_args.append(arg)
                 continue
             allow_undefined = False
-            allow_undefined_warning = "${${" in arg
             is_exact_var = (
                 (arg.startswith("${") and arg.endswith("}"))
                 or (arg.startswith('"${') and arg.endswith('}"'))
@@ -590,7 +589,6 @@ def process_commands(
                 strict,
                 cmd.line,
                 allow_undefined_empty=allow_undefined,
-                allow_undefined_warning=allow_undefined_warning,
             )
             quoted = cmd.is_quoted[idx] if idx < len(cmd.is_quoted) else False
             if ";" in expanded and not quoted:

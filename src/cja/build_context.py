@@ -278,7 +278,6 @@ class BuildContext:
         strict: bool = False,
         line: int = 0,
         allow_undefined_empty: bool = False,
-        allow_undefined_warning: bool = False,
     ) -> str:
         """Expand ${VAR} and $ENV{VAR} references in a string."""
         original_value = value
@@ -299,11 +298,6 @@ class BuildContext:
             var_name = match.group(1)
             if var_name not in self.variables:
                 if allow_undefined_empty:
-                    return ""
-                if allow_undefined_warning:
-                    self.print_warning(
-                        f"undefined variable referenced: {var_name}", line
-                    )
                     return ""
                 if strict:
                     self.print_warning(
