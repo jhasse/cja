@@ -211,6 +211,29 @@ def test_imported_interface_link_libraries_propagate_other_targets(
     assert foo.link_targets == ["Foo::bar"]
 
 
+def test_imported_location_uses_forward_slashes(tmp_path: Path) -> None:
+    """On Windows, IMPORTED_LOCATION built from CMAKE_CURRENT_LIST_DIR has
+    backslashes; like find_* results, it's stored with forward slashes."""
+    ctx = _ctx(tmp_path)
+    _run(
+        ctx,
+        ("add_library", ["Foo::foo", "STATIC", "IMPORTED"]),
+        (
+            "set_target_properties",
+            [
+                "Foo::foo",
+                "PROPERTIES",
+                "IMPORTED_LOCATION_RELEASE",
+                "C:\\pkg\\lib\\cmake\\Foo/libfoo.a",
+            ],
+        ),
+    )
+
+    assert split_flags(ctx.imported_targets["Foo::foo"].libs) == [
+        "C:/pkg/lib/cmake/Foo/libfoo.a"
+    ]
+
+
 def test_imported_link_targets_resolved_at_generation(tmp_path: Path) -> None:
     """Like <Pkg>Targets.cmake, set the link interface before the dependency's
     IMPORTED_LOCATION (which comes from <Pkg>Targets-release.cmake)."""

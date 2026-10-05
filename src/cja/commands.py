@@ -659,8 +659,9 @@ def _apply_imported_target_property(
     """
     if prop_name.startswith(("IMPORTED_LOCATION", "IMPORTED_IMPLIB")):
         if prop_value:
+            # Paths derived from CMAKE_CURRENT_LIST_DIR use native separators
             imported_target.libs = join_flags(
-                [*split_flags(imported_target.libs), prop_value]
+                [*split_flags(imported_target.libs), to_posix_path(prop_value)]
             )
     elif prop_name == "INTERFACE_INCLUDE_DIRECTORIES":
         include_flags = [
