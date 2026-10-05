@@ -1,6 +1,7 @@
 """Tests for target_link_libraries edge cases."""
 
 import platform
+import re
 from pathlib import Path
 
 import pytest
@@ -80,6 +81,36 @@ def test_target_link_libraries_versioned_names_get_dash_l(tmp_path: Path) -> Non
     assert "-lwebkit2gtk-4.1" in content
     assert "-lglib-2.0" in content
     assert "-lpangocairo-1.0" in content
+
+
+def test_target_link_libraries_flag_strings_not_quoted(tmp_path: Path) -> None:
+    """pkg-config results like PNG_LIBRARIES ("-L<dir> -lpng16") hold several
+    flags and must reach the linker as separate arguments, while a library path
+    with spaces stays one quoted argument."""
+    (tmp_path / "main.c").write_text("int main() { return 0; }\n")
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    commands = [
+        Command(name="add_executable", args=["app", "main.c"], line=1),
+        Command(
+            name="target_link_libraries",
+            args=[
+                "app",
+                "PRIVATE",
+                "-L/opt/png/lib -lpng16",
+                "/opt/my libs/libfoo.a",
+            ],
+            line=2,
+        ),
+    ]
+    process_commands(commands, ctx)
+
+    ninja_file = tmp_path / "build.ninja"
+    generate_ninja(ctx, ninja_file, "build")
+    content = re.sub(r"\$\n\s*", "", ninja_file.read_text())
+    libs = next(line for line in content.splitlines() if line.strip().startswith("libs ="))
+    assert " -L/opt/png/lib -lpng16" in libs
+    quote = '"' if platform.system() == "Windows" else "'"
+    assert f"{quote}/opt/my libs/libfoo.a{quote}" in libs
 
 
 def test_target_link_libraries_genex_false_branch_omitted(tmp_path: Path) -> None:

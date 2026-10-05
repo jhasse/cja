@@ -2054,6 +2054,10 @@ def generate_ninja(
                         framework_flags = framework_link_flags(lib_name)
                         if framework_flags:
                             link_flags.extend(framework_flags)
+                        elif lib_name.startswith(("-", "$")):
+                            # Flags are used verbatim, like CMake does; pkg-config
+                            # results such as "-L<dir> -lpng16" hold several.
+                            link_flags.append(lib_name)
                         else:
                             link_flags.append(_quote_if_spaced(lib_name))
                     else:
