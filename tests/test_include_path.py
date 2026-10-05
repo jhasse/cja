@@ -48,7 +48,7 @@ def test_include_current_list_file(tmp_path: Path) -> None:
 
     ctx = configure(source_dir, "build")
 
-    assert ctx.variables["INC_FILE"] == str(inc_file.resolve())
+    assert ctx.variables["INC_FILE"] == inc_file.resolve().as_posix()
 
 
 def test_include_module_from_cmake_module_path(tmp_path: Path) -> None:

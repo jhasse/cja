@@ -22,8 +22,8 @@ def test_cmake_current_list_dir(tmp_path: Path) -> None:
 
     ctx = configure(source_dir, "build")
 
-    assert ctx.variables["MAIN_DIR"] == str(source_dir.resolve())
-    assert ctx.variables["SUB_DIR"] == str(sub_dir.resolve())
+    assert ctx.variables["MAIN_DIR"] == source_dir.resolve().as_posix()
+    assert ctx.variables["SUB_DIR"] == sub_dir.resolve().as_posix()
 
 
 def test_include_current_list_dir(tmp_path: Path) -> None:
@@ -40,4 +40,4 @@ def test_include_current_list_dir(tmp_path: Path) -> None:
 
     ctx = configure(source_dir, "build")
 
-    assert ctx.variables["INC_DIR"] == str(cmake_dir.resolve())
+    assert ctx.variables["INC_DIR"] == cmake_dir.resolve().as_posix()

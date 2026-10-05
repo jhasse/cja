@@ -332,7 +332,7 @@ def process_commands(
                 if not resolved.is_absolute():
                     base = Path(
                         ctx.variables.get(
-                            "CMAKE_CURRENT_BINARY_DIR", str(ctx.build_dir)
+                            "CMAKE_CURRENT_BINARY_DIR", to_posix_path(ctx.build_dir)
                         )
                     )
                     resolved = (base / resolved).resolve()
@@ -472,8 +472,8 @@ def process_commands(
                 if len(contents) == 1 and contents[0].is_dir():
                     actual_src_dir = contents[0]
 
-                ctx.variables[f"{name.lower()}_SOURCE_DIR"] = str(actual_src_dir)
-                ctx.variables[f"{name.lower()}_BINARY_DIR"] = str(binary_dir)
+                ctx.variables[f"{name.lower()}_SOURCE_DIR"] = to_posix_path(actual_src_dir)
+                ctx.variables[f"{name.lower()}_BINARY_DIR"] = to_posix_path(binary_dir)
                 ctx.variables[f"{name.lower()}_POPULATED"] = "TRUE"
 
                 if frame.fetchcontent_make_available:
@@ -488,7 +488,7 @@ def process_commands(
                         saved_current_list_file = ctx.current_list_file
                         saved_parent_directory = ctx.parent_directory
                         saved_binary_dir = ctx.variables.get(
-                            "CMAKE_CURRENT_BINARY_DIR", str(ctx.build_dir)
+                            "CMAKE_CURRENT_BINARY_DIR", to_posix_path(ctx.build_dir)
                         )
                         saved_vars = ctx.variables.copy()
                         saved_parent_scope_vars = ctx.parent_scope_vars
@@ -500,12 +500,12 @@ def process_commands(
                         ctx.current_source_dir = actual_src_dir
                         ctx.current_list_file = sub_cmakelists
                         ctx.parent_directory = str(saved_current_source_dir)
-                        ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = str(actual_src_dir)
-                        ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(sub_cmakelists)
-                        ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
+                        ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = to_posix_path(actual_src_dir)
+                        ctx.variables["CMAKE_CURRENT_LIST_FILE"] = to_posix_path(sub_cmakelists)
+                        ctx.variables["CMAKE_CURRENT_LIST_DIR"] = to_posix_path(
                             sub_cmakelists.parent
                         )
-                        ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(fc_binary_dir)
+                        ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = to_posix_path(fc_binary_dir)
 
                         def on_exit_fetchcontent(
                             saved_current_source_dir: Path = saved_current_source_dir,
@@ -530,13 +530,13 @@ def process_commands(
                                     ctx.variables[var] = UNDEFINED_VAR_SENTINEL
                                 else:
                                     ctx.variables[var] = val
-                            ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = str(
+                            ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = to_posix_path(
                                 saved_current_source_dir
                             )
-                            ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(
+                            ctx.variables["CMAKE_CURRENT_LIST_FILE"] = to_posix_path(
                                 saved_current_list_file
                             )
-                            ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
+                            ctx.variables["CMAKE_CURRENT_LIST_DIR"] = to_posix_path(
                                 saved_current_list_file.parent
                             )
                             ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = saved_binary_dir
@@ -781,15 +781,15 @@ def process_commands(
                     ctx.variables["CMAKE_PROJECT_NAME"] = project_name
                     init_compiler_flag_cache_vars(ctx)
                     current_binary_dir = ctx.variables.get(
-                        "CMAKE_CURRENT_BINARY_DIR", str(ctx.build_dir)
+                        "CMAKE_CURRENT_BINARY_DIR", to_posix_path(ctx.build_dir)
                     )
-                    ctx.variables["PROJECT_SOURCE_DIR"] = str(ctx.current_source_dir)
+                    ctx.variables["PROJECT_SOURCE_DIR"] = to_posix_path(ctx.current_source_dir)
                     ctx.variables["PROJECT_BINARY_DIR"] = current_binary_dir
                     source_var = f"{project_name}_SOURCE_DIR"
                     binary_var = f"{project_name}_BINARY_DIR"
                     # Keep project source/binary dirs globally visible across scopes
                     # (e.g. when project() is called in add_subdirectory()).
-                    ctx.set_cache(source_var, str(ctx.current_source_dir))
+                    ctx.set_cache(source_var, to_posix_path(ctx.current_source_dir))
                     ctx.set_cache(binary_var, current_binary_dir)
 
                     if "VERSION" in args:
@@ -852,7 +852,7 @@ def process_commands(
                         saved_current_list_file = ctx.current_list_file
                         saved_parent_directory = ctx.parent_directory
                         saved_binary_dir = ctx.variables.get(
-                            "CMAKE_CURRENT_BINARY_DIR", str(ctx.build_dir)
+                            "CMAKE_CURRENT_BINARY_DIR", to_posix_path(ctx.build_dir)
                         )
                         saved_vars = ctx.variables.copy()
                         saved_parent_scope_vars = ctx.parent_scope_vars
@@ -879,12 +879,12 @@ def process_commands(
                         ctx.current_source_dir = sub_source_dir
                         ctx.current_list_file = sub_cmakelists
                         ctx.parent_directory = str(saved_current_source_dir)
-                        ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = str(sub_source_dir)
-                        ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(sub_cmakelists)
-                        ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
+                        ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = to_posix_path(sub_source_dir)
+                        ctx.variables["CMAKE_CURRENT_LIST_FILE"] = to_posix_path(sub_cmakelists)
+                        ctx.variables["CMAKE_CURRENT_LIST_DIR"] = to_posix_path(
                             sub_cmakelists.parent
                         )
-                        ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(sub_binary_dir)
+                        ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = to_posix_path(sub_binary_dir)
 
                         def on_exit_add_subdirectory(
                             saved_current_source_dir: Path = saved_current_source_dir,
@@ -909,13 +909,13 @@ def process_commands(
                                     ctx.variables[var] = UNDEFINED_VAR_SENTINEL
                                 else:
                                     ctx.variables[var] = val
-                            ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = str(
+                            ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = to_posix_path(
                                 saved_current_source_dir
                             )
-                            ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(
+                            ctx.variables["CMAKE_CURRENT_LIST_FILE"] = to_posix_path(
                                 saved_current_list_file
                             )
-                            ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
+                            ctx.variables["CMAKE_CURRENT_LIST_DIR"] = to_posix_path(
                                 saved_current_list_file.parent
                             )
                             ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = saved_binary_dir
@@ -1085,8 +1085,8 @@ def process_commands(
                             inc_commands = parse_file(inc_file)
                             saved_list_file = ctx.current_list_file
                             ctx.current_list_file = inc_file
-                            ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(inc_file)
-                            ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
+                            ctx.variables["CMAKE_CURRENT_LIST_FILE"] = to_posix_path(inc_file)
+                            ctx.variables["CMAKE_CURRENT_LIST_DIR"] = to_posix_path(
                                 inc_file.parent
                             )
 
@@ -1094,10 +1094,10 @@ def process_commands(
                                 saved_list_file: Path = saved_list_file,
                             ) -> None:
                                 ctx.current_list_file = saved_list_file
-                                ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(
+                                ctx.variables["CMAKE_CURRENT_LIST_FILE"] = to_posix_path(
                                     saved_list_file
                                 )
-                                ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
+                                ctx.variables["CMAKE_CURRENT_LIST_DIR"] = to_posix_path(
                                     saved_list_file.parent
                                 )
 
@@ -1143,8 +1143,8 @@ def process_commands(
                             inc_commands = parse_file(found_file)
                             saved_list_file = ctx.current_list_file
                             ctx.current_list_file = found_file
-                            ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(found_file)
-                            ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
+                            ctx.variables["CMAKE_CURRENT_LIST_FILE"] = to_posix_path(found_file)
+                            ctx.variables["CMAKE_CURRENT_LIST_DIR"] = to_posix_path(
                                 found_file.parent
                             )
 
@@ -1152,10 +1152,10 @@ def process_commands(
                                 saved_list_file: Path = saved_list_file,
                             ) -> None:
                                 ctx.current_list_file = saved_list_file
-                                ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(
+                                ctx.variables["CMAKE_CURRENT_LIST_FILE"] = to_posix_path(
                                     saved_list_file
                                 )
-                                ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
+                                ctx.variables["CMAKE_CURRENT_LIST_DIR"] = to_posix_path(
                                     saved_list_file.parent
                                 )
 
@@ -1836,7 +1836,7 @@ int main() {{
                 if not output_path.is_absolute():
                     current_binary_dir = Path(
                         ctx.variables.get(
-                            "CMAKE_CURRENT_BINARY_DIR", str(ctx.build_dir)
+                            "CMAKE_CURRENT_BINARY_DIR", to_posix_path(ctx.build_dir)
                         )
                     )
                     output_path = current_binary_dir / output_path
@@ -2465,7 +2465,7 @@ int main() {{
                         if not export_file.is_absolute():
                             current_binary_dir = Path(
                                 ctx.variables.get(
-                                    "CMAKE_CURRENT_BINARY_DIR", str(ctx.build_dir)
+                                    "CMAKE_CURRENT_BINARY_DIR", to_posix_path(ctx.build_dir)
                                 )
                             )
                             export_file = current_binary_dir / export_file
@@ -2542,8 +2542,8 @@ int main() {{
                             saved_list_file = ctx.current_list_file
                             saved_list_dir = str(saved_list_file.parent)
                             ctx.current_list_file = found_file
-                            ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(found_file)
-                            ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
+                            ctx.variables["CMAKE_CURRENT_LIST_FILE"] = to_posix_path(found_file)
+                            ctx.variables["CMAKE_CURRENT_LIST_DIR"] = to_posix_path(
                                 found_file.parent
                             )
 
@@ -2552,7 +2552,7 @@ int main() {{
                                 saved_list_dir: str = saved_list_dir,
                             ) -> None:
                                 ctx.current_list_file = saved_list_file
-                                ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(
+                                ctx.variables["CMAKE_CURRENT_LIST_FILE"] = to_posix_path(
                                     saved_list_file
                                 )
                                 ctx.variables["CMAKE_CURRENT_LIST_DIR"] = saved_list_dir
@@ -2592,8 +2592,8 @@ int main() {{
 
                             saved_list_file = ctx.current_list_file
                             ctx.current_list_file = config_file
-                            ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(config_file)
-                            ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
+                            ctx.variables["CMAKE_CURRENT_LIST_FILE"] = to_posix_path(config_file)
+                            ctx.variables["CMAKE_CURRENT_LIST_DIR"] = to_posix_path(
                                 config_file.parent
                             )
 
@@ -2607,10 +2607,10 @@ int main() {{
                                 line: int = cmd.line,
                             ) -> None:
                                 ctx.current_list_file = saved_list_file
-                                ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(
+                                ctx.variables["CMAKE_CURRENT_LIST_FILE"] = to_posix_path(
                                     saved_list_file
                                 )
-                                ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
+                                ctx.variables["CMAKE_CURRENT_LIST_DIR"] = to_posix_path(
                                     saved_list_file.parent
                                 )
                                 if saved_find_package_name is None:
@@ -2691,7 +2691,7 @@ int main() {{
                 flex_exe = ctx.variables.get("FLEX_EXECUTABLE", "") or "flex"
                 current_binary_dir = Path(
                     ctx.variables.get(
-                        "CMAKE_CURRENT_BINARY_DIR", str(ctx.build_dir)
+                        "CMAKE_CURRENT_BINARY_DIR", to_posix_path(ctx.build_dir)
                     )
                 )
 
@@ -2807,7 +2807,7 @@ int main() {{
                 bison_exe = ctx.variables.get("BISON_EXECUTABLE", "") or "bison"
                 bison_current_binary_dir = Path(
                     ctx.variables.get(
-                        "CMAKE_CURRENT_BINARY_DIR", str(ctx.build_dir)
+                        "CMAKE_CURRENT_BINARY_DIR", to_posix_path(ctx.build_dir)
                     )
                 )
 
@@ -3305,7 +3305,7 @@ int main() {{
                     saved_current_list_file = ctx.current_list_file
                     saved_parent_directory = ctx.parent_directory
                     saved_binary_dir = ctx.variables.get(
-                        "CMAKE_CURRENT_BINARY_DIR", str(ctx.build_dir)
+                        "CMAKE_CURRENT_BINARY_DIR", to_posix_path(ctx.build_dir)
                     )
 
                     # Set up function arguments
@@ -3328,10 +3328,10 @@ int main() {{
                     # the caller's currently processed list file, not the file
                     # where the function was originally defined.
                     ctx.current_list_file = func_def.defining_file
-                    ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(
+                    ctx.variables["CMAKE_CURRENT_LIST_FILE"] = to_posix_path(
                         saved_current_list_file
                     )
-                    ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
+                    ctx.variables["CMAKE_CURRENT_LIST_DIR"] = to_posix_path(
                         saved_current_list_file.parent
                     )
 
@@ -3357,13 +3357,13 @@ int main() {{
                         ctx.parent_directory = saved_parent_directory
                         ctx.variables = saved_vars
                         ctx.apply_cache_updates(cache_updates)
-                        ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = str(
+                        ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = to_posix_path(
                             saved_current_source_dir
                         )
-                        ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(
+                        ctx.variables["CMAKE_CURRENT_LIST_FILE"] = to_posix_path(
                             saved_current_list_file
                         )
-                        ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
+                        ctx.variables["CMAKE_CURRENT_LIST_DIR"] = to_posix_path(
                             saved_current_list_file.parent
                         )
                         ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = saved_binary_dir
@@ -3385,7 +3385,7 @@ int main() {{
                     saved_current_list_file = ctx.current_list_file
                     saved_parent_directory = ctx.parent_directory
                     saved_binary_dir = ctx.variables.get(
-                        "CMAKE_CURRENT_BINARY_DIR", str(ctx.build_dir)
+                        "CMAKE_CURRENT_BINARY_DIR", to_posix_path(ctx.build_dir)
                     )
                     saved_argc = ctx.variables.get("ARGC", "")
                     saved_argv = ctx.variables.get("ARGV", "")
@@ -3468,13 +3468,13 @@ int main() {{
                         ctx.current_source_dir = saved_current_source_dir
                         ctx.current_list_file = saved_current_list_file
                         ctx.parent_directory = saved_parent_directory
-                        ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = str(
+                        ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = to_posix_path(
                             saved_current_source_dir
                         )
-                        ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(
+                        ctx.variables["CMAKE_CURRENT_LIST_FILE"] = to_posix_path(
                             saved_current_list_file
                         )
-                        ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
+                        ctx.variables["CMAKE_CURRENT_LIST_DIR"] = to_posix_path(
                             saved_current_list_file.parent
                         )
                         ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = saved_binary_dir

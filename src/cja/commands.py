@@ -98,12 +98,12 @@ def handle_project(
         ctx.variables["PROJECT_NAME"] = args[0]
         ctx.variables["CMAKE_PROJECT_NAME"] = args[0]
         init_compiler_flag_cache_vars(ctx)
-        ctx.variables["PROJECT_SOURCE_DIR"] = str(ctx.current_source_dir)
-        ctx.variables["PROJECT_BINARY_DIR"] = str(ctx.build_dir)
+        ctx.variables["PROJECT_SOURCE_DIR"] = to_posix_path(ctx.current_source_dir)
+        ctx.variables["PROJECT_BINARY_DIR"] = to_posix_path(ctx.build_dir)
         source_var = f"{args[0]}_SOURCE_DIR"
         binary_var = f"{args[0]}_BINARY_DIR"
-        ctx.set_cache(source_var, str(ctx.current_source_dir))
-        ctx.set_cache(binary_var, str(ctx.build_dir))
+        ctx.set_cache(source_var, to_posix_path(ctx.current_source_dir))
+        ctx.set_cache(binary_var, to_posix_path(ctx.build_dir))
 
 
 def _collect_directory_include_dirs(ctx: BuildContext) -> list[str]:
@@ -1233,7 +1233,7 @@ def handle_add_library(
                 defined_file=ctx.current_list_file,
                 defined_line=cmd.line,
                 binary_dir=ctx.variables.get(
-                    "CMAKE_CURRENT_BINARY_DIR", str(ctx.build_dir)
+                    "CMAKE_CURRENT_BINARY_DIR", to_posix_path(ctx.build_dir)
                 ),
             )
         )
@@ -1274,7 +1274,7 @@ def handle_add_executable(
                 defined_file=ctx.current_list_file,
                 defined_line=cmd.line,
                 binary_dir=ctx.variables.get(
-                    "CMAKE_CURRENT_BINARY_DIR", str(ctx.build_dir)
+                    "CMAKE_CURRENT_BINARY_DIR", to_posix_path(ctx.build_dir)
                 ),
             )
         )
@@ -2677,7 +2677,7 @@ def handle_file(
         destination = ctx.expand_variables(args[dst_idx + 1], strict, cmd.line)
         if not Path(destination).is_absolute():
             current_binary_dir = Path(
-                ctx.variables.get("CMAKE_CURRENT_BINARY_DIR", str(ctx.build_dir))
+                ctx.variables.get("CMAKE_CURRENT_BINARY_DIR", to_posix_path(ctx.build_dir))
             )
             destination = str(current_binary_dir / destination)
         destination_path = Path(destination)
@@ -2762,7 +2762,7 @@ def handle_file(
         output_path = strip_generator_expressions(output_path, ctx.variables)
         if not Path(output_path).is_absolute():
             current_binary_dir = Path(
-                ctx.variables.get("CMAKE_CURRENT_BINARY_DIR", str(ctx.build_dir))
+                ctx.variables.get("CMAKE_CURRENT_BINARY_DIR", to_posix_path(ctx.build_dir))
             )
             output_path = str(current_binary_dir / output_path)
 
@@ -2818,7 +2818,7 @@ def handle_configure_file(
     dst = Path(output_path)
     if not dst.is_absolute():
         current_binary_dir = Path(
-            ctx.variables.get("CMAKE_CURRENT_BINARY_DIR", str(ctx.build_dir))
+            ctx.variables.get("CMAKE_CURRENT_BINARY_DIR", to_posix_path(ctx.build_dir))
         )
         dst = current_binary_dir / dst
 
@@ -3067,7 +3067,7 @@ def handle_generate_export_header(
     )
 
     current_binary_dir = Path(
-        ctx.variables.get("CMAKE_CURRENT_BINARY_DIR", str(ctx.build_dir))
+        ctx.variables.get("CMAKE_CURRENT_BINARY_DIR", to_posix_path(ctx.build_dir))
     )
     if "EXPORT_FILE_NAME" in parsed:
         export_file_name = Path(str(parsed["EXPORT_FILE_NAME"]))

@@ -594,7 +594,7 @@ def handle_add_subdirectory(
             saved_parent_scope_vars = ctx.parent_scope_vars
             ctx.parent_scope_vars = {}
 
-            saved_binary_dir = ctx.variables.get("CMAKE_CURRENT_BINARY_DIR", str(ctx.build_dir))
+            saved_binary_dir = ctx.variables.get("CMAKE_CURRENT_BINARY_DIR", to_posix_path(ctx.build_dir))
             if len(args) >= 2:
                 binary_arg = Path(args[1])
                 if binary_arg.is_absolute():
@@ -614,10 +614,10 @@ def handle_add_subdirectory(
             ctx.current_source_dir = sub_source_dir
             ctx.current_list_file = sub_cmakelists
             ctx.parent_directory = str(saved_current_source_dir)
-            ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = str(sub_source_dir)
-            ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(sub_cmakelists)
-            ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(sub_cmakelists.parent)
-            ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(sub_binary_dir)
+            ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = to_posix_path(sub_source_dir)
+            ctx.variables["CMAKE_CURRENT_LIST_FILE"] = to_posix_path(sub_cmakelists)
+            ctx.variables["CMAKE_CURRENT_LIST_DIR"] = to_posix_path(sub_cmakelists.parent)
+            ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = to_posix_path(sub_binary_dir)
 
             try:
                 process_commands(sub_commands, ctx, trace, strict)
@@ -636,11 +636,11 @@ def handle_add_subdirectory(
                         ctx.variables.pop(var, None)
                     else:
                         ctx.variables[var] = val
-                ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = str(
+                ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = to_posix_path(
                     saved_current_source_dir
                 )
-                ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(saved_current_list_file)
-                ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(
+                ctx.variables["CMAKE_CURRENT_LIST_FILE"] = to_posix_path(saved_current_list_file)
+                ctx.variables["CMAKE_CURRENT_LIST_DIR"] = to_posix_path(
                     saved_current_list_file.parent
                 )
                 ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = saved_binary_dir
@@ -2390,12 +2390,12 @@ def run_script(
             ctx.set_cache(name, value)
         ctx.cli_variables = dict(variables)
 
-    ctx.variables["CMAKE_SOURCE_DIR"] = str(cwd)
-    ctx.variables["CMAKE_BINARY_DIR"] = str(cwd)
-    ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = str(cwd)
-    ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(cwd)
-    ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(script_path)
-    ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(script_path.parent)
+    ctx.variables["CMAKE_SOURCE_DIR"] = to_posix_path(cwd)
+    ctx.variables["CMAKE_BINARY_DIR"] = to_posix_path(cwd)
+    ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = to_posix_path(cwd)
+    ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = to_posix_path(cwd)
+    ctx.variables["CMAKE_CURRENT_LIST_FILE"] = to_posix_path(script_path)
+    ctx.variables["CMAKE_CURRENT_LIST_DIR"] = to_posix_path(script_path.parent)
     ctx.variables["CMAKE_MODULE_PATH"] = ""
     ctx.variables["CMAKE_SCRIPT_MODE_FILE"] = str(script_path)
     ctx.variables["CMAKE_HOST_SYSTEM_PROCESSOR"] = _detect_host_system_processor()
@@ -2486,12 +2486,12 @@ def configure(
         ctx.cli_variables = dict(variables)
 
     # Set up standard CMake variables
-    ctx.variables["CMAKE_SOURCE_DIR"] = str(ctx.source_dir)
-    ctx.variables["CMAKE_BINARY_DIR"] = str(ctx.build_dir)
-    ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = str(ctx.source_dir)
-    ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(ctx.build_dir)
-    ctx.variables["CMAKE_CURRENT_LIST_FILE"] = str(ctx.current_list_file)
-    ctx.variables["CMAKE_CURRENT_LIST_DIR"] = str(ctx.current_list_file.parent)
+    ctx.variables["CMAKE_SOURCE_DIR"] = to_posix_path(ctx.source_dir)
+    ctx.variables["CMAKE_BINARY_DIR"] = to_posix_path(ctx.build_dir)
+    ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = to_posix_path(ctx.source_dir)
+    ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = to_posix_path(ctx.build_dir)
+    ctx.variables["CMAKE_CURRENT_LIST_FILE"] = to_posix_path(ctx.current_list_file)
+    ctx.variables["CMAKE_CURRENT_LIST_DIR"] = to_posix_path(ctx.current_list_file.parent)
     ctx.variables["CMAKE_MODULE_PATH"] = ""
     ctx.variables.setdefault("CMAKE_BUILD_TYPE", "Debug")
     ctx.variables["CMAKE_FIND_PACKAGE_REDIRECTS_DIR"] = str(

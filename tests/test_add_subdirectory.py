@@ -99,7 +99,7 @@ def test_add_subdirectory_current_dir(tmp_path: Path) -> None:
 
     process_commands(commands, ctx)
 
-    assert ctx.variables["SUB_DIR"] == str(sub_dir.resolve())
+    assert ctx.variables["SUB_DIR"] == sub_dir.resolve().as_posix()
 
 
 def test_add_subdirectory_restores_current_source_dir(tmp_path: Path) -> None:
@@ -120,7 +120,7 @@ def test_add_subdirectory_restores_current_source_dir(tmp_path: Path) -> None:
     commands = [Command(name="add_subdirectory", args=["subdir"], line=1)]
     process_commands(commands, ctx)
 
-    assert ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] == str(source_dir)
+    assert ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] == source_dir.as_posix()
 
 
 def test_add_subdirectory_non_existing(tmp_path: Path) -> None:
@@ -158,7 +158,7 @@ def test_add_subdirectory_two_levels(tmp_path: Path) -> None:
     commands = [Command(name="add_subdirectory", args=["subdir"], line=1)]
     process_commands(commands, ctx)
 
-    assert ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] == str(source_dir)
+    assert ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] == source_dir.as_posix()
 
 
 def test_add_subdirectory_explicit_binary_dir(tmp_path: Path) -> None:
@@ -184,7 +184,7 @@ def test_add_subdirectory_explicit_binary_dir(tmp_path: Path) -> None:
     ]
     process_commands(commands, ctx)
 
-    assert ctx.variables["DEP_BINARY_DIR"] == str(expected_bin)
+    assert ctx.variables["DEP_BINARY_DIR"] == expected_bin.as_posix()
 
 
 def test_project_source_dir_is_global_across_subdirectory(tmp_path: Path) -> None:
@@ -200,7 +200,7 @@ def test_project_source_dir_is_global_across_subdirectory(tmp_path: Path) -> Non
     commands = [Command(name="add_subdirectory", args=["gtest"], line=1)]
     process_commands(commands, ctx)
 
-    assert ctx.variables["gtest_SOURCE_DIR"] == str(sub_dir.resolve())
+    assert ctx.variables["gtest_SOURCE_DIR"] == sub_dir.resolve().as_posix()
 
 
 def test_add_subdirectory_library_output_in_subdir(tmp_path: Path) -> None:

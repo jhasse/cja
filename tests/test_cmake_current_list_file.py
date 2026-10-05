@@ -25,8 +25,8 @@ def test_cmake_current_list_file(tmp_path: Path) -> None:
 
     ctx = configure(source_dir, "build")
 
-    assert ctx.variables["MAIN_FILE"] == str(main_cmake.resolve())
-    assert ctx.variables["SUB_FILE"] == str(sub_cmake.resolve())
+    assert ctx.variables["MAIN_FILE"] == main_cmake.resolve().as_posix()
+    assert ctx.variables["SUB_FILE"] == sub_cmake.resolve().as_posix()
 
 
 def test_print_location(
