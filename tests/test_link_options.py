@@ -15,8 +15,11 @@ def link_libs(ninja: str, output_pattern: str) -> str:
         re.MULTILINE,
     )
     assert m, f"no link statement for {output_pattern}:\n{ninja}"
-    libs = re.search(r"^  libs = (.*)$", m.group(1), re.MULTILINE)
-    return libs.group(1) if libs else ""
+    block = re.sub(r" \$\n {4}", " ", m.group(1))
+    libs = re.search(r"^  libs = (.*)$", block, re.MULTILINE)
+    value = libs.group(1) if libs else ""
+    # Windows adds an explicit subsystem flag to executables
+    return re.sub(r"\s*-Wl,/SUBSYSTEM:\w+", "", value)
 
 
 def configure_project(
