@@ -528,6 +528,52 @@ def _quote_if_spaced(part: str) -> str:
     return _quote_ninja_cmd_part(part) if re.search(r"\s", part) else part
 
 
+def _link_option_flags(options: list[str], variables: dict[str, str]) -> list[str]:
+    """Turn LINK_OPTIONS entries into link command arguments, like CMake.
+
+    Lists are split, ``SHELL:`` groups are split shell-like, ``LINKER:`` items
+    are passed to the linker with ``-Wl,`` and repeated options are dropped
+    (except within ``SHELL:`` groups).
+    """
+    flags: list[str] = []
+    seen: set[str] = set()
+    for option in options:
+        for item in strip_generator_expressions(option, variables).split(";"):
+            linker = item.startswith("LINKER:")
+            if linker:
+                item = item.removeprefix("LINKER:")
+            shell = item.startswith("SHELL:")
+            if shell:
+                parts = split_flags(item.removeprefix("SHELL:"))
+            elif linker:
+                parts = item.split(",")
+            else:
+                parts = [item]
+            parts = [part for part in parts if part]
+            if linker and parts:
+                parts = ["-Wl," + ",".join(parts)]
+            for part in parts:
+                if shell or part not in seen:
+                    seen.add(part)
+                    flags.append(_quote_if_spaced(part))
+    return flags
+
+
+def _dependency_link_options(
+    ctx: BuildContext, own_options: list[str], dependencies: list[str]
+) -> list[str]:
+    """A target's link options followed by the INTERFACE ones of its dependencies."""
+    options = list(own_options)
+    seen: set[int] = set()
+    for name in dependencies:
+        lib = ctx.get_library(name)
+        # Aliases share their option lists with the real library
+        if lib and id(lib.public_link_options) not in seen:
+            seen.add(id(lib.public_link_options))
+            options.extend(lib.public_link_options)
+    return _link_option_flags(options, ctx.variables)
+
+
 def _include_flag(path: str, source_dir: Path) -> str:
     """Return the ``-I`` flag for an include directory, quoted if needed."""
     return _quote_if_spaced(f"-I{_ninja_flag_path(path, source_dir)}")
@@ -1756,11 +1802,17 @@ def generate_ninja(
 
                 register_output(lib_name, lib.defined_file, lib.defined_line)
                 link_rule = "solink_cxx" if uses_cxx else "solink"
+                lib_link_options = _dependency_link_options(
+                    ctx, lib.link_options, order_link_libraries(lib.link_libraries)
+                )
                 n.build(
                     lib_name,
                     link_rule,
                     objects,
                     order_only=lib_dep_order_only or None,
+                    variables={"libs": " ".join(lib_link_options)}
+                    if lib_link_options
+                    else None,
                 )
                 n.newline()
                 lib_outputs[lib.name] = lib_name
@@ -2013,6 +2065,9 @@ def generate_ninja(
                 link_flags.append(
                     _quote_if_spaced(f"-L{_ninja_flag_path(link_dir, ctx.source_dir)}")
                 )
+            link_flags.extend(
+                _dependency_link_options(ctx, exe.link_options, expanded_link_libraries)
+            )
             for lib_name in expanded_link_libraries:
                 linked_lib = ctx.get_library(lib_name)
                 if linked_lib and linked_lib.lib_type == "INTERFACE":

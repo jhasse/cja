@@ -570,6 +570,55 @@ def handle_target_compile_options(
                 exe.compile_options.extend(public_opts)
 
 
+def handle_target_link_options(
+    ctx: BuildContext,
+    cmd: Command,
+    args: list[str],
+    strict: bool,
+) -> None:
+    """Handle target_link_options() command."""
+    if len(args) < 2:
+        return
+    target_name = args[0]
+    public_opts: list[str] = []
+    target_opts: list[str] = []
+    all_opts: list[str] = []
+    visibility = "PUBLIC"
+    before = False
+    for arg in args[1:]:
+        if arg in ("PUBLIC", "INTERFACE", "PRIVATE"):
+            visibility = arg
+        elif arg == "BEFORE":
+            before = True
+        else:
+            # Generator expressions, SHELL: and LINKER: are handled when the
+            # link command is generated.
+            expanded = ctx.expand_variables(arg, strict, cmd.line)
+            if not expanded:
+                continue
+            all_opts.append(expanded)
+            if visibility != "PRIVATE":
+                public_opts.append(expanded)
+            if visibility != "INTERFACE":
+                target_opts.append(expanded)
+
+    def add(options: list[str], new: list[str]) -> None:
+        if before:
+            options[:0] = new
+        else:
+            options.extend(new)
+
+    lib = ctx.get_library(target_name)
+    if lib:
+        add(lib.link_options, target_opts)
+        add(lib.public_link_options, public_opts)
+        return
+    exe = ctx.get_executable(target_name)
+    if exe:
+        # Executables don't propagate, so all options are local.
+        add(exe.link_options, all_opts)
+
+
 def handle_target_precompile_headers(
     ctx: BuildContext,
     cmd: Command,
@@ -1174,6 +1223,8 @@ def handle_add_library(
                         compile_features=lib.compile_features,
                         link_libraries=lib.link_libraries,
                         link_directories=lib.link_directories,
+                        link_options=lib.link_options,
+                        public_link_options=lib.public_link_options,
                         public_include_directories=lib.public_include_directories,
                         public_compile_definitions=lib.public_compile_definitions,
                         public_compile_options=lib.public_compile_options,

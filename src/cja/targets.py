@@ -34,6 +34,8 @@ class Library:
     )  # PUBLIC link directories
     link_libraries: list[str] = field(default_factory=list)
     public_link_libraries: list[str] = field(default_factory=list)
+    link_options: list[str] = field(default_factory=list)  # PRIVATE link options
+    public_link_options: list[str] = field(default_factory=list)  # PUBLIC options
     properties: dict[str, str] = field(default_factory=dict)
     is_alias: bool = False
     alias_for: str | None = None
@@ -58,6 +60,7 @@ class Executable:
     compile_definitions: list[str] = field(default_factory=list)
     compile_options: list[str] = field(default_factory=list)
     link_directories: list[str] = field(default_factory=list)
+    link_options: list[str] = field(default_factory=list)
     properties: dict[str, str] = field(default_factory=dict)
     dependencies: list[str] = field(default_factory=list)
     post_build_commands: list[list[str]] = field(default_factory=list)
