@@ -25,7 +25,7 @@ def fmt(source: str, **style: Any) -> str:
 
 
 def test_matches_cmake_format_defaults() -> None:
-    """Layout follows cmake-format's default configuration."""
+    """Calls that don't fit on one line are laid out like cmake-format does."""
     source = """\
 cmake_minimum_required(VERSION 3.20)
 project(demo VERSION 1.0 LANGUAGES CXX)
@@ -42,10 +42,7 @@ add_custom_command(OUTPUT generated.h COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR
         fmt(source)
         == """\
 cmake_minimum_required(VERSION 3.20)
-project(
-  demo
-  VERSION 1.0
-  LANGUAGES CXX)
+project(demo VERSION 1.0 LANGUAGES CXX)
 set(SOURCES
     src/main.cpp
     src/foo.cpp
@@ -64,10 +61,7 @@ if(WIN32
    AND NOT DEFINED SOME_VERY_LONG_OPTION_NAME_FOR_TESTING)
   target_compile_definitions(demo PRIVATE _CRT_SECURE_NO_WARNINGS)
 endif()
-install(
-  TARGETS demo
-  RUNTIME DESTINATION bin
-  LIBRARY DESTINATION lib)
+install(TARGETS demo RUNTIME DESTINATION bin LIBRARY DESTINATION lib)
 add_custom_command(
   OUTPUT generated.h
   COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/generate.py --output generated.h
@@ -75,6 +69,36 @@ add_custom_command(
   VERBATIM)
 """
     )
+
+
+def test_call_that_fits_stays_on_one_line() -> None:
+    """Unlike cmake-format, many arguments or groups alone don't force a break."""
+    source = """\
+set(x "${y}" PARENT_SCOPE)
+list(APPEND foo a b c d e f g)
+find_package(Boost COMPONENTS coroutine thread REQUIRED) # trailing
+"""
+    assert fmt(source) == source
+    assert (
+        fmt(source, line_width=40)
+        == """\
+set(x "${y}" PARENT_SCOPE)
+list(APPEND foo a b c d e f g)
+find_package(
+  Boost
+  COMPONENTS coroutine thread
+  REQUIRED) # trailing
+"""
+    )
+    assert fmt(source, line_width=25).startswith("""\
+set(x
+    "${y}"
+    PARENT_SCOPE)
+list(
+  APPEND
+  foo
+  a
+""")
 
 
 def test_block_indentation() -> None:
@@ -249,14 +273,17 @@ def test_line_endings_and_bom() -> None:
 
 
 def test_tabs() -> None:
-    source = "if(a)\nset(SRCS a.cpp b.cpp c.cpp d.cpp e.cpp f.cpp g.cpp)\nendif()\n"
+    source = (
+        "if(a)\nset(SRCS source_a.cpp source_b.cpp source_c.cpp source_d.cpp "
+        "source_e.cpp source_f.cpp)\nendif()\n"
+    )
+    first_line = "if(a)\n\tset(SRCS source_a.cpp source_b.cpp source_c.cpp source_d.cpp source_e.cpp\n"
+    # Block indentation uses tabs, alignment uses spaces
     assert fmt(source, use_tab="ForIndentation", indent_width=4, tab_width=4) == (
-        "if(a)\n\tset(SRCS\n\t    a.cpp\n\t    b.cpp\n\t    c.cpp\n\t    d.cpp\n"
-        "\t    e.cpp\n\t    f.cpp\n\t    g.cpp)\nendif()\n"
+        first_line + "\t         source_f.cpp)\nendif()\n"
     )
     assert fmt(source, use_tab="Always", indent_width=4, tab_width=4) == (
-        "if(a)\n\tset(SRCS\n\t\ta.cpp\n\t\tb.cpp\n\t\tc.cpp\n\t\td.cpp\n"
-        "\t\te.cpp\n\t\tf.cpp\n\t\tg.cpp)\nendif()\n"
+        first_line + "\t\t\t source_f.cpp)\nendif()\n"
     )
 
 

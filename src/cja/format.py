@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 import sys
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -1920,7 +1920,14 @@ def _indent_lines(
 
 def format_statement(stmt: Statement, indent: int, style: Style) -> list[str]:
     node = build_statement(stmt, style)
-    node.reflow(style, (0, indent))
+    # Like clang-format, keep a call on one line if it fits. cmake-format would
+    # still break it up when it has many argument groups or arguments.
+    one_line_style = replace(
+        style, max_subgroups_hwrap=sys.maxsize, max_pargs_hwrap=sys.maxsize
+    )
+    end = node.reflow(one_line_style, (0, indent))
+    if not node.valid or end[0] != 0:
+        node.reflow(style, (0, indent))
     canvas = Canvas()
     node.write(canvas)
     return _indent_lines(canvas.lines(), indent, style)

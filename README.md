@@ -97,6 +97,8 @@ There is no configuration file of its own. Instead, these options are read from 
 
 Everything else follows cmake-format's defaults, with a few differences:
 
+* A command call that fits on one line is kept on one line, like clang-format does (cmake-format breaks calls with
+  more than two argument groups or six arguments).
 * Comments are never reflowed.
 * The names of user-defined commands keep their spelling (builtin commands are still lowercased) and UPPERCASE words
   in their arguments are treated as keywords.
