@@ -2,6 +2,7 @@
 
 import hashlib
 import os
+import platform
 import shlex
 import shutil
 import subprocess
@@ -1239,8 +1240,12 @@ def process_commands(
                         f.write(b"int main() { return 0; }\n")
                         temp_src = f.name
                     temp_out = temp_src + ".out"
+                    cmd = [ctx.c_compiler, "-flto", "-o", temp_out, temp_src]
+                    # Must match the linker the generator uses with LTO.
+                    if platform.system() == "Windows":
+                        cmd.append("-fuse-ld=lld-link")
                     result = subprocess.run(
-                        [ctx.c_compiler, "-flto", "-o", temp_out, temp_src],
+                        cmd,
                         capture_output=True,
                         text=True,
                         check=False,

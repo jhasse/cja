@@ -739,6 +739,7 @@ def generate_ninja(
     elif "CMAKE_INTERPROCEDURAL_OPTIMIZATION" in ctx.variables:
         ipo_enabled = is_truthy(ctx.variables["CMAKE_INTERPROCEDURAL_OPTIMIZATION"])
     ipo_flags = ""
+    ipo_link_flags = ""
     if ipo_enabled:
         c_id = ctx.variables.get("CMAKE_C_COMPILER_ID", "")
         cxx_id = ctx.variables.get("CMAKE_CXX_COMPILER_ID", "")
@@ -747,6 +748,10 @@ def generate_ninja(
             ipo_flags = "-flto=auto"
         else:
             ipo_flags = "-flto"
+        ipo_link_flags = ipo_flags
+        # link.exe can't read LLVM bitcode objects; lld-link performs the LTO step.
+        if platform.system() == "Windows":
+            ipo_link_flags += " -fuse-ld=lld-link"
 
     with open(output_path, "w") as f:
         n = Writer(f)
@@ -877,7 +882,7 @@ def generate_ninja(
         linker_flags_parts = [
             ctx.variables.get("CMAKE_EXE_LINKER_FLAGS", ""),
             ctx.variables.get("CMAKE_LINKER_FLAGS", ""),
-            ipo_flags,
+            ipo_link_flags,
         ]
         linker_flags = " ".join(p for p in linker_flags_parts if p).strip()
         n.variable("ldflags", linker_flags)
