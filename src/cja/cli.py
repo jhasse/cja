@@ -11,6 +11,7 @@ from pathlib import Path
 from termcolor import colored
 
 from . import __version__
+from .format import decode, find_style, format_source
 from .generator import configure, run_script, verify_globs
 
 
@@ -199,6 +200,49 @@ def cmd_script(
         return 1
     except SystemExit as e:
         return int(e.code) if isinstance(e.code, int) else 1
+
+
+def cmd_format(args: argparse.Namespace) -> int:
+    """Format CMake files like clang-format / cmake-format."""
+    error_label = colored("error:", "red", attrs=["bold"])
+    files: list[str] = args.files or ["-"]
+    if args.in_place and "-" in files:
+        print(f"{error_label} -i cannot be used when reading from stdin", file=sys.stderr)
+        return 1
+
+    status = 0
+    for name in files:
+        if name == "-":
+            path = Path(args.assume_filename or "CMakeLists.txt")
+            source, encoding = decode(sys.stdin.buffer.read())
+            name = "<stdin>"
+        else:
+            path = Path(name)
+            try:
+                source, encoding = decode(path.read_bytes())
+            except OSError as e:
+                print(f"{error_label} {name}: {e.strerror}", file=sys.stderr)
+                status = 1
+                continue
+
+        try:
+            formatted = format_source(source, find_style(path.parent), name)
+        except SyntaxError as e:
+            print(f"{e.filename}:{e.lineno}: {error_label} {e.msg}", file=sys.stderr)
+            status = 1
+            continue
+
+        if args.check:
+            if formatted != source:
+                print(f"{name}: would reformat", file=sys.stderr)
+                status = 1
+        elif args.in_place:
+            if formatted != source:
+                path.write_bytes(formatted.encode(encoding))
+        else:
+            sys.stdout.buffer.write(formatted.encode(encoding))
+    sys.stdout.flush()
+    return status
 
 
 def cmd_command_mode(args: list[str]) -> int:
@@ -412,6 +456,36 @@ def main() -> int:
         help="Run in release mode (CMAKE_BUILD_TYPE=Release)",
     )
 
+    # Format subcommand
+    format_parser = subparsers.add_parser(
+        "format",
+        help="Format CMake files",
+        description="Format CMake files. Indentation, column limit, blank lines and "
+        "line endings are taken from the nearest .clang-format file.",
+    )
+    format_parser.add_argument(
+        "files",
+        nargs="*",
+        metavar="FILE",
+        help="Files to format (default: read from stdin)",
+    )
+    format_parser.add_argument(
+        "-i",
+        "--in-place",
+        action="store_true",
+        help="Edit files in place instead of printing to stdout",
+    )
+    format_parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Don't write anything; exit with 1 if a file isn't formatted",
+    )
+    format_parser.add_argument(
+        "--assume-filename",
+        metavar="PATH",
+        help="Path used to find .clang-format when reading from stdin",
+    )
+
     # Extract -P SCRIPT [ARGS...] before argparse so trailing positional script
     # arguments are not parsed as subcommands.
     argv = sys.argv[1:]
@@ -430,6 +504,8 @@ def main() -> int:
     args, ninja_args = parser.parse_known_args(argv)
     if hasattr(args, "command") and args.command in ("build", "test", "run"):
         args.ninja_args = ninja_args
+    elif args.command == "format" and ninja_args:
+        format_parser.error(f"unrecognized arguments: {' '.join(ninja_args)}")
 
     try:
         if args.E:
@@ -454,6 +530,8 @@ def main() -> int:
             return cmd_test(args)
         elif args.command == "run":
             return cmd_run(args)
+        elif args.command == "format":
+            return cmd_format(args)
         else:
             # Default: configure only
             return cmd_configure(args)

@@ -73,3 +73,33 @@ ninja -f build-release.ninja
 
 cja also generates a `run` phony target that executes the first executable (or the one set via
 [VS_STARTUP_PROJECT](https://cmake.org/cmake/help/latest/prop_dir/VS_STARTUP_PROJECT.html)) in your `CMakeLists.txt`.
+
+## Format Subcommand
+
+`cja format` formats CMake files, similar to [cmake-format](https://github.com/cheshirekow/cmake_format) or
+`clang-format`:
+
+```sh
+cja format CMakeLists.txt               # print the formatted file
+cja format -i CMakeLists.txt foo.cmake  # format files in place
+cja format --check CMakeLists.txt       # exit with 1 if the file isn't formatted
+```
+
+Without file arguments it reads from stdin (use `--assume-filename` to tell it where the file lives).
+
+There is no configuration file of its own. Instead, these options are read from the nearest `.clang-format`:
+
+* `IndentWidth`, `UseTab` and `TabWidth`
+* `ColumnLimit` (`0` means no limit)
+* `MaxEmptyLinesToKeep`
+* `LineEnding`
+* `BasedOnStyle` (for the defaults of the options above) and `DisableFormat`
+
+Everything else follows cmake-format's defaults, with a few differences:
+
+* Comments are never reflowed.
+* The names of user-defined commands keep their spelling (builtin commands are still lowercased) and UPPERCASE words
+  in their arguments are treated as keywords.
+* Line endings and a UTF-8 BOM are preserved.
+
+Use `# cmake-format: off` / `# cmake-format: on` (or `# clang-format off` / `on`) to exclude a region.
