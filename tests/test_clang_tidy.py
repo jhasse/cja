@@ -147,3 +147,34 @@ def test_clang_tidy_example(tmp_path: Path) -> None:
     )
     assert result.returncode != 0, "Build should fail due to clang-tidy error"
     assert "modernize-use-nullptr" in result.stdout
+
+
+def test_clang_tidy_args_are_quoted_and_escaped(tmp_path: Path) -> None:
+    """Regex arguments with $ and | must survive both Ninja and the shell."""
+    (tmp_path / "main.cpp").write_text("int main() {}\n")
+
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    commands = [
+        Command(name="add_executable", args=["app", "main.cpp"], line=1),
+        Command(
+            name="set_target_properties",
+            args=[
+                "app",
+                "PROPERTIES",
+                "CXX_CLANG_TIDY",
+                r"clang-tidy;--exclude-header-filter=/dr_mp3\.h$|^/cache/",
+            ],
+            is_quoted=[False, False, False, True],
+            line=2,
+        ),
+    ]
+    process_commands(commands, ctx)
+
+    ninja_file = tmp_path / "build.ninja"
+    generate_ninja(ctx, ninja_file, "build")
+    content = ninja_file.read_text()
+
+    assert (
+        r"clang_tidy_cmd = clang-tidy '--exclude-header-filter=/dr_mp3\.h$$|^/cache/'"
+        in content
+    )

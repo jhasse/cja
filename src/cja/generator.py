@@ -18,7 +18,7 @@ from .build_context import (
 )
 from .commands import evaluate_glob, glob_watch_dirs
 from .configurator import process_commands
-from .ninja_syntax import Writer
+from .ninja_syntax import Writer, escape
 from .parser import Command
 from .targets import Executable, Library
 from .utils import (
@@ -49,6 +49,13 @@ def _quote_ninja_cmd_part(part: str) -> str:
             return f'"{escaped}"'
         return normalized
     return shlex.quote(part)
+
+
+def _format_clang_tidy_cmd(tidy_cmd: str) -> str:
+    """Turn a CXX_CLANG_TIDY / C_CLANG_TIDY list into a Ninja command fragment."""
+    return " ".join(
+        escape(_quote_ninja_cmd_part(part)) for part in tidy_cmd.split(";") if part
+    )
 
 
 def _format_imported_flags(flags: str) -> str:
@@ -1758,7 +1765,7 @@ def generate_ninja(
                 tidy_cmd = None if is_asm else (cxx_clang_tidy if is_cxx else c_clang_tidy)
                 tidy_stamp: str | None = None
                 if tidy_cmd:
-                    tidy_args = tidy_cmd.replace(";", " ")
+                    tidy_args = _format_clang_tidy_cmd(tidy_cmd)
                     tidy_stamp = f"{obj_name}.tidy"
                     tidy_vars: dict[str, str | list[str] | None] = {
                         "clang_tidy_cmd": tidy_args,
@@ -2032,7 +2039,7 @@ def generate_ninja(
                 tidy_cmd = None if is_asm else (cxx_clang_tidy if is_cxx else c_clang_tidy)
                 tidy_stamp: str | None = None
                 if tidy_cmd:
-                    tidy_args = tidy_cmd.replace(";", " ")
+                    tidy_args = _format_clang_tidy_cmd(tidy_cmd)
                     tidy_stamp = f"{obj_name}.tidy"
                     tidy_vars: dict[str, str | list[str] | None] = {
                         "clang_tidy_cmd": tidy_args,
