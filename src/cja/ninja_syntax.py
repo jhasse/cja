@@ -149,7 +149,7 @@ class Writer:
         self._line(f'subninja {path}')
 
     def default(self, paths: str | list[str]) -> None:
-        self._line('default {}'.format(' '.join(as_list(paths))))
+        self._line('default {}'.format(' '.join(escape_path(p) for p in as_list(paths))))
 
     def _count_dollars_before_index(self, s: str, i: int) -> int:
         """Returns the number of '$' characters right in front of s[i]."""
