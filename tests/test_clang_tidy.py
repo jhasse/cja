@@ -1,8 +1,8 @@
 """Tests for CXX_CLANG_TIDY support via validation nodes."""
 
+import platform
 import shutil
 import subprocess
-import platform
 from pathlib import Path
 
 import pytest
