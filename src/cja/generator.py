@@ -1210,6 +1210,7 @@ def generate_ninja(
                 "custom_command",
                 depends,
                 variables={"cmd": cmd_str},
+                pool="console" if custom_cmd.uses_terminal else None,
             )
             for out in outputs:
                 register_output(out, custom_cmd.defined_file, custom_cmd.defined_line)

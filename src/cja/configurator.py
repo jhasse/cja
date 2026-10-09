@@ -2075,6 +2075,7 @@ int main() {{
                     main_dependency: str | None = None
                     working_directory: str | None = None
                     verbatim = False
+                    uses_terminal = False
                     arg_idx = 0
                     current_section = None
                     while arg_idx < len(args):
@@ -2092,10 +2093,13 @@ int main() {{
                         elif arg == "VERBATIM":
                             verbatim = True
                             current_section = None
+                        elif arg == "USES_TERMINAL":
+                            uses_terminal = True
+                            current_section = None
                         elif arg == "ARGS":
                             # Legacy CMake keyword; ignored.
                             pass
-                        elif arg in ("COMMENT", "USES_TERMINAL", "COMMAND_EXPAND_LISTS", "DEPFILE", "JOB_POOL", "BYPRODUCTS"):
+                        elif arg in ("COMMENT", "COMMAND_EXPAND_LISTS", "DEPFILE", "JOB_POOL", "BYPRODUCTS"):
                             current_section = arg  # values for these are ignored
                         else:
                             arg = ctx.expand_variables(arg, strict, cmd.line)
@@ -2145,6 +2149,7 @@ int main() {{
                                 main_dependency=main_dependency,
                                 working_directory=working_directory,
                                 verbatim=verbatim,
+                                uses_terminal=uses_terminal,
                                 defined_file=ctx.current_list_file,
                                 defined_line=cmd.line,
                             )

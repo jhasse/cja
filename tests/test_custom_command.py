@@ -699,3 +699,36 @@ add_custom_command(
     expected_tool = (tmp_path / "build" / f"tool{EXE_EXT}").as_posix()
     assert expected_tool in ninja_content
     assert "&& tool --write" not in ninja_content
+
+
+def test_add_custom_command_uses_terminal(tmp_path: Path) -> None:
+    """USES_TERMINAL runs the command in ninja's console pool."""
+    from cja.generator import configure
+
+    (tmp_path / "CMakeLists.txt").write_text("""\
+cmake_minimum_required(VERSION 3.10)
+project(UsesTerminalTest)
+
+add_custom_command(
+    OUTPUT interactive.txt
+    COMMAND echo interactive > interactive.txt
+    USES_TERMINAL
+    DEPENDS input.txt
+)
+
+add_custom_command(
+    OUTPUT plain.txt
+    COMMAND echo plain > plain.txt
+)
+""")
+    (tmp_path / "input.txt").write_text("")
+
+    configure(tmp_path, "build")
+
+    ninja_content = (tmp_path / "build.ninja").read_text()
+
+    assert (
+        "build $builddir/interactive.txt: custom_command input.txt\n"
+        "  pool = console\n"
+    ) in ninja_content
+    assert "build $builddir/plain.txt: custom_command\n  cmd =" in ninja_content
