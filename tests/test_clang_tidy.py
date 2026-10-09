@@ -1,5 +1,6 @@
 """Tests for CXX_CLANG_TIDY support via validation nodes."""
 
+import platform
 import shutil
 import subprocess
 from pathlib import Path
@@ -178,3 +179,34 @@ def test_clang_tidy_args_are_quoted_and_escaped(tmp_path: Path) -> None:
         r"clang_tidy_cmd = clang-tidy '--exclude-header-filter=/dr_mp3\.h$$|^/cache/'"
         in content
     )
+
+
+@pytest.mark.skipif(platform.system() == "Windows", reason="uses a shell script")
+@pytest.mark.parametrize("exit_code", [0, 1])
+def test_clang_tidy_stderr_only_shown_on_failure(tmp_path: Path, exit_code: int) -> None:
+    """Like CMake, clang-tidy's stderr statistics should be hidden unless it fails."""
+    fake_tidy = tmp_path / "fake-tidy"
+    fake_tidy.write_text(
+        f"#!/bin/sh\necho diagnostic-on-stdout\necho stats-on-stderr >&2\nexit {exit_code}\n"
+    )
+    fake_tidy.chmod(0o755)
+    (tmp_path / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.20)\n"
+        "project(test CXX)\n"
+        "add_executable(app main.cpp)\n"
+        f'set_target_properties(app PROPERTIES CXX_CLANG_TIDY "{fake_tidy}")\n'
+    )
+    (tmp_path / "main.cpp").write_text("int main() {}\n")
+
+    configure(tmp_path, "build")
+    result = subprocess.run(
+        ["ninja"], cwd=tmp_path, capture_output=True, text=True, check=False
+    )
+
+    assert "diagnostic-on-stdout" in result.stdout
+    if exit_code == 0:
+        assert result.returncode == 0
+        assert "stats-on-stderr" not in result.stdout
+    else:
+        assert result.returncode != 0
+        assert "stats-on-stderr" in result.stdout

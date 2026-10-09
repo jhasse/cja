@@ -1025,9 +1025,10 @@ def generate_ninja(
         )
         if has_clang_tidy:
             src_prefix = str(ctx.source_dir.resolve()) + "/"
+            # Like CMake, only show clang-tidy's stderr (e.g. "N warnings generated.") on failure
             n.rule(
                 "clang_tidy",
-                command=f"$clang_tidy_cmd $in -- $cflags >$out.log 2>&1; rv=$$?; sed 's|{src_prefix}||g' $out.log; rm -f $out.log; [ $$rv -eq 0 ] && touch $out || exit $$rv",
+                command=f"$clang_tidy_cmd $in -- $cflags >$out.log 2>$out.err; rv=$$?; [ $$rv -eq 0 ] || cat $out.err >>$out.log; sed 's|{src_prefix}||g' $out.log; rm -f $out.log $out.err; [ $$rv -eq 0 ] && touch $out || exit $$rv",
                 description="\x1b[35mAnalyzing $in\x1b[0m",
             )
             n.newline()
