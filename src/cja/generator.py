@@ -43,6 +43,8 @@ def _quote_ninja_cmd_part(part: str) -> str:
     if part == "$builddir":
         return part
     if platform.system() == "Windows":
+        if re.search(r"[|&<>^]", part):
+            return '"' + part.replace('"', '\\"') + '"'
         normalized = part.replace("\\", "/")
         if re.search(r'[\s"]', normalized):
             escaped = normalized.replace('"', '\\"')

@@ -2,6 +2,7 @@
 
 import shutil
 import subprocess
+import platform
 from pathlib import Path
 
 import pytest
@@ -174,7 +175,8 @@ def test_clang_tidy_args_are_quoted_and_escaped(tmp_path: Path) -> None:
     generate_ninja(ctx, ninja_file, "build")
     content = ninja_file.read_text()
 
-    assert (
-        r"clang_tidy_cmd = clang-tidy '--exclude-header-filter=/dr_mp3\.h$$|^/cache/'"
-        in content
-    )
+    if platform.system() == "Windows":
+        expected = r'clang_tidy_cmd = clang-tidy "--exclude-header-filter=/dr_mp3\.h$$|^/cache/"'
+    else:
+        expected = r"clang_tidy_cmd = clang-tidy '--exclude-header-filter=/dr_mp3\.h$$|^/cache/'"
+    assert expected in content
