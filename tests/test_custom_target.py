@@ -342,3 +342,26 @@ add_custom_target(
     assert f"{build_dir}/myapp" in cmd_line
     assert "'$builddir/myapp'" not in cmd_line
     assert cmd_line.endswith(f"&& touch {build_dir}/run_app.stamp")
+
+
+def test_add_custom_target_uses_terminal(tmp_path: Path) -> None:
+    """USES_TERMINAL runs the target's commands in ninja's console pool."""
+    from cja.generator import configure
+
+    (tmp_path / "CMakeLists.txt").write_text("""\
+cmake_minimum_required(VERSION 3.10)
+project(UsesTerminalTest)
+
+add_custom_target(interactive COMMAND echo interactive USES_TERMINAL VERBATIM)
+add_custom_target(plain COMMAND echo plain)
+""")
+
+    configure(tmp_path, "build")
+
+    ninja_content = (tmp_path / "build.ninja").read_text()
+
+    assert (
+        "build $builddir/interactive.stamp: custom_command\n"
+        "  pool = console\n"
+    ) in ninja_content
+    assert "build $builddir/plain.stamp: custom_command\n  cmd =" in ninja_content

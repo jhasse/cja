@@ -113,6 +113,7 @@ class CustomTarget:
     all: bool = False
     working_directory: str | None = None
     verbatim: bool = False
+    uses_terminal: bool = False
     comment: str = ""
     defined_file: Path | None = None
     defined_line: int = 0

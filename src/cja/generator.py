@@ -1259,6 +1259,7 @@ def generate_ninja(
                     ct_depends,
                     order_only=ct_dep_order_only or None,
                     variables={"cmd": f"{ct_cmd_str} && touch {touched}"},
+                    pool="console" if ct.uses_terminal else None,
                 )
                 n.build([ct.name], "phony", [stamp])
             else:

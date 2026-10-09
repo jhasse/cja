@@ -2165,6 +2165,7 @@ int main() {{
                 ct_all = False
                 ct_working_directory: str | None = None
                 ct_verbatim = False
+                ct_uses_terminal = False
                 ct_comment = ""
                 ct_section: str | None = None
                 ct_idx = 1
@@ -2179,6 +2180,8 @@ int main() {{
                     elif arg in ("VERBATIM", "USES_TERMINAL", "COMMAND_EXPAND_LISTS"):
                         if arg == "VERBATIM":
                             ct_verbatim = True
+                        elif arg == "USES_TERMINAL":
+                            ct_uses_terminal = True
                         ct_section = None
                     elif arg == "ARGS":
                         # Legacy CMake keyword; ignored.
@@ -2221,6 +2224,7 @@ int main() {{
                         all=ct_all,
                         working_directory=ct_working_directory,
                         verbatim=ct_verbatim,
+                        uses_terminal=ct_uses_terminal,
                         comment=ct_comment,
                         defined_file=ctx.current_list_file,
                         defined_line=cmd.line,
