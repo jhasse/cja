@@ -9,6 +9,13 @@ from tests.helpers import copy_unignored_tree
 EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
 
 
+def _ldflags(build_ninja_content: str) -> list[str]:
+    for line in build_ninja_content.splitlines():
+        if line.startswith("ldflags = "):
+            return line.removeprefix("ldflags = ").split()
+    return []
+
+
 def test_build_type_debug(tmp_path: Path) -> None:
     """Test CMAKE_BUILD_TYPE=Debug adds -g -O0 flags."""
     source_dir = tmp_path / "hello"
@@ -29,6 +36,8 @@ def test_build_type_debug(tmp_path: Path) -> None:
     content = build_ninja.read_text()
     assert "-g" in content
     assert "-O0" in content
+    # Needed on Windows so clang tells the linker to write a PDB.
+    assert ("-g" in _ldflags(content)) == (platform.system() == "Windows")
 
 
 def test_build_type_release(tmp_path: Path) -> None:
@@ -50,6 +59,7 @@ def test_build_type_release(tmp_path: Path) -> None:
     content = build_ninja.read_text()
     assert "-O3" in content
     assert "-DNDEBUG" in content
+    assert "-g" not in _ldflags(content)
 
 
 def test_build_type_relwithdebinfo(tmp_path: Path) -> None:
@@ -72,6 +82,8 @@ def test_build_type_relwithdebinfo(tmp_path: Path) -> None:
     assert "-O2" in content
     assert "-g" in content
     assert "-DNDEBUG" in content
+    # Needed on Windows so clang tells the linker to write a PDB.
+    assert ("-g" in _ldflags(content)) == (platform.system() == "Windows")
 
 
 def test_build_type_minsizerel(tmp_path: Path) -> None:

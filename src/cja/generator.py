@@ -739,6 +739,11 @@ def generate_ninja(
         build_type_flags = "-O2 -g -DNDEBUG"
     elif build_type == "MINSIZEREL":
         build_type_flags = "-Os -DNDEBUG"
+    # On Windows, clang only passes -debug to the linker (writing a PDB) when -g
+    # is on the link line, otherwise the compiled-in debug info is dropped.
+    build_type_link_flags = ""
+    if platform.system() == "Windows" and build_type in ("DEBUG", "RELWITHDEBINFO"):
+        build_type_link_flags = "-g"
 
     # Interprocedural optimization flags (LTO), including config-specific override.
     ipo_enabled = False
@@ -889,6 +894,7 @@ def generate_ninja(
             cxx_flags = f"{cxx_flags} {cxx_flags_config}".strip()
         cxx_flags = _normalize_windows_clang_cxx_std(cxx_flags, windows_clangxx)
         linker_flags_parts = [
+            build_type_link_flags,
             ctx.variables.get("CMAKE_EXE_LINKER_FLAGS", ""),
             ctx.variables.get("CMAKE_LINKER_FLAGS", ""),
             ipo_link_flags,
