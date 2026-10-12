@@ -262,6 +262,33 @@ add_test(NAME mytest COMMAND echo "Hello from test")
     assert "Hello from test" in result.stdout
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="TODO: Fix test subcommand on Windows"
+)
+def test_test_subcommand_parallel(tmp_path: Path) -> None:
+    """Test cja test --parallel."""
+    source_dir = tmp_path
+    (source_dir / "CMakeLists.txt").write_text(
+        """
+cmake_minimum_required(VERSION 3.10)
+project(test_prj)
+add_test(NAME first COMMAND echo "Hello from first")
+add_test(NAME second COMMAND echo "Hello from second")
+"""
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-m", "cja", "test", "--parallel"],
+        capture_output=True,
+        text=True,
+        cwd=source_dir,
+        check=False,
+    )
+    assert result.returncode == 0
+    assert "Hello from first" in result.stdout
+    assert "Hello from second" in result.stdout
+
+
 def test_cli_make_directory(tmp_path: Path) -> None:
     """Test cja -E make_directory command."""
     dir_path = tmp_path / "new_dir" / "nested"

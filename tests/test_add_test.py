@@ -72,6 +72,14 @@ def test_add_test(tmp_path: Path) -> None:
     # Check for phony test target
     assert "build test: phony test_mytest test_simple_test" in ninja_content
 
+    # Parallel variant runs outside the console pool
+    assert "rule test_run_parallel" in ninja_content
+    assert "build test-parallel_mytest: test_run_parallel" in ninja_content
+    assert (
+        "build test-parallel: phony test-parallel_mytest test-parallel_simple_test"
+        in ninja_content
+    )
+
 
 def test_add_test_working_directory(tmp_path: Path) -> None:
     """Test that add_test supports WORKING_DIRECTORY."""

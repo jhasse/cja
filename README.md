@@ -38,7 +38,8 @@ pipx install cja
   When reading output from a Docker container, this lets you click paths and open the correct files in your local
   editor.
 * Instead of a separate tool like CTest, cja generates a phony `test` target that runs all tests as part of the Ninja
-  build graph, so tests can start as soon as the first test binary is ready.
+  build graph, so tests can start as soon as the first test binary is ready. Tests run one after another in Ninja's
+  console pool; `test-parallel` (or `cja test --parallel`) runs them in parallel instead.
 * Colors for compiler diagnostics are enabled by default.
 * `_builddir_/compile_commands.json` is always generated.
 * More colorful, simplified output. For example, when downloading dependencies, cja shows progress bars using

@@ -2259,6 +2259,15 @@ def generate_ninja(
                 pool="console",
             )
             n.newline()
+            # Same as test_run, but outside the console pool so that Ninja
+            # runs tests in parallel (like ctest --parallel). Their output is
+            # buffered and printed once each test finishes.
+            n.rule(
+                "test_run_parallel",
+                command="$cmd",
+                description="\x1b[1;34mRunning $name\x1b[0m",
+            )
+            n.newline()
 
             # For tests, resolve TARGET_FILE_DIR and TARGET_FILE to actual
             # filesystem paths so the is_builddir comparison works correctly.
@@ -2296,6 +2305,7 @@ def generate_ninja(
                 )
 
             test_targets: list[str] = []
+            test_parallel_targets: list[str] = []
             for test in ctx.tests:
                 # Resolve target in command: if COMMAND specifies an
                 # executable target created by add_executable(), it will
@@ -2375,8 +2385,19 @@ def generate_ninja(
                 )
                 test_targets.append(test_target)
 
+                test_parallel_target = f"test-parallel_{test.name}"
+                register_output(test_parallel_target, None, 0)
+                n.build(
+                    test_parallel_target,
+                    "test_run_parallel",
+                    implicit=depends,
+                    variables=test_variables,
+                )
+                test_parallel_targets.append(test_parallel_target)
+
             n.newline()
             n.build("test", "phony", test_targets)
+            n.build("test-parallel", "phony", test_parallel_targets)
             n.newline()
 
         # Generate install runner

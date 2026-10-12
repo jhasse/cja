@@ -94,7 +94,7 @@ def cmd_build(args: argparse.Namespace) -> int:
 
 def cmd_test(args: argparse.Namespace) -> int:
     """Run the test command (configure if needed + ninja test)."""
-    return _run_ninja(args, target="test")
+    return _run_ninja(args, target="test-parallel" if args.parallel else "test")
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -443,6 +443,11 @@ def main() -> int:
         action="store_true",
         default=argparse.SUPPRESS,
         help="Run tests in release mode (CMAKE_BUILD_TYPE=Release)",
+    )
+    test_parser.add_argument(
+        "--parallel",
+        action="store_true",
+        help="Run tests in parallel instead of one after another",
     )
 
     # Run subcommand
