@@ -1846,7 +1846,13 @@ def generate_ninja(
                 lib_outputs[lib.name] = lib_outputs[lib.alias_for]
 
         # Collect default targets (libraries that produce real output files)
-        default_targets: list[str] = list(lib_outputs.values())
+        default_targets: list[str] = [
+            lib_outputs[lib.name]
+            for lib in ctx.libraries
+            if not lib.is_alias
+            and lib.name in lib_outputs
+            and not is_truthy(lib.properties.get("EXCLUDE_FROM_ALL", ""))
+        ]
         default_targets.extend(custom_target_all)
 
         # Generate build statements for executables
@@ -2216,7 +2222,9 @@ def generate_ninja(
             n.newline()
 
             exe_outputs[exe.name] = exe_name
-            default_targets.append(exe_name)
+            in_all = not is_truthy(exe.properties.get("EXCLUDE_FROM_ALL", ""))
+            if in_all:
+                default_targets.append(exe_name)
 
             # Generate POST_BUILD steps
             if exe.post_build_commands:
@@ -2247,8 +2255,9 @@ def generate_ninja(
                 pb_cmd_str = " && ".join(pb_cmd_parts)
                 n.build([stamp], "custom_command", [exe_name], variables={"cmd": pb_cmd_str})
                 n.newline()
-                default_targets.remove(exe_name)
-                default_targets.append(stamp)
+                if in_all:
+                    default_targets.remove(exe_name)
+                    default_targets.append(stamp)
 
         # Generate test runner
         if ctx.tests:

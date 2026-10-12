@@ -187,6 +187,9 @@ class BuildContext:
         default_factory=dict
     )  # Properties for directories
     parent_directory: str = ""  # Path to parent directory (if in subdirectory)
+    # Inside an add_subdirectory(... EXCLUDE_FROM_ALL), so new targets start
+    # out excluded from "all"
+    exclude_from_all: bool = False
     cmake_files: set[Path] = field(default_factory=set)
     configure_depends: set[Path] = field(default_factory=set)
     configure_depend_globs: list[ConfigureDependGlob] = field(default_factory=list)

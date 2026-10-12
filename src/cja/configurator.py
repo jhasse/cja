@@ -327,6 +327,7 @@ def process_commands(
                         declared_binary_dir = val
                 else:
                     arg_idx += 1
+            fc_exclude_from_all = "EXCLUDE_FROM_ALL" in info.args
 
             def resolve_fetch_path(path: str, cmd_line: int) -> Path:
                 expanded = ctx.expand_variables(path, strict, cmd_line)
@@ -495,6 +496,9 @@ def process_commands(
                         saved_vars = ctx.variables.copy()
                         saved_parent_scope_vars = ctx.parent_scope_vars
                         ctx.parent_scope_vars = {}
+                        saved_exclude_from_all = ctx.exclude_from_all
+                        if fc_exclude_from_all:
+                            ctx.exclude_from_all = True
 
                         fc_binary_dir = binary_dir
                         fc_binary_dir.mkdir(parents=True, exist_ok=True)
@@ -518,10 +522,12 @@ def process_commands(
                             saved_parent_scope_vars: dict[
                                 str, str | None
                             ] = saved_parent_scope_vars,
+                            saved_exclude_from_all: bool = saved_exclude_from_all,
                         ) -> None:
                             cache_updates = ctx.cache_updates()
                             parent_scope_updates = ctx.parent_scope_vars
                             ctx.parent_scope_vars = saved_parent_scope_vars
+                            ctx.exclude_from_all = saved_exclude_from_all
                             ctx.current_source_dir = saved_current_source_dir
                             ctx.current_list_file = saved_current_list_file
                             ctx.parent_directory = saved_parent_directory
@@ -839,6 +845,8 @@ def process_commands(
                 pass
 
             case "add_subdirectory":
+                sub_exclude_from_all = "EXCLUDE_FROM_ALL" in args
+                args = [a for a in args if a not in ("EXCLUDE_FROM_ALL", "SYSTEM")]
                 if args:
                     sub_dir_name = args[0]
                     sub_source_dir = ctx.current_source_dir / sub_dir_name
@@ -859,6 +867,9 @@ def process_commands(
                         saved_vars = ctx.variables.copy()
                         saved_parent_scope_vars = ctx.parent_scope_vars
                         ctx.parent_scope_vars = {}
+                        saved_exclude_from_all = ctx.exclude_from_all
+                        if sub_exclude_from_all:
+                            ctx.exclude_from_all = True
 
                         if len(args) >= 2:
                             binary_arg = Path(args[1])
@@ -897,10 +908,12 @@ def process_commands(
                             saved_parent_scope_vars: dict[
                                 str, str | None
                             ] = saved_parent_scope_vars,
+                            saved_exclude_from_all: bool = saved_exclude_from_all,
                         ) -> None:
                             cache_updates = ctx.cache_updates()
                             parent_scope_updates = ctx.parent_scope_vars
                             ctx.parent_scope_vars = saved_parent_scope_vars
+                            ctx.exclude_from_all = saved_exclude_from_all
                             ctx.current_source_dir = saved_current_source_dir
                             ctx.current_list_file = saved_current_list_file
                             ctx.parent_directory = saved_parent_directory
@@ -2221,7 +2234,7 @@ int main() {{
                         name=target_name,
                         commands=ct_commands,
                         depends=ct_depends,
-                        all=ct_all,
+                        all=ct_all and not ctx.exclude_from_all,
                         working_directory=ct_working_directory,
                         verbatim=ct_verbatim,
                         uses_terminal=ct_uses_terminal,

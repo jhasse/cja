@@ -150,6 +150,8 @@ def _default_target_properties(ctx: BuildContext) -> dict[str, str]:
     win32_executable = ctx.variables.get("CMAKE_WIN32_EXECUTABLE", "")
     if win32_executable:
         properties["WIN32_EXECUTABLE"] = win32_executable
+    if ctx.exclude_from_all:
+        properties["EXCLUDE_FROM_ALL"] = "TRUE"
     return properties
 
 
@@ -1251,6 +1253,9 @@ def handle_add_library(
         ):
             lib_type = sources[0]
             sources = sources[1:]
+        exclude_from_all = bool(sources) and sources[0] == "EXCLUDE_FROM_ALL"
+        if exclude_from_all:
+            sources = sources[1:]
         if lib_type == "INTERFACE":
             sources = []
 
@@ -1274,6 +1279,8 @@ def handle_add_library(
             )
         include_directories = _collect_directory_include_dirs(ctx)
         default_properties = _default_target_properties(ctx)
+        if exclude_from_all:
+            default_properties["EXCLUDE_FROM_ALL"] = "TRUE"
         ctx.libraries.append(
             Library(
                 name=name,
