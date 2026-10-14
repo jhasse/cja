@@ -205,3 +205,50 @@ def test_add_test_target_file_in_command(tmp_path: Path) -> None:
     expected_path = (tmp_path / "build" / f"myapp{EXE_EXT}").as_posix()
     assert expected_path in ninja_content.replace("\\", "/")
     assert "--arg" in ninja_content
+
+
+def test_set_tests_properties_fixtures(tmp_path: Path) -> None:
+    """FIXTURES_SETUP tests run before FIXTURES_REQUIRED ones, cleanup after."""
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+
+    commands = [
+        Command(name="add_test", args=["NAME", "persist", "COMMAND", "a"], line=1),
+        Command(name="add_test", args=["NAME", "unpersist", "COMMAND", "b"], line=2),
+        Command(name="add_test", args=["NAME", "other", "COMMAND", "c"], line=3),
+        Command(name="add_test", args=["NAME", "cleanup", "COMMAND", "d"], line=4),
+        Command(
+            name="set_tests_properties",
+            args=["persist", "PROPERTIES", "FIXTURES_SETUP", "eris_data"],
+            line=5,
+        ),
+        Command(
+            name="set_tests_properties",
+            args=["unpersist", "PROPERTIES", "FIXTURES_REQUIRED", "eris_data"],
+            line=6,
+        ),
+        Command(
+            name="set_property",
+            args=["TEST", "cleanup", "PROPERTY", "FIXTURES_CLEANUP", "eris_data"],
+            line=7,
+        ),
+    ]
+    process_commands(commands, ctx)
+
+    assert ctx.tests[0].properties == {"FIXTURES_SETUP": "eris_data"}
+    assert ctx.tests[1].properties == {"FIXTURES_REQUIRED": "eris_data"}
+
+    ninja_path = tmp_path / "build.ninja"
+    generate_ninja(ctx, ninja_path, "build")
+    ninja_content = _unwrap(ninja_path.read_text())
+
+    assert "build test_persist: test_run\n" in ninja_content
+    assert "build test_unpersist: test_run || test_persist\n" in ninja_content
+    assert "build test_other: test_run\n" in ninja_content
+    assert (
+        "build test_cleanup: test_run || test_persist test_unpersist\n"
+        in ninja_content
+    )
+    assert (
+        "build test-parallel_unpersist: test_run_parallel || test-parallel_persist\n"
+        in ninja_content
+    )

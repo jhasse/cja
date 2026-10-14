@@ -289,6 +289,37 @@ add_test(NAME second COMMAND echo "Hello from second")
     assert "Hello from second" in result.stdout
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="TODO: Fix test subcommand on Windows"
+)
+def test_test_subcommand_fixtures(tmp_path: Path) -> None:
+    """A FIXTURES_REQUIRED test runs after its FIXTURES_SETUP test, also in parallel."""
+    source_dir = tmp_path
+    (source_dir / "CMakeLists.txt").write_text(
+        """
+cmake_minimum_required(VERSION 3.10)
+project(test_prj)
+add_test(NAME unpersist COMMAND sh ${CMAKE_SOURCE_DIR}/unpersist.sh)
+add_test(NAME persist COMMAND sh ${CMAKE_SOURCE_DIR}/persist.sh)
+set_tests_properties(persist PROPERTIES FIXTURES_SETUP eris_data)
+set_tests_properties(unpersist PROPERTIES FIXTURES_REQUIRED eris_data)
+"""
+    )
+    (source_dir / "persist.sh").write_text("sleep 0.2\necho eris > data.txt\n")
+    (source_dir / "unpersist.sh").write_text("cat data.txt\nrm data.txt\n")
+
+    for extra in ([], ["--parallel"]):
+        result = subprocess.run(
+            [sys.executable, "-m", "cja", "test", *extra],
+            capture_output=True,
+            text=True,
+            cwd=source_dir,
+            check=False,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "eris" in result.stdout
+
+
 def test_cli_make_directory(tmp_path: Path) -> None:
     """Test cja -E make_directory command."""
     dir_path = tmp_path / "new_dir" / "nested"

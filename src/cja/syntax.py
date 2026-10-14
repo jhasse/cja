@@ -57,6 +57,7 @@ class Test:
     name: str
     command: list[str]
     working_directory: str | None = None
+    properties: dict[str, str] = field(default_factory=dict)
 
 
 def evaluate_condition(

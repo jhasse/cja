@@ -39,7 +39,9 @@ pipx install cja
   editor.
 * Instead of a separate tool like CTest, cja generates a phony `test` target that runs all tests as part of the Ninja
   build graph, so tests can start as soon as the first test binary is ready. Tests run one after another in Ninja's
-  console pool; `test-parallel` (or `cja test --parallel`) runs them in parallel instead.
+  console pool; `test-parallel` (or `cja test --parallel`) runs them in parallel instead. Test fixtures
+  (`FIXTURES_SETUP`, `FIXTURES_REQUIRED`, `FIXTURES_CLEANUP`) become dependencies between the test targets, so unlike
+  CTest a cleanup test doesn't run when a test requiring its fixture fails.
 * Colors for compiler diagnostics are enabled by default.
 * `_builddir_/compile_commands.json` is always generated.
 * More colorful, simplified output. For example, when downloading dependencies, cja shows progress bars using

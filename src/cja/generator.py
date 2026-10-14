@@ -20,6 +20,7 @@ from .commands import evaluate_glob, glob_watch_dirs
 from .configurator import process_commands
 from .ninja_syntax import Writer, escape
 from .parser import Command
+from .syntax import Test
 from .targets import Executable, Library
 from .utils import (
     is_truthy,
@@ -2313,9 +2314,37 @@ def generate_ninja(
                     target_files_resolved,
                 )
 
+            # Test fixtures: a test with FIXTURES_REQUIRED runs after the
+            # FIXTURES_SETUP tests of the same fixture (and is skipped when one
+            # of them fails), FIXTURES_CLEANUP tests run after both.
+            def _fixtures(test: Test, prop: str) -> list[str]:
+                return [f for f in test.properties.get(prop, "").split(";") if f]
+
+            fixture_setup: dict[str, list[str]] = {}
+            fixture_users: dict[str, list[str]] = {}
+            for test in ctx.tests:
+                for fixture in _fixtures(test, "FIXTURES_SETUP"):
+                    fixture_setup.setdefault(fixture, []).append(test.name)
+                for fixture in _fixtures(test, "FIXTURES_REQUIRED"):
+                    fixture_users.setdefault(fixture, []).append(test.name)
+
+            def _test_prerequisites(test: Test) -> list[str]:
+                prerequisites: list[str] = []
+                for fixture in _fixtures(test, "FIXTURES_REQUIRED"):
+                    prerequisites += fixture_setup.get(fixture, [])
+                for fixture in _fixtures(test, "FIXTURES_CLEANUP"):
+                    prerequisites += fixture_setup.get(fixture, [])
+                    prerequisites += fixture_users.get(fixture, [])
+                return [
+                    name
+                    for name in dict.fromkeys(prerequisites)
+                    if name != test.name
+                ]
+
             test_targets: list[str] = []
             test_parallel_targets: list[str] = []
             for test in ctx.tests:
+                prerequisites = _test_prerequisites(test)
                 # Resolve target in command: if COMMAND specifies an
                 # executable target created by add_executable(), it will
                 # automatically be replaced by the location of the executable
@@ -2390,6 +2419,7 @@ def generate_ninja(
                     test_target,
                     "test_run",
                     implicit=depends,
+                    order_only=[f"test_{name}" for name in prerequisites],
                     variables=test_variables,
                 )
                 test_targets.append(test_target)
@@ -2400,6 +2430,7 @@ def generate_ninja(
                     test_parallel_target,
                     "test_run_parallel",
                     implicit=depends,
+                    order_only=[f"test-parallel_{name}" for name in prerequisites],
                     variables=test_variables,
                 )
                 test_parallel_targets.append(test_parallel_target)

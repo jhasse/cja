@@ -48,6 +48,7 @@ from .commands import (
     handle_set,
     handle_set_property,
     handle_set_target_properties,
+    handle_set_tests_properties,
     handle_string,
     handle_target_compile_definitions,
     handle_target_compile_features,
@@ -2327,6 +2328,9 @@ int main() {{
                                 working_directory=test_working_directory,
                             )
                         )
+
+            case "set_tests_properties":
+                handle_set_tests_properties(ctx, cmd, args)
 
             case "set_source_files_properties":
                 if "PROPERTIES" in args:

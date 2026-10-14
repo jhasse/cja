@@ -18,6 +18,7 @@ from .syntax import (
     FunctionDef,
     MacroDef,
     SourceFileProperties,
+    Test,
     evaluate_condition,
 )
 from .targets import Executable, ImportedTarget, Library
@@ -795,6 +796,47 @@ def handle_set_target_properties(
                         )
 
 
+def _find_test(
+    ctx: BuildContext, cmd: Command, name: str, command_name: str
+) -> Test | None:
+    """The test added by add_test(NAME name), or None after a warning."""
+    for test in ctx.tests:
+        if test.name == name:
+            return test
+    ctx.print_warning(f'{command_name}: can not find test "{name}"', cmd.line)
+    return None
+
+
+def handle_set_tests_properties(
+    ctx: BuildContext,
+    cmd: Command,
+    args: list[str],
+) -> None:
+    """Handle set_tests_properties() command."""
+    # set_tests_properties(test1 [test2...] [DIRECTORY dir] PROPERTIES prop1 value1 ...)
+    if "PROPERTIES" not in args:
+        ctx.print_warning("set_tests_properties() requires PROPERTIES", cmd.line)
+        return
+    prop_idx = args.index("PROPERTIES")
+    test_names = args[:prop_idx]
+    if "DIRECTORY" in test_names:
+        test_names = test_names[: test_names.index("DIRECTORY")]
+    props = args[prop_idx + 1 :]
+    if len(props) % 2 != 0:
+        ctx.print_warning(
+            f"set_tests_properties(): property '{props[-1]}' has no value",
+            cmd.line,
+        )
+        props = props[:-1]
+
+    for test_name in test_names:
+        test = _find_test(ctx, cmd, test_name, "set_tests_properties()")
+        if test is None:
+            continue
+        for i in range(0, len(props), 2):
+            test.properties[props[i]] = props[i + 1]
+
+
 def handle_set_property(
     ctx: BuildContext,
     cmd: Command,
@@ -984,7 +1026,22 @@ def handle_set_property(
             else:
                 ctx.directory_properties[abs_dir][prop_name] = value
 
-    elif scope_type in ("TEST", "CACHE", "INSTALL"):
+    elif scope_type == "TEST":
+        test_names = scope_args
+        if "DIRECTORY" in test_names:
+            test_names = test_names[: test_names.index("DIRECTORY")]
+        value = ";".join(prop_values)
+        for test_name in test_names:
+            test = _find_test(ctx, cmd, test_name, "set_property(TEST)")
+            if test is None:
+                continue
+            if append_mode and prop_name in test.properties:
+                separator = "" if append_string else ";"
+                test.properties[prop_name] += separator + value
+            else:
+                test.properties[prop_name] = value
+
+    elif scope_type in ("CACHE", "INSTALL"):
         # These scopes are not commonly used in basic builds
         if strict:
             ctx.print_warning(
