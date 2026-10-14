@@ -299,14 +299,12 @@ def test_test_subcommand_fixtures(tmp_path: Path) -> None:
         """
 cmake_minimum_required(VERSION 3.10)
 project(test_prj)
-add_test(NAME unpersist COMMAND sh ${CMAKE_SOURCE_DIR}/unpersist.sh)
-add_test(NAME persist COMMAND sh ${CMAKE_SOURCE_DIR}/persist.sh)
+add_test(NAME unpersist COMMAND sh -c "cat data.txt && rm data.txt")
+add_test(NAME persist COMMAND sh -c "sleep 0.2 && echo eris > data.txt")
 set_tests_properties(persist PROPERTIES FIXTURES_SETUP eris_data)
 set_tests_properties(unpersist PROPERTIES FIXTURES_REQUIRED eris_data)
 """
     )
-    (source_dir / "persist.sh").write_text("sleep 0.2\necho eris > data.txt\n")
-    (source_dir / "unpersist.sh").write_text("cat data.txt\nrm data.txt\n")
 
     for extra in ([], ["--parallel"]):
         result = subprocess.run(

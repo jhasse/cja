@@ -54,6 +54,17 @@ def _quote_ninja_cmd_part(part: str) -> str:
     return shlex.quote(part)
 
 
+def _quote_test_arg(arg: str) -> str:
+    """Quote and Ninja-escape one argument of an add_test() COMMAND.
+
+    On Windows, Ninja starts the test with CreateProcess, so the argument is
+    quoted for the C runtime's command line parsing instead of for a shell.
+    """
+    if platform.system() == "Windows":
+        return escape(subprocess.list2cmdline([arg]))
+    return escape(shlex.quote(arg))
+
+
 def _format_clang_tidy_cmd(tidy_cmd: str) -> str:
     """Turn a CXX_CLANG_TIDY / C_CLANG_TIDY list into a Ninja command fragment."""
     return " ".join(
@@ -2366,8 +2377,11 @@ def generate_ninja(
                     except (OSError, RuntimeError, ValueError):
                         pass
 
-                if cmd[0] in exe_outputs:
-                    target_exe = exe_outputs[cmd[0]]
+                exe_name = cmd[0]
+                cmd = [_quote_test_arg(a) for a in cmd]
+                if exe_name in exe_outputs:
+                    # Unescaped, so that Ninja expands $builddir
+                    target_exe = exe_outputs[exe_name]
                     if is_builddir and target_exe.startswith("$builddir/"):
                         cmd[0] = "./" + target_exe[len("$builddir/") :]
                     else:
@@ -2395,6 +2409,8 @@ def generate_ninja(
                         test_cwd = to_posix_path(test_wd)
 
                 if test_cwd is not None:
+                    if test_cwd != "$builddir":
+                        test_cwd = _quote_test_arg(test_cwd)
                     if platform.system() == "Windows":
                         # Ninja runs the command with CreateProcess, without a
                         # shell, so neither cd nor && exist. Change the
@@ -2404,7 +2420,7 @@ def generate_ninja(
                             'python -c "import os,subprocess,sys;'
                             "os.chdir(sys.argv[1]);"
                             'sys.exit(subprocess.call(sys.argv[2:]))"'
-                            f" {_quote_ninja_cmd_part(test_cwd)} {cmd_str}"
+                            f" {test_cwd} {cmd_str}"
                         )
                     else:
                         cmd_str = f"cd {test_cwd} && {cmd_str}"

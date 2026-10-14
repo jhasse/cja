@@ -252,3 +252,28 @@ def test_set_tests_properties_fixtures(tmp_path: Path) -> None:
         "build test-parallel_unpersist: test_run_parallel || test-parallel_persist\n"
         in ninja_content
     )
+
+
+def test_add_test_quotes_arguments(tmp_path: Path) -> None:
+    """Arguments with spaces, shell metacharacters or $ reach the test unchanged."""
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+
+    commands = [
+        Command(name="add_executable", args=["myapp", "main.cpp"], line=1),
+        Command(
+            name="add_test",
+            args=["NAME", "mytest", "COMMAND", "myapp", "a b", "x && y", "$HOME"],
+            line=2,
+        ),
+    ]
+    process_commands(commands, ctx)
+
+    ninja_path = tmp_path / "build.ninja"
+    generate_ninja(ctx, ninja_path, "build")
+    ninja_content = _unwrap(ninja_path.read_text())
+
+    if platform.system() == "Windows":
+        args = '"a b" "x && y" $$HOME'
+    else:
+        args = "'a b' 'x && y' '$$HOME'"
+    assert _in_dir("$builddir", f"./myapp{EXE_EXT} {args}") in ninja_content
