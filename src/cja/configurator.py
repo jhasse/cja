@@ -129,10 +129,13 @@ def _check_source_compiles(
     compiler = ctx.cxx_compiler if language == "CXX" else ctx.c_compiler
     suffix = ".cpp" if language == "CXX" else ".c"
 
-    def _as_list(name: str) -> list[str]:
+    def _as_list(name: str, split_words: bool = True) -> list[str]:
         raw = ctx.variables.get(name, "")
         if not raw:
             return []
+        if not split_words:
+            # Paths: shlex would eat the backslashes of Windows paths.
+            return [part.strip() for part in raw.split(";") if part.strip()]
         # CMAKE_REQUIRED_* are CMake lists (";"-separated); flags may also use
         # spaces, which shlex handles.
         items: list[str] = []
@@ -144,7 +147,7 @@ def _check_source_compiles(
 
     required_flags = _as_list("CMAKE_REQUIRED_FLAGS")
     required_defs = _as_list("CMAKE_REQUIRED_DEFINITIONS")
-    required_includes = _as_list("CMAKE_REQUIRED_INCLUDES")
+    required_includes = _as_list("CMAKE_REQUIRED_INCLUDES", split_words=False)
     required_link_options = _as_list("CMAKE_REQUIRED_LINK_OPTIONS")
     required_libraries = _as_list("CMAKE_REQUIRED_LIBRARIES")
     compiler_name = Path(compiler).name.lower()

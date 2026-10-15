@@ -292,6 +292,8 @@ def test_pkg_check_modules_multiple_modules_with_versions() -> None:
 
 
 def _fake_pc_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    if sys.platform == "win32":
+        pytest.skip("pkg-config not typically available on Windows")
     if shutil.which("pkg-config") is None:
         pytest.skip("pkg-config not installed")
     for name, version in (("cjafoo", "1.2.3"), ("cjabar", "4.5")):
