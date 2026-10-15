@@ -1731,7 +1731,11 @@ int main() {{
                         else:
                             ctx.variables[var_name] = f"{var_name}-NOTFOUND"
                     elif target is None:
-                        ctx.variables[var_name] = f"{var_name}-NOTFOUND"
+                        imported = ctx.imported_targets.get(target_name)
+                        if imported is not None and prop_name in imported.properties:
+                            ctx.variables[var_name] = imported.properties[prop_name]
+                        else:
+                            ctx.variables[var_name] = f"{var_name}-NOTFOUND"
                     elif prop_name == "INCLUDE_DIRECTORIES":
                         dirs = (
                             lib.include_directories
@@ -3116,6 +3120,16 @@ int main() {{
                                     ImportedTarget(
                                         cflags=cflags,
                                         libs=libs,
+                                        properties={
+                                            "INTERFACE_INCLUDE_DIRECTORIES": ctx.variables[
+                                                f"{prefix}_INCLUDE_DIRS"
+                                            ],
+                                            "INTERFACE_COMPILE_OPTIONS": ";".join(
+                                                f
+                                                for f in shlex.split(cflags)
+                                                if not f.startswith("-I")
+                                            ),
+                                        },
                                     )
                                 )
                         else:

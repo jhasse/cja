@@ -346,3 +346,36 @@ def test_pkg_search_module(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     assert ctx.variables["FOUND_ONE_LIBRARIES"] == "cjabar"
     assert "PkgConfig::FOUND_ONE" in ctx.imported_targets
     assert ctx.variables["NONE_FOUND"] == "0"
+
+
+def test_pkg_check_modules_imported_target_properties(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The PkgConfig:: target's properties are there for get_target_property()
+    and $<TARGET_PROPERTY:...>, which SDL uses for libdecor's include dir."""
+    from cja.generator import configure
+
+    pc_dir = tmp_path / "pc"
+    pc_dir.mkdir()
+    _fake_pc_files(pc_dir, monkeypatch)
+    source = tmp_path / "proj"
+    source.mkdir()
+    (source / "x.c").write_text("int x;\n")
+    (source / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.16)\n"
+        "project(p C)\n"
+        "find_package(PkgConfig)\n"
+        "pkg_check_modules(PCF IMPORTED_TARGET cjafoo)\n"
+        "add_library(x STATIC x.c)\n"
+        "target_include_directories(x PRIVATE"
+        " $<TARGET_PROPERTY:PkgConfig::PCF,INTERFACE_INCLUDE_DIRECTORIES>)\n"
+        "get_target_property(INC PkgConfig::PCF INTERFACE_INCLUDE_DIRECTORIES)\n"
+        "get_target_property(MISSING PkgConfig::PCF SOME_PROPERTY)\n"
+    )
+    monkeypatch.chdir(source)
+
+    ctx = configure(source, "build", quiet=True)
+
+    assert ctx.variables["INC"] == "/opt/cjafoo/include"
+    assert ctx.variables["MISSING"] == "MISSING-NOTFOUND"
+    assert "-I/opt/cjafoo/include" in (source / "build.ninja").read_text()

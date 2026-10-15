@@ -246,6 +246,20 @@ class BuildContext:
                 return lib
         return None
 
+    def target_property(self, name: str, prop: str) -> str | None:
+        """A target's property, or None if the target or property is unknown."""
+        lib = self.get_library(name)
+        exe = self.get_executable(name)
+        if lib is not None and prop == "INTERFACE_INCLUDE_DIRECTORIES":
+            return ";".join(lib.public_include_directories)
+        if lib is not None or exe is not None:
+            target = lib or exe
+            return target.properties.get(prop)  # type: ignore[union-attr]
+        imported = self.imported_targets.get(name)
+        if imported is not None:
+            return imported.properties.get(prop)
+        return None
+
     def get_executable(self, name: str) -> Executable | None:
         for exe in self.executables:
             if exe.name == name:

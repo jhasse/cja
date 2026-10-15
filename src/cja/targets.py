@@ -77,6 +77,8 @@ class ImportedTarget:
     compile_features: list[str] = field(default_factory=list)  # INTERFACE ones
     # Imported targets in INTERFACE_LINK_LIBRARIES, resolved when generating
     link_targets: list[str] = field(default_factory=list)
+    # Properties as set, for get_target_property() and $<TARGET_PROPERTY:...>
+    properties: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass

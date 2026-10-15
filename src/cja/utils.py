@@ -5,7 +5,7 @@ import shutil
 import sys
 import tarfile
 import zipfile
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -322,8 +322,12 @@ def strip_generator_expressions(
     target_file_dirs: dict[str, str] | None = None,
     target_files: dict[str, str] | None = None,
     compile_language: str | None = None,
+    target_property: Callable[[str, str], str | None] | None = None,
 ) -> str:
     """Strip or evaluate common CMake generator expressions.
+
+    ``target_property`` looks up ``$<TARGET_PROPERTY:tgt,prop>``; without it
+    (or for the current target's ``$<TARGET_PROPERTY:prop>``) that is empty.
 
     ``compile_language`` is the language being compiled (e.g. ``"C"``,
     ``"CXX"``, ``"ASM"``).  When provided, ``$<COMPILE_LANGUAGE:LANG[,...]>``
@@ -442,8 +446,13 @@ def strip_generator_expressions(
                 return target_files[target_name]
             return ""
         if content.startswith("TARGET_PROPERTY:"):
-            # No property lookup support in generator expressions yet.
-            return ""
+            prop_args = split_top_level(content[len("TARGET_PROPERTY:") :], ",")
+            if target_property is None or len(prop_args) != 2:
+                return ""
+            value = target_property(
+                expand_text(prop_args[0]), expand_text(prop_args[1])
+            )
+            return value or ""
         if content == "CONFIG":
             return variables.get("CMAKE_BUILD_TYPE", "")
         if content.startswith("CONFIG:"):

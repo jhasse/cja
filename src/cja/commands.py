@@ -171,7 +171,9 @@ def handle_include_directories(
         if arg in ("BEFORE", "AFTER", "SYSTEM"):
             continue
         expanded = ctx.expand_variables(arg, strict, cmd.line)
-        expanded = strip_generator_expressions(expanded, ctx.variables)
+        expanded = strip_generator_expressions(
+            expanded, ctx.variables, target_property=ctx.target_property
+        )
         if "$<" in expanded:
             ctx.print_warning(
                 f"generator expressions in include_directories are not yet supported: {arg}",
@@ -239,7 +241,9 @@ def handle_target_link_libraries(
                 # It's a library name (may be a semicolon-separated list from
                 # a CMake variable expansion like "${LIBS_PRIVATE}")
                 if "$<" in arg:
-                    arg = strip_generator_expressions(arg, ctx.variables)
+                    arg = strip_generator_expressions(
+                        arg, ctx.variables, target_property=ctx.target_property
+                    )
                     if not arg:
                         continue
 
@@ -287,7 +291,9 @@ def handle_target_link_directories(
             else:
                 # Expand variables and resolve relative paths
                 expanded = ctx.expand_variables(arg, strict, cmd.line)
-                expanded = strip_generator_expressions(expanded, ctx.variables)
+                expanded = strip_generator_expressions(
+                    expanded, ctx.variables, target_property=ctx.target_property
+                )
                 if "$<" in expanded:
                     ctx.print_warning(
                         f"generator expressions in target_link_directories are not yet supported: {arg}",
@@ -424,7 +430,9 @@ def handle_target_include_directories(
             else:
                 # Expand variables and resolve relative paths
                 expanded = ctx.expand_variables(arg, strict, cmd.line)
-                expanded = strip_generator_expressions(expanded, ctx.variables)
+                expanded = strip_generator_expressions(
+                    expanded, ctx.variables, target_property=ctx.target_property
+                )
                 if "$<" in expanded and not _is_supported_include_dir_genex(
                     expanded
                 ):
@@ -484,7 +492,9 @@ def handle_target_compile_definitions(
             else:
                 # Expand variables and resolve relative paths
                 expanded = ctx.expand_variables(arg, strict, cmd.line)
-                expanded = strip_generator_expressions(expanded, ctx.variables)
+                expanded = strip_generator_expressions(
+                    expanded, ctx.variables, target_property=ctx.target_property
+                )
                 if "$<" in expanded:
                     ctx.print_warning(
                         f"generator expressions in target_compile_definitions are not yet supported: {arg}",
@@ -709,8 +719,13 @@ def _apply_imported_target_property(
     """Fold a property of an imported target into its compile/link flags.
 
     Imported targets only carry flags, so only the properties that map onto
-    flags are applied; everything else is ignored.
+    flags are applied; all of them are kept for get_target_property() and
+    $<TARGET_PROPERTY:...>.
     """
+    previous = imported_target.properties.get(prop_name)
+    imported_target.properties[prop_name] = (
+        f"{previous};{prop_value}" if previous and prop_value else prop_value
+    )
     if prop_name.startswith(("IMPORTED_LOCATION", "IMPORTED_IMPLIB")):
         if prop_value:
             # Paths derived from CMAKE_CURRENT_LIST_DIR use native separators
