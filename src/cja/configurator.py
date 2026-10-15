@@ -1315,12 +1315,12 @@ def process_commands(
                     }
 
                     if type_name in fixed_width_sizes:
-                        ctx.variables[result_var] = str(fixed_width_sizes[type_name])
+                        ctx.set_cache(result_var, str(fixed_width_sizes[type_name]))
                     elif type_name in primitive_sizes:
-                        ctx.variables[result_var] = str(primitive_sizes[type_name])
+                        ctx.set_cache(result_var, str(primitive_sizes[type_name]))
                     else:
                         # Unknown/unavailable types are reported empty by CMake.
-                        ctx.variables[result_var] = ""
+                        ctx.set_cache(result_var, "")
 
             case "check_cxx_compiler_flag":
                 # check_cxx_compiler_flag(<flag> <var>)
@@ -1356,7 +1356,7 @@ def process_commands(
                                 supported = True
                         Path(temp_out).unlink(missing_ok=True)
                         Path(temp_src).unlink(missing_ok=True)
-                    ctx.variables[result_var] = "1" if supported else ""
+                    ctx.set_cache(result_var, "1" if supported else "")
 
             case "cmake_push_check_state":
                 # cmake_push_check_state([RESET]) - save CMAKE_REQUIRED_* state.
@@ -1390,7 +1390,7 @@ def process_commands(
                     success = _check_source_compiles(
                         ctx, code, language, fail_regexes
                     )
-                    ctx.variables[result_var] = "1" if success else ""
+                    ctx.set_cache(result_var, "1" if success else "")
 
             case "check_c_compiler_flag":
                 # check_c_compiler_flag(<flag> <var>)
@@ -1425,7 +1425,7 @@ def process_commands(
                                 supported = True
                         Path(temp_out).unlink(missing_ok=True)
                         Path(temp_src).unlink(missing_ok=True)
-                    ctx.variables[result_var] = "1" if supported else ""
+                    ctx.set_cache(result_var, "1" if supported else "")
 
             case "check_cxx_symbol_exists":
                 # check_cxx_symbol_exists(<symbol> <files> <variable>)
@@ -1439,37 +1439,18 @@ def process_commands(
                     if len(files) == 1 and ";" in files[0]:
                         files = files[0].split(";")
 
-                    # Check if the symbol exists by compiling a test program
-                    found = False
-                    with suppress(OSError):
-                        import tempfile
-
-                        # Generate includes
-                        includes = "\n".join(f"#include <{f}>" for f in files)
-                        # Create test program that uses the symbol
-                        test_code = f"""{includes}
+                    # Reuse _check_source_compiles so the CMAKE_REQUIRED_*
+                    # variables (e.g. -D_GNU_SOURCE in CMAKE_REQUIRED_FLAGS) are
+                    # honored.
+                    includes = "\n".join(f"#include <{f}>" for f in files)
+                    test_code = f"""{includes}
 int main() {{
     (void)({symbol});
     return 0;
 }}
 """
-                        with tempfile.NamedTemporaryFile(
-                            suffix=".cpp", delete=False, mode="w"
-                        ) as f:
-                            f.write(test_code)
-                            temp_src = f.name
-                        temp_out = temp_src.replace(".cpp", "")
-                        result = subprocess.run(
-                            [ctx.cxx_compiler, "-o", temp_out, temp_src],
-                            capture_output=True,
-                            text=True,
-                            check=False,
-                        )
-                        if result.returncode == 0:
-                            found = True
-                        Path(temp_out).unlink(missing_ok=True)
-                        Path(temp_src).unlink(missing_ok=True)
-                    ctx.variables[variable] = "1" if found else ""
+                    found = _check_source_compiles(ctx, test_code, "CXX", [])
+                    ctx.set_cache(variable, "1" if found else "")
 
             case "try_compile":
                 # Minimal support for:
@@ -1566,7 +1547,7 @@ int main(void) {{
 """
                     found = _check_source_compiles(ctx, test_code, "C", [])
 
-                    ctx.variables[variable] = "1" if found else ""
+                    ctx.set_cache(variable, "1" if found else "")
                     if not check_quiet:
                         color = "green" if found else "red"
                         print(
@@ -1611,7 +1592,7 @@ int main(void) {{
                     if location:
                         ctx.variables["CMAKE_REQUIRED_FLAGS"] = saved_flags
 
-                    ctx.variables[variable] = "1" if found else ""
+                    ctx.set_cache(variable, "1" if found else "")
                     if not check_quiet:
                         color = "green" if found else "red"
                         print(
@@ -1632,34 +1613,18 @@ int main(void) {{
                         ctx.variables.get("CMAKE_REQUIRED_QUIET", "")
                     )
 
-                    found = False
-                    with suppress(OSError):
-                        import tempfile
-
-                        includes = "\n".join(f"#include <{f}>" for f in files)
-                        test_code = f"""{includes}
+                    # Reuse _check_source_compiles so the CMAKE_REQUIRED_*
+                    # variables (e.g. -D_GNU_SOURCE in CMAKE_REQUIRED_FLAGS) are
+                    # honored.
+                    includes = "\n".join(f"#include <{f}>" for f in files)
+                    test_code = f"""{includes}
 int main() {{
     (void)({symbol});
     return 0;
 }}
 """
-                        with tempfile.NamedTemporaryFile(
-                            suffix=".c", delete=False, mode="w"
-                        ) as f:
-                            f.write(test_code)
-                            temp_src = f.name
-                        temp_out = temp_src.replace(".c", "")
-                        result = subprocess.run(
-                            [ctx.c_compiler, "-o", temp_out, temp_src],
-                            capture_output=True,
-                            text=True,
-                            check=False,
-                        )
-                        if result.returncode == 0:
-                            found = True
-                        Path(temp_out).unlink(missing_ok=True)
-                        Path(temp_src).unlink(missing_ok=True)
-                    ctx.variables[variable] = "1" if found else ""
+                    found = _check_source_compiles(ctx, test_code, "C", [])
+                    ctx.set_cache(variable, "1" if found else "")
                     if not check_quiet:
                         color = "green" if found else "red"
                         print(
@@ -1720,7 +1685,7 @@ int main() {{
                             found = True
                         Path(temp_out).unlink(missing_ok=True)
                         Path(temp_src).unlink(missing_ok=True)
-                    ctx.variables[variable] = "1" if found else ""
+                    ctx.set_cache(variable, "1" if found else "")
 
             case "add_library":
                 handle_add_library(ctx, cmd, args)

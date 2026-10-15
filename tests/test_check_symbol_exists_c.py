@@ -155,3 +155,35 @@ def test_check_symbol_exists_cmake_required_quiet(
     process_commands(commands, ctx)
     captured = capsys.readouterr()
     assert "✓ printf" not in captured.out
+
+
+def _write_guarded_header(tmp_path: Path) -> None:
+    (tmp_path / "cja_guarded.h").write_text(
+        "#ifdef CJA_WANT_SYMBOL\n#define cja_guarded_symbol 1\n#endif\n"
+    )
+
+
+@pytest.mark.parametrize("command", ["check_symbol_exists", "check_cxx_symbol_exists"])
+@pytest.mark.parametrize(
+    "variable", ["CMAKE_REQUIRED_FLAGS", "CMAKE_REQUIRED_DEFINITIONS"]
+)
+def test_check_symbol_exists_cmake_required_variables(
+    tmp_path: Path, command: str, variable: str
+) -> None:
+    """Test that the CMAKE_REQUIRED_* variables reach the compiler, like SDL's
+    -D_GNU_SOURCE=1 in CMAKE_REQUIRED_FLAGS for getresuid."""
+    _write_guarded_header(tmp_path)
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    ctx.variables["CMAKE_REQUIRED_INCLUDES"] = str(tmp_path)
+    check = Command(
+        name=command,
+        args=["cja_guarded_symbol", "cja_guarded.h", "WITHOUT"],
+        line=1,
+    )
+    process_commands([check], ctx)
+    assert ctx.variables["WITHOUT"] == ""
+
+    ctx.variables[variable] = " -DCJA_WANT_SYMBOL=1"
+    check.args[-1] = "WITH"
+    process_commands([check], ctx)
+    assert ctx.variables["WITH"] == "1"
