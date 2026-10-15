@@ -2907,7 +2907,9 @@ int main() {{
                 if report_var:
                     ctx.variables[f"BISON_{bison_name}_REPORT_FILE"] = report_var
 
-            case "pkg_check_modules":
+            case "pkg_check_modules" | "pkg_search_module":
+                # pkg_search_module() is pkg_check_modules() for the first of
+                # the modules that exists.
                 if args:
                     prefix = args[0]
                     pkg_args = args[1:]
@@ -2929,8 +2931,56 @@ int main() {{
                         )
                     ]
 
+                    import re as _re
+
+                    def _split_version(module: str) -> tuple[str, str]:
+                        """"foo>=1.0" -> ("foo", "foo >= 1.0")"""
+                        ver_match = _re.match(
+                            r"^([A-Za-z0-9_.+-]+)\s*(>=|<=|=)\s*(.+)$", module
+                        )
+                        if ver_match:
+                            mod_name = ver_match.group(1)
+                            return (
+                                mod_name,
+                                f"{mod_name} {ver_match.group(2)} {ver_match.group(3)}",
+                            )
+                        return module, module
+
+                    searched_modules = modules
+                    if cmd.name == "pkg_search_module":
+                        modules = []
+                        for module in searched_modules:
+                            try:
+                                exists = subprocess.run(
+                                    ["pkg-config", "--exists", _split_version(module)[1]],
+                                    capture_output=True,
+                                    check=False,
+                                )
+                            except FileNotFoundError:
+                                break
+                            if exists.returncode == 0:
+                                modules = [module]
+                                break
+
+                    if not modules and searched_modules:
+                        # pkg_search_module() found none of them
+                        if not is_quiet:
+                            print(
+                                f"{colored(status_marker(False), 'red')} {', '.join(searched_modules)}"
+                            )
+                        ctx.variables[f"{prefix}_FOUND"] = "0"
+                        if is_required:
+                            ctx.print_error(
+                                f"could not find any of the modules: {', '.join(searched_modules)}",
+                                cmd.line,
+                            )
+                            raise SystemExit(1)
+
                     if modules:
                         found_all = True
+                        # Like FindPkgConfig: with one module, its version etc.
+                        # are <prefix>_VERSION, otherwise <prefix>_<module>_VERSION.
+                        module_vars: dict[str, str] = {}
                         all_cflags = []
                         all_libs = []
                         all_include_dirs = []
@@ -2941,18 +2991,10 @@ int main() {{
                         all_prefixes = []
 
                         for module in modules:
-                            # Split version constraint: "foo>=1.0" -> ("foo", ">= 1.0")
-                            import re as _re
-
-                            ver_match = _re.match(
-                                r"^([A-Za-z0-9_.+-]+)\s*(>=|<=|=)\s*(.+)$", module
+                            mod_name, exists_arg = _split_version(module)
+                            module_prefix = (
+                                prefix if len(modules) == 1 else f"{prefix}_{mod_name}"
                             )
-                            if ver_match:
-                                mod_name = ver_match.group(1)
-                                exists_arg = f"{mod_name} {ver_match.group(2)} {ver_match.group(3)}"
-                            else:
-                                mod_name = module
-                                exists_arg = module
                             try:
                                 result = subprocess.run(
                                     ["pkg-config", "--exists", exists_arg],
@@ -2962,6 +3004,16 @@ int main() {{
                                 if result.returncode != 0:
                                     found_all = False
                                     break
+
+                                version_res = subprocess.run(
+                                    ["pkg-config", "--modversion", mod_name],
+                                    capture_output=True,
+                                    text=True,
+                                    check=False,
+                                )
+                                module_vars[f"{module_prefix}_VERSION"] = (
+                                    version_res.stdout.strip()
+                                )
 
                                 cflags_res = subprocess.run(
                                     ["pkg-config", "--cflags", mod_name],
@@ -2995,6 +3047,9 @@ int main() {{
                                     ("libdir", all_libdirs),
                                     ("prefix", all_prefixes),
                                 ]:
+                                    module_vars[
+                                        f"{module_prefix}_{var_name.upper()}"
+                                    ] = ""
                                     var_res = subprocess.run(
                                         [
                                             "pkg-config",
@@ -3007,6 +3062,9 @@ int main() {{
                                     )
                                     if var_res.returncode == 0:
                                         val = var_res.stdout.strip()
+                                        module_vars[
+                                            f"{module_prefix}_{var_name.upper()}"
+                                        ] = val
                                         if val:
                                             target_list.append(val)
 
@@ -3046,6 +3104,11 @@ int main() {{
                             )
                             ctx.variables[f"{prefix}_CFLAGS"] = cflags
                             ctx.variables[f"{prefix}_LDFLAGS"] = libs
+                            ctx.variables.update(module_vars)
+                            if cmd.name == "pkg_search_module":
+                                ctx.variables[f"{prefix}_MODULE_NAME"] = (
+                                    _split_version(modules[0])[0]
+                                )
 
                             if is_imported_target:
                                 # Create imported target PkgConfig::<prefix>

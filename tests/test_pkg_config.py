@@ -20,9 +20,11 @@ def test_find_package_pkgconfig() -> None:
     process_commands(commands, ctx)
     if shutil.which("pkg-config") is not None:
         assert ctx.variables["PkgConfig_FOUND"] == "TRUE"
+        assert ctx.variables["PKG_CONFIG_FOUND"] == "TRUE"
         assert "PKG_CONFIG_EXECUTABLE" in ctx.variables
     else:
         assert ctx.variables["PkgConfig_FOUND"] == "FALSE"
+        assert ctx.variables["PKG_CONFIG_FOUND"] == "FALSE"
 
 
 def test_pkg_check_modules_zlib() -> None:
@@ -287,3 +289,60 @@ def test_pkg_check_modules_multiple_modules_with_versions() -> None:
     libs = ctx.variables.get("WAYLAND_LIBRARIES", "")
     assert "wayland-client" in libs
     assert "xkbcommon" in libs
+
+
+def _fake_pc_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    if shutil.which("pkg-config") is None:
+        pytest.skip("pkg-config not installed")
+    for name, version in (("cjafoo", "1.2.3"), ("cjabar", "4.5")):
+        (tmp_path / f"{name}.pc").write_text(
+            f"prefix=/opt/{name}\n"
+            "includedir=${prefix}/include\n"
+            "libdir=${prefix}/lib\n"
+            f"Name: {name}\nDescription: {name}\nVersion: {version}\n"
+            f"Cflags: -I${{includedir}}\nLibs: -L${{libdir}} -l{name}\n"
+        )
+    monkeypatch.setenv("PKG_CONFIG_PATH", str(tmp_path))
+
+
+def test_pkg_check_modules_versions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With one module its version is <prefix>_VERSION, with several each one's
+    is <prefix>_<module>_VERSION (SDL reads PC_WAYLAND_xkbcommon_VERSION)."""
+    _fake_pc_files(tmp_path, monkeypatch)
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="pkg_check_modules", args=["ONE", "cjafoo>=1.0"], line=1),
+        Command(name="pkg_check_modules", args=["TWO", "cjafoo", "cjabar"], line=2),
+    ]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["ONE_VERSION"] == "1.2.3"
+    assert ctx.variables["ONE_LIBDIR"] == "/opt/cjafoo/lib"
+    assert ctx.variables["TWO_cjafoo_VERSION"] == "1.2.3"
+    assert ctx.variables["TWO_cjabar_VERSION"] == "4.5"
+    assert ctx.variables["TWO_cjabar_PREFIX"] == "/opt/cjabar"
+
+
+def test_pkg_search_module(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """pkg_search_module() uses the first module that exists, like SDL's
+    pkg_search_module(DBUS dbus-1 dbus)."""
+    _fake_pc_files(tmp_path, monkeypatch)
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(
+            name="pkg_search_module",
+            args=["FOUND_ONE", "IMPORTED_TARGET", "cjamissing", "cjabar", "cjafoo"],
+            line=1,
+        ),
+        Command(name="pkg_search_module", args=["NONE", "cjamissing"], line=2),
+    ]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["FOUND_ONE_FOUND"] == "1"
+    assert ctx.variables["FOUND_ONE_MODULE_NAME"] == "cjabar"
+    assert ctx.variables["FOUND_ONE_VERSION"] == "4.5"
+    assert ctx.variables["FOUND_ONE_LIBRARIES"] == "cjabar"
+    assert "PkgConfig::FOUND_ONE" in ctx.imported_targets
+    assert ctx.variables["NONE_FOUND"] == "0"

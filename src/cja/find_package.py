@@ -900,10 +900,13 @@ def handle_builtin_find_package(
         if pkg_config_executable is not None:
             found = True
             ctx.variables["PkgConfig_FOUND"] = "TRUE"
+            # FindPkgConfig sets the upper-case form too, which e.g. SDL checks
+            ctx.variables["PKG_CONFIG_FOUND"] = "TRUE"
             ctx.variables["PKG_CONFIG_EXECUTABLE"] = pkg_config_executable
         else:
             found = False
             ctx.variables["PkgConfig_FOUND"] = "FALSE"
+            ctx.variables["PKG_CONFIG_FOUND"] = "FALSE"
 
         if required and not found:
             ctx.print_error("could not find package: PkgConfig", cmd.line)
