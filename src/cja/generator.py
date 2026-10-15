@@ -1146,7 +1146,8 @@ def generate_ninja(
 
             ninja runs from the source root, so a relative dependency is the
             source file when one exists there; otherwise, if it matches a build
-            artifact produced by another command, prefix it with $builddir.
+            artifact produced by another command or a file already in the build
+            directory, prefix it with $builddir.
             Resolving the source case first avoids self-dependency cycles when a
             copy command's source and output share the same relative path.
             Bare target names (executables/libraries) resolve to their outputs.
@@ -1159,6 +1160,10 @@ def generate_ninja(
             if (ctx.source_dir / d).exists():
                 return d
             if d in custom_command_outputs:
+                return f"$builddir/{d}"
+            # A file already in the build directory, e.g. the sources of a
+            # FetchContent/CPM dependency under _deps/
+            if (ctx.build_dir / d).exists():
                 return f"$builddir/{d}"
             return d
 

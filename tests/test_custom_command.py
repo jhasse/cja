@@ -732,3 +732,33 @@ add_custom_command(
         "  pool = console\n"
     ) in ninja_content
     assert "build $builddir/plain.txt: custom_command\n  cmd =" in ninja_content
+
+
+def test_add_custom_command_depends_on_file_in_build_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A dependency already in the build directory, like SDL's Wayland protocol
+    XMLs in its CPM sources under _deps/, is a $builddir path for ninja."""
+    from cja.generator import configure
+
+    cmake_content = """cmake_minimum_required(VERSION 3.10)
+project(DepTest)
+
+file(WRITE "${CMAKE_BINARY_DIR}/_deps/dep-src/protocol.xml" "<protocol/>")
+add_custom_command(
+    OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/protocol.h"
+    DEPENDS "${CMAKE_BINARY_DIR}/_deps/dep-src/protocol.xml"
+    COMMAND cp "${CMAKE_BINARY_DIR}/_deps/dep-src/protocol.xml" protocol.h
+)
+add_custom_target(gen ALL DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/protocol.h")
+"""
+    (tmp_path / "CMakeLists.txt").write_text(cmake_content)
+    monkeypatch.chdir(tmp_path)
+
+    configure(tmp_path, "build")
+
+    ninja_content = re.sub(r" \$\n\s*", " ", (tmp_path / "build.ninja").read_text())
+    assert (
+        "build $builddir/protocol.h: custom_command $builddir/_deps/dep-src/protocol.xml"
+        in ninja_content
+    )
