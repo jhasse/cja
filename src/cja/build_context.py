@@ -8,7 +8,7 @@ from typing import Any
 
 from termcolor import colored
 
-from .parser import Command
+from .parser import LITERAL_BACKSLASH_MARKER, Command
 from .syntax import FetchContentInfo, FunctionDef, MacroDef, SourceFileProperties, Test
 from .targets import Executable, ImportedTarget, InstallTarget, Library
 from .utils import UNDEFINED_VAR_SENTINEL, make_relative, resolve_cmake_path
@@ -333,6 +333,7 @@ class BuildContext:
             result = expanded
         result = result.replace(escaped_env_marker, "$ENV{")
         result = result.replace(escaped_var_marker, "${")
+        result = result.replace(LITERAL_BACKSLASH_MARKER, "\\")
         return result
 
 

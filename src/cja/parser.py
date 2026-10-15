@@ -3,6 +3,11 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# Stands in for an escaped backslash ("\\" in CMake) right before a "$" in a
+# quoted argument, so that expand_variables() doesn't take it for "\${", which
+# keeps "${" literal. expand_variables() turns it back into a backslash.
+LITERAL_BACKSLASH_MARKER = "__CJA_LITERAL_BACKSLASH__"
+
 
 @dataclass
 class Command:
@@ -117,6 +122,9 @@ def tokenize(content: str) -> list[tuple[str, int, bool]]:
                         val += "\\$"
                     elif raw_val[j + 1] == "\n":
                         pass  # Line continuation
+                    elif raw_val[j + 1] == "\\" and raw_val[j + 2 : j + 3] == "$":
+                        # "\\${VAR}" is a backslash followed by VAR's value
+                        val += LITERAL_BACKSLASH_MARKER
                     else:
                         val += raw_val[j + 1]
                     j += 2

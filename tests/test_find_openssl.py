@@ -143,7 +143,10 @@ def test_find_openssl_ssl_target_propagates_crypto(
 
     ssl = ctx.imported_targets["OpenSSL::SSL"]
     assert "libssl.a" in ssl.libs
-    assert ssl.link_targets == ["OpenSSL::Crypto"]
+    assert ssl.link_targets[0] == "OpenSSL::Crypto"
+    if sys.platform.startswith("linux"):
+        # Static OpenSSL needs threads on Linux, as with CMake
+        assert "Threads::Threads" in ssl.link_targets
     ninja = (source / "build.ninja").read_text()
     assert "libcrypto.a" in ninja
 

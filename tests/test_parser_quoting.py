@@ -40,6 +40,26 @@ def test_escaped_variable_marker_in_quoted_string() -> None:
     assert commands[0].args == ["X", r"\${exec_prefix}"]
 
 
+def test_escaped_backslash_before_variable_reference() -> None:
+    """In "\\\\${X}" the backslash is literal and ${X} is still expanded, as in
+    SDL's ".*\\\\${CMAKE_SHARED_LIBRARY_SUFFIX}.*" regex, also within a macro."""
+    content = (
+        'set(X ".so")\n'
+        'set(A ".*\\\\${X}.*")\n'
+        'set(B "\\\\\\${X}")\n'
+        "macro(m _NAME)\n"
+        '  set(${_NAME} "\\\\${X}")\n'
+        "endmacro()\n"
+        "m(C)\n"
+    )
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    process_commands(parse(content), ctx)
+    assert ctx.variables["A"] == r".*\.so.*"
+    # An escaped backslash and then an escaped "$" stay literal
+    assert ctx.variables["B"] == r"\${X}"
+    assert ctx.variables["C"] == r"\.so"
+
+
 def test_genex_with_spaces_is_single_argument() -> None:
     content = (
         "target_compile_options(foo PRIVATE "
