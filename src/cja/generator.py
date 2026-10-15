@@ -84,6 +84,25 @@ def _format_imported_flags(flags: str) -> str:
     return " ".join(_quote_if_spaced(token) for token in split_flags(flags))
 
 
+def _default_archiver(c_compiler: str) -> str:
+    """The archiver for static libraries: $AR, or else like CMake the gcc-ar
+    next to a GCC (e.g. gcc-ar-14 for gcc-14), as the LTO objects of a GCC
+    other than the system's default one need its plugin to be indexed."""
+    env_ar = os.getenv("AR")
+    if env_ar:
+        return env_ar
+    if platform.system() == "Windows":
+        return "llvm-ar"
+    compiler = PurePath(c_compiler)
+    match = re.fullmatch(r"(.*-)?gcc(-[0-9.]+)?", compiler.name)
+    if match:
+        gcc_ar = f"{match.group(1) or ''}gcc-ar{match.group(2) or ''}"
+        candidate = str(compiler.with_name(gcc_ar))
+        if shutil.which(candidate):
+            return candidate
+    return "ar"
+
+
 def _infer_compiler_id(compiler: str) -> str:
     """Infer CMake-style compiler ID from a compiler command."""
     parts = shlex.split(compiler) if compiler else []
@@ -816,8 +835,7 @@ def generate_ninja(
         n.variable("builddir", builddir)
         n.variable("cc", cc)
         n.variable("cxx", cxx)
-        default_ar = "llvm-ar" if platform.system() == "Windows" else "ar"
-        n.variable("ar", default_ar)
+        n.variable("ar", _default_archiver(cc))
         n.newline()
 
         cmake_deps: list[str] = []
