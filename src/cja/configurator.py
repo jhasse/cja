@@ -3179,7 +3179,7 @@ int main() {{
                         mode = args[0]
                         message_parts = args[1:]
 
-                    message = " ".join(message_parts)
+                    message = "".join(message_parts)
 
                     log_level = ctx.variables.get("CMAKE_MESSAGE_LOG_LEVEL", "").upper()
                     if log_level not in log_levels:

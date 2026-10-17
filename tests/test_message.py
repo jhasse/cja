@@ -9,13 +9,13 @@ from cja.parser import Command
 
 
 def test_message_status(capsys: pytest.CaptureFixture[str]) -> None:
-    """Test message with STATUS mode."""
+    """Test message with STATUS mode; like CMake, arguments are concatenated."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
     commands = [Command(name="message", args=["STATUS", "Hello", "World"], line=1)]
     process_commands(commands, ctx)
 
     captured = capsys.readouterr()
-    assert captured.out == "Hello World\n"
+    assert captured.out == "HelloWorld\n"
 
 
 def test_message_no_mode(capsys: pytest.CaptureFixture[str]) -> None:
@@ -25,7 +25,7 @@ def test_message_no_mode(capsys: pytest.CaptureFixture[str]) -> None:
     process_commands(commands, ctx)
 
     captured = capsys.readouterr()
-    assert captured.out == "Hello World\n"
+    assert captured.out == "HelloWorld\n"
 
 
 def test_message_warning(capsys: pytest.CaptureFixture[str]) -> None:
