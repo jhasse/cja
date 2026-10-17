@@ -3150,15 +3150,29 @@ int main() {{
 
             case "message":
                 if args:
-                    # Check for mode keyword
-                    modes = (
+                    # In order of verbosity, like CMAKE_MESSAGE_LOG_LEVEL
+                    log_levels = (
+                        "ERROR",
+                        "WARNING",
+                        "NOTICE",
                         "STATUS",
+                        "VERBOSE",
+                        "DEBUG",
+                        "TRACE",
+                    )
+                    modes = (
+                        "NOTICE",
+                        "STATUS",
+                        "VERBOSE",
+                        "DEBUG",
+                        "TRACE",
                         "WARNING",
                         "AUTHOR_WARNING",
                         "SEND_ERROR",
                         "FATAL_ERROR",
                         "DEPRECATION",
                     )
+                    # Check for mode keyword
                     mode = ""
                     message_parts = args
                     if args[0] in modes:
@@ -3167,7 +3181,15 @@ int main() {{
 
                     message = " ".join(message_parts)
 
-                    if mode == "FATAL_ERROR":
+                    log_level = ctx.variables.get("CMAKE_MESSAGE_LOG_LEVEL", "").upper()
+                    if log_level not in log_levels:
+                        log_level = "STATUS"
+                    message_level = mode or "NOTICE"
+                    if message_level in log_levels and log_levels.index(
+                        message_level
+                    ) > log_levels.index(log_level):
+                        pass  # Hidden at the current log level
+                    elif mode == "FATAL_ERROR":
                         ctx.print_error(message, cmd.line)
                         raise SystemExit(1)
                     elif mode == "SEND_ERROR":
