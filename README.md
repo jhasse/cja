@@ -72,6 +72,12 @@ cja -Bbuild-release -DCMAKE_BUILD_TYPE=Release
 ninja -f build-release.ninja
 ```
 
+### `-B` and `-D`
+
+`cja build`, `cja run` and `cja test` accept `-B` and `-D` like `cja` itself, e.g.
+`cja build -Bout -DFOO=1`. `-B` takes precedence over `build-release` from `--release`. Passing `-D`
+reconfigures an existing build directory; without it, the existing configuration is kept.
+
 ## Run Subcommand
 
 cja also generates a `run` phony target that executes the first executable (or the one set via

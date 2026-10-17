@@ -236,6 +236,57 @@ def test_build_subcommand_skips_configure_if_ninja_exists(tmp_path: Path) -> Non
     assert "Configured" not in result2.stdout
 
 
+def test_build_subcommand_build_dir_and_defines(tmp_path: Path) -> None:
+    """cja build accepts -B and -D, and -D reconfigures an existing build."""
+    source_dir = tmp_path / "hello"
+    copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
+
+    def cja(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, "-m", "cja", *args],
+            capture_output=True,
+            text=True,
+            cwd=source_dir,
+            check=False,
+        )
+
+    result = cja("build", "-B", "out")
+    assert result.returncode == 0, result.stderr
+    assert (source_dir / "out" / f"hello{EXE_EXT}").exists()
+    assert not (source_dir / "build.ninja").exists()
+    assert "-O3" not in (source_dir / "out.ninja").read_text()
+
+    # -D before and after the subcommand are combined
+    result = cja("-DCMAKE_BUILD_TYPE=Release", "build", "-B", "out", "-D", "FOO=1")
+    assert result.returncode == 0, result.stderr
+    assert "Configured" in result.stdout
+    content = (source_dir / "out.ninja").read_text()
+    assert "-O3" in content
+    assert "-DFOO=1" in content
+
+    # Without -D the existing configuration is kept
+    result = cja("build", "-B", "out")
+    assert result.returncode == 0, result.stderr
+    assert "Configured" not in result.stdout
+
+
+def test_build_subcommand_build_dir_overrides_release(tmp_path: Path) -> None:
+    """-B wins over the build-release directory of --release."""
+    source_dir = tmp_path / "hello"
+    copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
+
+    result = subprocess.run(
+        [sys.executable, "-m", "cja", "build", "--release", "-B", "rel"],
+        capture_output=True,
+        text=True,
+        cwd=source_dir,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "-O3" in (source_dir / "rel.ninja").read_text()
+    assert not (source_dir / "build-release.ninja").exists()
+
+
 @pytest.mark.skipif(
     sys.platform == "win32", reason="TODO: Fix test subcommand on Windows"
 )
@@ -586,3 +637,29 @@ add_library(mylib lib.c)
     assert result.returncode == 1
     assert "No executable target to run" in result.stderr
     assert "Traceback" not in result.stderr
+
+
+def test_run_subcommand_build_dir_and_defines(tmp_path: Path) -> None:
+    """cja run accepts -B and -D, and a changed -D takes effect."""
+    source_dir = tmp_path
+    (source_dir / "main.c").write_text("int main() { return RET; }")
+    (source_dir / "CMakeLists.txt").write_text(
+        """
+cmake_minimum_required(VERSION 3.10)
+project(run_prj)
+add_executable(myexe main.c)
+target_compile_definitions(myexe PRIVATE RET=${RET})
+"""
+    )
+
+    for ret in (7, 9):
+        result = subprocess.run(
+            [sys.executable, "-m", "cja", "run", "-B", "out", f"-DRET={ret}"],
+            capture_output=True,
+            text=True,
+            cwd=source_dir,
+            check=False,
+        )
+        assert result.returncode == ret, result.stderr
+    assert (source_dir / "out" / f"myexe{EXE_EXT}").exists()
+    assert not (source_dir / "build").exists()

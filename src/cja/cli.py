@@ -33,22 +33,69 @@ def parse_define(value: str) -> tuple[str, str]:
         return (value, "ON")
 
 
-def cmd_configure(args: argparse.Namespace) -> int:
-    """Run the configure command."""
-    source_dir = Path(".")
-
-    # Determine build directory and variables based on --release flag
+def _build_dir_and_variables(args: argparse.Namespace) -> tuple[str, dict[str, str]]:
+    """Return the build directory and variables from -B, -D and --release."""
     if args.release:
         build_dir = "build-release"
         variables: dict[str, str] = {"CMAKE_BUILD_TYPE": "Release"}
     else:
-        build_dir = args.build_dir
+        build_dir = "build"
         variables = {}
-
-    # Parse -D arguments into variables dict (-D can override --release settings)
+    # -B and -D win over --release
+    if args.build_dir is not None:
+        build_dir = args.build_dir
     for define in args.defines:
         name, value = parse_define(define)
         variables[name] = value
+    return build_dir, variables
+
+
+def _configure_for_subcommand(args: argparse.Namespace) -> tuple[str, int]:
+    """Configure for build/test/run if needed; return (build_dir, exit code).
+
+    Only configures when the ninja file is missing (from then on ninja
+    regenerates it itself) or when -D asks for different variables.
+    """
+    build_dir, variables = _build_dir_and_variables(args)
+    ninja_file = Path(f"{build_dir}.ninja")
+    cja_json_path = Path(build_dir) / "cja.json"
+    configured = ninja_file.exists() and (
+        args.command != "run" or cja_json_path.exists()
+    )
+    if configured and not args.defines:
+        return build_dir, 0
+    try:
+        configure(Path("."), build_dir, variables=variables if variables else None)
+    except FileNotFoundError as e:
+        error_label = colored("error:", "red", attrs=["bold"])
+        print(f"{error_label} {e}", file=sys.stderr)
+        return build_dir, 1
+    except SyntaxError as e:
+        if e.filename and e.lineno:
+            rel_file = e.filename
+            try:
+                p = Path(e.filename)
+                if p.is_absolute():
+                    rel_file = str(p.relative_to(Path.cwd()))
+            except ValueError:
+                pass
+            error_label = colored("error:", "red", attrs=["bold"])
+            print(f"{rel_file}:{e.lineno}: {error_label} {e.msg}", file=sys.stderr)
+        else:
+            error_label = colored("error:", "red", attrs=["bold"])
+            print(f"{error_label} Parse error: {e}", file=sys.stderr)
+        return build_dir, 1
+    except RuntimeError as e:
+        error_label = colored("error:", "red", attrs=["bold"])
+        print(f"{error_label} {e}", file=sys.stderr)
+        return build_dir, 1
+    return build_dir, 0
+
+
+def cmd_configure(args: argparse.Namespace) -> int:
+    """Run the configure command."""
+    source_dir = Path(".")
+    build_dir, variables = _build_dir_and_variables(args)
 
     try:
         configure(
@@ -99,41 +146,12 @@ def cmd_test(args: argparse.Namespace) -> int:
 
 def cmd_run(args: argparse.Namespace) -> int:
     """Build and run the first executable."""
-    source_dir = Path(".")
-
-    if args.release:
-        build_dir = "build-release"
-        variables: dict[str, str] = {"CMAKE_BUILD_TYPE": "Release"}
-    else:
-        build_dir = "build"
-        variables = {}
+    build_dir, status = _configure_for_subcommand(args)
+    if status != 0:
+        return status
 
     ninja_file = Path(f"{build_dir}.ninja")
-
     cja_json_path = Path(build_dir) / "cja.json"
-
-    if not ninja_file.exists() or not cja_json_path.exists():
-        try:
-            configure(source_dir, build_dir, variables=variables if variables else None)
-        except FileNotFoundError as e:
-            error_label = colored("error:", "red", attrs=["bold"])
-            print(f"{error_label} {e}", file=sys.stderr)
-            return 1
-        except SyntaxError as e:
-            if e.filename and e.lineno:
-                rel_file = e.filename
-                try:
-                    p = Path(e.filename)
-                    if p.is_absolute():
-                        rel_file = str(p.relative_to(Path.cwd()))
-                except ValueError:
-                    pass
-                error_label = colored("error:", "red", attrs=["bold"])
-                print(f"{rel_file}:{e.lineno}: {error_label} {e.msg}", file=sys.stderr)
-            else:
-                error_label = colored("error:", "red", attrs=["bold"])
-                print(f"{error_label} Parse error: {e}", file=sys.stderr)
-            return 1
 
     if not cja_json_path.exists():
         error_label = colored("error:", "red", attrs=["bold"])
@@ -292,41 +310,11 @@ def cmd_command_mode(args: list[str]) -> int:
 
 def _run_ninja(args: argparse.Namespace, target: str | None) -> int:
     """Internal helper to run ninja with configuration if needed."""
-    source_dir = Path(".")
-
-    # Determine build directory and variables based on --release flag
-    if args.release:
-        build_dir = "build-release"
-        variables = {"CMAKE_BUILD_TYPE": "Release"}
-    else:
-        build_dir = "build"
-        variables = {}
+    build_dir, status = _configure_for_subcommand(args)
+    if status != 0:
+        return status
 
     ninja_file = Path(f"{build_dir}.ninja")
-
-    # Only configure if ninja file doesn't exist
-    if not ninja_file.exists():
-        try:
-            configure(source_dir, build_dir, variables=variables if variables else None)
-        except FileNotFoundError as e:
-            error_label = colored("error:", "red", attrs=["bold"])
-            print(f"{error_label} {e}", file=sys.stderr)
-            return 1
-        except SyntaxError as e:
-            if e.filename and e.lineno:
-                rel_file = e.filename
-                try:
-                    p = Path(e.filename)
-                    if p.is_absolute():
-                        rel_file = str(p.relative_to(Path.cwd()))
-                except ValueError:
-                    pass
-                error_label = colored("error:", "red", attrs=["bold"])
-                print(f"{rel_file}:{e.lineno}: {error_label} {e.msg}", file=sys.stderr)
-            else:
-                error_label = colored("error:", "red", attrs=["bold"])
-                print(f"{error_label} Parse error: {e}", file=sys.stderr)
-            return 1
 
     # Run ninja
     ninja_cmd = ["ninja", "-f", str(ninja_file)]
@@ -359,8 +347,8 @@ def main() -> int:
         "-B",
         "--build-dir",
         dest="build_dir",
-        default="build",
-        help="Relative path for build directory (default: build)",
+        help="Relative path for build directory "
+        "(default: build, or build-release with --release)",
     )
 
     parser.add_argument(
@@ -424,26 +412,41 @@ def main() -> int:
         help=argparse.SUPPRESS,
     )
 
+    def add_configure_arguments(subparser: argparse.ArgumentParser, mode: str) -> None:
+        # default=SUPPRESS so `cja --release build` keeps the parent flag
+        subparser.add_argument(
+            "--release",
+            action="store_true",
+            default=argparse.SUPPRESS,
+            help=f"{mode} in release mode (CMAKE_BUILD_TYPE=Release)",
+        )
+        subparser.add_argument(
+            "-B",
+            "--build-dir",
+            dest="build_dir",
+            default=argparse.SUPPRESS,
+            help="Relative path for build directory "
+            "(default: build, or build-release with --release)",
+        )
+        # Own dest, merged in main(), so `cja -DA=1 build -DB=2` keeps both
+        subparser.add_argument(
+            "-D",
+            dest="subcommand_defines",
+            action="append",
+            default=argparse.SUPPRESS,
+            metavar="VAR=VALUE",
+            help="Set a CMake variable and reconfigure (can be used multiple times)",
+        )
+
     # Build subcommand
-    # default=SUPPRESS so `cja --release build` keeps the parent flag
     build_parser = subparsers.add_parser(
         "build", help="Configure and build the project"
     )
-    build_parser.add_argument(
-        "--release",
-        action="store_true",
-        default=argparse.SUPPRESS,
-        help="Build in release mode (CMAKE_BUILD_TYPE=Release)",
-    )
+    add_configure_arguments(build_parser, "Build")
 
     # Test subcommand
     test_parser = subparsers.add_parser("test", help="Configure and run tests")
-    test_parser.add_argument(
-        "--release",
-        action="store_true",
-        default=argparse.SUPPRESS,
-        help="Run tests in release mode (CMAKE_BUILD_TYPE=Release)",
-    )
+    add_configure_arguments(test_parser, "Run tests")
     test_parser.add_argument(
         "--parallel",
         action="store_true",
@@ -454,12 +457,7 @@ def main() -> int:
     run_parser = subparsers.add_parser(
         "run", help="Configure, build and run the first executable"
     )
-    run_parser.add_argument(
-        "--release",
-        action="store_true",
-        default=argparse.SUPPRESS,
-        help="Run in release mode (CMAKE_BUILD_TYPE=Release)",
-    )
+    add_configure_arguments(run_parser, "Run")
 
     # Format subcommand
     format_parser = subparsers.add_parser(
@@ -507,6 +505,7 @@ def main() -> int:
         argv = argv[:p_idx]
 
     args, ninja_args = parser.parse_known_args(argv)
+    args.defines += getattr(args, "subcommand_defines", [])
     if hasattr(args, "command") and args.command in ("build", "test", "run"):
         args.ninja_args = ninja_args
     elif args.command == "format" and ninja_args:
