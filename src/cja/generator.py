@@ -364,6 +364,31 @@ def _obj_subdir(source_rel: PurePath) -> str:
     return "/".join(cleaned)
 
 
+def _object_paths(target_name: str, obj_sources: list[str]) -> list[str]:
+    """Return the object file of each of a target's sources.
+
+    Archives store members by basename only, so sources with the same stem in
+    different directories (a/util.c, b/util.c) need distinct basenames, or
+    MSVC's linker warns LNK4255 and drops their debug info. Those get their
+    subdir folded into the basename.
+    """
+    rels = [PurePath(source) for source in obj_sources]
+    stem_counts: dict[str, int] = {}
+    for rel in rels:
+        stem_counts[rel.stem] = stem_counts.get(rel.stem, 0) + 1
+    paths = []
+    for rel in rels:
+        subdir = _obj_subdir(rel)
+        stem = rel.stem
+        if subdir and stem_counts[stem] > 1:
+            stem = f"{subdir.replace('/', '_')}_{stem}"
+        basename = f"{target_name}_{stem}.o"
+        paths.append(
+            f"$builddir/{subdir}/{basename}" if subdir else f"$builddir/{basename}"
+        )
+    return paths
+
+
 def _rc_manifest_deps(ctx: BuildContext, rc_path: str) -> list[str]:
     """Extract manifest file paths referenced by RT_MANIFEST in .rc file."""
     deps: list[str] = []
@@ -1737,16 +1762,11 @@ def generate_ninja(
                 lib_order_only,
             )
 
-            for source in compileable_sources:
-                actual_source, obj_source = _resolve_source(source)
-
-                source_rel = Path(obj_source)
-                obj_subdir = _obj_subdir(source_rel)
-                obj_basename = f"{lib.name}_{source_rel.stem}.o"
-                if obj_subdir:
-                    obj_name = f"$builddir/{obj_subdir}/{obj_basename}"
-                else:
-                    obj_name = f"$builddir/{obj_basename}"
+            resolved_sources = [_resolve_source(s) for s in compileable_sources]
+            obj_names = _object_paths(lib.name, [obj for _, obj in resolved_sources])
+            for source, (actual_source, _), obj_name in zip(
+                compileable_sources, resolved_sources, obj_names
+            ):
                 register_output(obj_name, lib.defined_file, lib.defined_line)
                 objects.append(obj_name)
 
@@ -2017,16 +2037,11 @@ def generate_ninja(
                 exe_order_only,
             )
 
-            for source in compileable_sources:
-                actual_source, obj_source = _resolve_source(source)
-
-                source_rel = Path(obj_source)
-                obj_subdir = _obj_subdir(source_rel)
-                obj_basename = f"{exe.name}_{source_rel.stem}.o"
-                if obj_subdir:
-                    obj_name = f"$builddir/{obj_subdir}/{obj_basename}"
-                else:
-                    obj_name = f"$builddir/{obj_basename}"
+            resolved_sources = [_resolve_source(s) for s in compileable_sources]
+            obj_names = _object_paths(exe.name, [obj for _, obj in resolved_sources])
+            for source, (actual_source, _), obj_name in zip(
+                compileable_sources, resolved_sources, obj_names
+            ):
                 register_output(obj_name, exe.defined_file, exe.defined_line)
                 objects.append(obj_name)
 
