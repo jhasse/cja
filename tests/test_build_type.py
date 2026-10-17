@@ -3,6 +3,8 @@
 import platform
 from pathlib import Path
 
+import pytest
+
 from cja.generator import configure
 from tests.helpers import copy_unignored_tree
 
@@ -38,6 +40,31 @@ def test_build_type_debug(tmp_path: Path) -> None:
     assert "-O0" in content
     # Needed on Windows so clang tells the linker to write a PDB.
     assert ("-g" in _ldflags(content)) == (platform.system() == "Windows")
+
+
+@pytest.mark.skipif(platform.system() != "Windows", reason="Windows only")
+@pytest.mark.parametrize("msvc_version", ["1930", ""])
+def test_build_type_debug_no_incremental_link(
+    tmp_path: Path, msvc_version: str
+) -> None:
+    """link.exe's .ilk survives `ninja -t clean`, so don't link incrementally."""
+    source_dir = tmp_path / "hello"
+    copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
+
+    cmake_file = source_dir / "CMakeLists.txt"
+    content = cmake_file.read_text()
+    content = content.replace(
+        "project(hello)",
+        "project(hello)\nset(CMAKE_BUILD_TYPE Debug)\n"
+        f'set(MSVC_VERSION "{msvc_version}")',
+    )
+    cmake_file.write_text(content)
+
+    configure(source_dir, "build")
+
+    content = (source_dir / "build.ninja").read_text()
+    # MinGW's ld doesn't know /INCREMENTAL:NO.
+    assert ("-Wl,/INCREMENTAL:NO" in _ldflags(content)) == bool(msvc_version)
 
 
 def test_build_type_release(tmp_path: Path) -> None:

@@ -800,6 +800,11 @@ def generate_ninja(
     build_type_link_flags = ""
     if platform.system() == "Windows" and build_type in ("DEBUG", "RELWITHDEBINFO"):
         build_type_link_flags = "-g"
+        # -debug implies incremental linking with link.exe, whose .ilk outlives
+        # `ninja -t clean` and makes the next link report "not found or not
+        # built by the last incremental link; performing full link".
+        if ctx.variables.get("MSVC_VERSION"):
+            build_type_link_flags += " -Wl,/INCREMENTAL:NO"
 
     # Interprocedural optimization flags (LTO), including config-specific override.
     ipo_enabled = False
