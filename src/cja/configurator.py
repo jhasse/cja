@@ -1258,6 +1258,9 @@ def process_commands(
                         temp_src = f.name
                     temp_out = temp_src + ".out"
                     cmd = [ctx.c_compiler, "-flto", "-o", temp_out, temp_src]
+                    # Match the linker flags and ordering used by the generator.
+                    for name in ("CMAKE_EXE_LINKER_FLAGS", "CMAKE_LINKER_FLAGS"):
+                        cmd.extend(shlex.split(ctx.variables.get(name, "")))
                     # Must match the linker the generator uses with LTO.
                     if platform.system() == "Windows":
                         cmd.append("-fuse-ld=lld-link")
