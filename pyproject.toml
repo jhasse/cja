@@ -3,8 +3,8 @@ name = "cja"
 version = "0.8.3"
 description = "CMake-compatible build system that generates Ninja build files"
 readme = "README.md"
-license = "GPL-3.0-or-later"
-license-files = ["LICENSE.txt"]
+license = "GPL-3.0-or-later AND BSD-3-Clause"
+license-files = ["LICENSE.txt", "src/cja/cmake/Modules/LICENSE.rst"]
 authors = [
     { name = "Jan Niklas Hasse", email = "jhasse@bixense.com" }
 ]
