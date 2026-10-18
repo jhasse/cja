@@ -1,0 +1,2 @@
+# "CMake" is the name of the build system cja is compatible with
+addFilter(r"spelling-error .*CMake")
