@@ -3,7 +3,8 @@ name = "cja"
 version = "0.8.3"
 description = "CMake-compatible build system that generates Ninja build files"
 readme = "README.md"
-license = { text = "GPL-3.0-or-later" }
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE.txt"]
 authors = [
     { name = "Jan Niklas Hasse", email = "jhasse@bixense.com" }
 ]
