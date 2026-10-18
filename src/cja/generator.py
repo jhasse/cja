@@ -488,6 +488,12 @@ _MS_RUNTIME_LIBS = {
     "MultiThreadedDebugDLL": "dll_dbg",
 }
 
+# The clang++ driver always adds -defaultlib:libcmt when linking for
+# *-windows-msvc, even with -fms-runtime-lib, and link.exe can't reconcile it
+# with e.g. msvcrtd.lib (LNK4098, then unresolved __imp_ symbols). Like CMake,
+# drop it and let the objects' /DEFAULTLIB directives pick the runtime.
+_MSVC_RUNTIME_LINK_FLAG = "-nostartfiles"
+
 
 def _msvc_runtime_library_flag(
     ctx: BuildContext, properties: dict[str, str]
@@ -500,6 +506,9 @@ def _msvc_runtime_library_flag(
     WSAEOPNOTSUPP). Like CMake, use the MSVC_RUNTIME_LIBRARY property, else
     CMAKE_MSVC_RUNTIME_LIBRARY, else the multi-threaded DLL runtime (with
     debug checks in Debug builds). An empty value selects no runtime.
+
+    The objects then name their runtime via /DEFAULTLIB, so link with
+    ``-nostartfiles`` (see _MSVC_RUNTIME_LINK_FLAG).
     """
     if not ctx.variables.get("MSVC_VERSION"):
         return None
@@ -1939,6 +1948,8 @@ def generate_ninja(
                 lib_link_options = _dependency_link_options(
                     ctx, lib.link_options, order_link_libraries(lib.link_libraries)
                 )
+                if runtime_flag:
+                    lib_link_options.append(_MSVC_RUNTIME_LINK_FLAG)
                 n.build(
                     lib_name,
                     link_rule,
@@ -2312,6 +2323,8 @@ def generate_ninja(
                 subsystem_flag = _windows_subsystem_link_flag(ctx, win32_executable)
                 if subsystem_flag:
                     link_flags.append(subsystem_flag)
+            if runtime_flag:
+                link_flags.append(_MSVC_RUNTIME_LINK_FLAG)
 
             # Link
             prefix = _output_prefix(exe.binary_dir)

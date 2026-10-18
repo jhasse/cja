@@ -18,8 +18,9 @@ def link_libs(ninja: str, output_pattern: str) -> str:
     block = re.sub(r" \$\n {4}", " ", m.group(1))
     libs = re.search(r"^  libs = (.*)$", block, re.MULTILINE)
     value = libs.group(1) if libs else ""
-    # Windows adds an explicit subsystem flag to executables
-    return re.sub(r"\s*-Wl,/SUBSYSTEM:\w+", "", value)
+    # Windows adds an explicit subsystem flag to executables and, with a
+    # selected MSVC runtime library, -nostartfiles
+    return re.sub(r"\s*(?:-Wl,/SUBSYSTEM:\w+|-nostartfiles)", "", value)
 
 
 def configure_project(

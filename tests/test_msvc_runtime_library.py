@@ -86,3 +86,37 @@ def test_no_runtime_library_flag_without_msvc(
     (tmp_path / "main.c").write_text("int main(void) { return 0; }\n")
     configure(tmp_path, "build")
     assert "-fms-runtime-lib" not in (tmp_path / "build.ninja").read_text()
+
+
+def _libs(ninja_content: str, output_name: str) -> str:
+    """The libs of the build edge linking output_name (any file extension)."""
+    unwrapped = re.sub(r"\$\n *", "", ninja_content)
+    match = re.search(
+        rf"^build \S*/{re.escape(output_name)}(?:\.\w+)?: .*\n"
+        r"(?:  \w+ = .*\n)*?(?:  libs = (.*))?",
+        unwrapped,
+        re.MULTILINE,
+    )
+    assert match, f"no build edge for {output_name}"
+    return match.group(1) or ""
+
+
+def test_link_without_default_libcmt(tmp_path: Path) -> None:
+    """The objects' /DEFAULTLIB picks the runtime, clang++ mustn't add libcmt.
+
+    Otherwise link.exe fails with e.g. "unresolved external symbol __imp_sqrtf".
+    """
+    (tmp_path / "CMakeLists.txt").write_text(
+        "project(RuntimeLib C)\n"
+        "add_library(shared SHARED lib.c)\n"
+        "add_executable(app main.c)\n"
+        "add_executable(noruntime main.c)\n"
+        'set_target_properties(noruntime PROPERTIES MSVC_RUNTIME_LIBRARY "")\n'
+    )
+    (tmp_path / "lib.c").write_text("int f(void) { return 0; }\n")
+    (tmp_path / "main.c").write_text("int main(void) { return 0; }\n")
+    configure(tmp_path, "build", variables={"MSVC_VERSION": "1930"})
+    content = (tmp_path / "build.ninja").read_text()
+    assert "-nostartfiles" in _libs(content, "app").split()
+    assert "-nostartfiles" in _libs(content, "libshared").split()
+    assert "-nostartfiles" not in _libs(content, "noruntime")
