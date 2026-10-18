@@ -11,6 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+#
+# Modified for cja: Writer.build() takes validation=, Writer.default() escapes
+# its paths, and the code follows current type hint and lint conventions.
 
 """Python module for generating .ninja files.
 
