@@ -513,6 +513,18 @@ def _msvc_runtime_library_flag(
     return f"-fms-runtime-lib={runtime}" if runtime else None
 
 
+def _link_variables(
+    libs: list[str], runtime_flag: str | None
+) -> dict[str, str | list[str] | None] | None:
+    """Per-edge link variables; the runtime flag must also be passed to the linker driver."""
+    variables: dict[str, str | list[str] | None] = {}
+    if libs:
+        variables["libs"] = " ".join(libs)
+    if runtime_flag:
+        variables["rtflags"] = runtime_flag
+    return variables or None
+
+
 def _std_level(lang: str, token: str) -> int:
     known = {
         "cxx": {
@@ -1094,14 +1106,14 @@ def generate_ninja(
         # Link rules
         n.rule(
             "link",
-            command="$cc -fdiagnostics-color $in -o $out $ldflags $libs",
+            command="$cc -fdiagnostics-color $in -o $out $ldflags $rtflags $libs",
             description="\x1b[32;1mLinking C executable $out\x1b[0m",
         )
         n.newline()
 
         n.rule(
             "link_cxx",
-            command="$cxx -fdiagnostics-color $in -o $out $ldflags $libs",
+            command="$cxx -fdiagnostics-color $in -o $out $ldflags $rtflags $libs",
             description="\x1b[32;1mLinking C++ executable $out\x1b[0m",
         )
         n.newline()
@@ -1109,14 +1121,14 @@ def generate_ninja(
         shared_link_flag = "-dynamiclib" if platform.system() == "Darwin" else "-shared"
         n.rule(
             "solink",
-            command=f"$cc -fdiagnostics-color {shared_link_flag} $in -o $out $ldflags $libs",
+            command=f"$cc -fdiagnostics-color {shared_link_flag} $in -o $out $ldflags $rtflags $libs",
             description="\x1b[32;1mLinking C shared library $out\x1b[0m",
         )
         n.newline()
 
         n.rule(
             "solink_cxx",
-            command=f"$cxx -fdiagnostics-color {shared_link_flag} $in -o $out $ldflags $libs",
+            command=f"$cxx -fdiagnostics-color {shared_link_flag} $in -o $out $ldflags $rtflags $libs",
             description="\x1b[32;1mLinking C++ shared library $out\x1b[0m",
         )
         n.newline()
@@ -1939,16 +1951,12 @@ def generate_ninja(
                 lib_link_options = _dependency_link_options(
                     ctx, lib.link_options, order_link_libraries(lib.link_libraries)
                 )
-                if runtime_flag:
-                    lib_link_options.insert(0, runtime_flag)
                 n.build(
                     lib_name,
                     link_rule,
                     objects,
                     order_only=lib_dep_order_only or None,
-                    variables={"libs": " ".join(lib_link_options)}
-                    if lib_link_options
-                    else None,
+                    variables=_link_variables(lib_link_options, runtime_flag),
                 )
                 n.newline()
                 lib_outputs[lib.name] = lib_name
@@ -2192,8 +2200,6 @@ def generate_ninja(
             # Add linked libraries to inputs
             link_inputs = objects.copy()
             link_flags: list[str] = []
-            if runtime_flag:
-                link_flags.append(runtime_flag)
 
             # Propagate link directories from dependencies
             for lib_name in expanded_link_libraries:
@@ -2322,9 +2328,7 @@ def generate_ninja(
             exe_name = f"{prefix}/{exe.name}{exe_ext}"
             register_output(exe_name, exe.defined_file, exe.defined_line)
             link_rule = "link_cxx" if uses_cxx else "link"
-            variables: dict[str, str | list[str] | None] = {}
-            if link_flags:
-                variables["libs"] = " ".join(link_flags)
+            variables = _link_variables(link_flags, runtime_flag) or {}
             n.build(
                 exe_name,
                 link_rule,

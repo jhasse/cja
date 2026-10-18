@@ -92,6 +92,8 @@ def test_runtime_flag_is_passed_when_linking(tmp_path: Path) -> None:
     """The link must select the same runtime, else the driver links libcmt."""
     _configure(tmp_path, CMAKE_BUILD_TYPE="Debug", MSVC_VERSION="1930")
     content = re.sub(r"\$\n *", "", (tmp_path / "build.ninja").read_text())
-    match = re.search(r"^build \S*app\S*: link\S* .*\n  libs = (.*)", content, re.M)
+    match = re.search(
+        r"^build \S*app\S*: link\S* .*\n  rtflags = (.*)", content, re.MULTILINE
+    )
     assert match
     assert "-fms-runtime-lib=dll_dbg" in match.group(1).split()
