@@ -1939,6 +1939,8 @@ def generate_ninja(
                 lib_link_options = _dependency_link_options(
                     ctx, lib.link_options, order_link_libraries(lib.link_libraries)
                 )
+                if runtime_flag:
+                    lib_link_options.insert(0, runtime_flag)
                 n.build(
                     lib_name,
                     link_rule,
@@ -2190,6 +2192,8 @@ def generate_ninja(
             # Add linked libraries to inputs
             link_inputs = objects.copy()
             link_flags: list[str] = []
+            if runtime_flag:
+                link_flags.append(runtime_flag)
 
             # Propagate link directories from dependencies
             for lib_name in expanded_link_libraries:

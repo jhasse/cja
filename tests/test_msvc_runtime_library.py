@@ -86,3 +86,12 @@ def test_no_runtime_library_flag_without_msvc(
     (tmp_path / "main.c").write_text("int main(void) { return 0; }\n")
     configure(tmp_path, "build")
     assert "-fms-runtime-lib" not in (tmp_path / "build.ninja").read_text()
+
+
+def test_runtime_flag_is_passed_when_linking(tmp_path: Path) -> None:
+    """The link must select the same runtime, else the driver links libcmt."""
+    _configure(tmp_path, CMAKE_BUILD_TYPE="Debug", MSVC_VERSION="1930")
+    content = re.sub(r"\$\n *", "", (tmp_path / "build.ninja").read_text())
+    match = re.search(r"^build \S*app\S*: link\S* .*\n  libs = (.*)", content, re.M)
+    assert match
+    assert "-fms-runtime-lib=dll_dbg" in match.group(1).split()
