@@ -3,6 +3,8 @@
 import platform
 from pathlib import Path
 
+import pytest
+
 from cja.generator import configure
 
 
@@ -71,8 +73,10 @@ def test_both_compilers(tmp_path: Path) -> None:
     assert "cxx = clang++" in content
 
 
-def test_default_compilers(tmp_path: Path) -> None:
+def test_default_compilers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Test that default compilers are used when not specified."""
+    monkeypatch.delenv("CC", raising=False)
+    monkeypatch.delenv("CXX", raising=False)
     source_dir = tmp_path / "src"
     source_dir.mkdir()
     (source_dir / "CMakeLists.txt").write_text(
