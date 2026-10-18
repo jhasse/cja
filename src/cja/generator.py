@@ -516,12 +516,18 @@ def _msvc_runtime_library_flag(
 def _link_variables(
     libs: list[str], runtime_flag: str | None
 ) -> dict[str, str | list[str] | None] | None:
-    """Per-edge link variables; the runtime flag must also be passed to the linker driver."""
+    """Per-edge link variables.
+
+    The clang++ driver ignores -fms-runtime-lib when linking and always adds
+    -defaultlib:libcmt, which conflicts with the runtime the objects request
+    via /DEFAULTLIB (LNK4098, unresolved __imp__CrtDbgReport, ...). Drop it
+    unless the static release runtime was selected.
+    """
     variables: dict[str, str | list[str] | None] = {}
     if libs:
         variables["libs"] = " ".join(libs)
-    if runtime_flag:
-        variables["rtflags"] = runtime_flag
+    if runtime_flag and runtime_flag != "-fms-runtime-lib=static":
+        variables["rtflags"] = "-Wl,/NODEFAULTLIB:libcmt"
     return variables or None
 
 
