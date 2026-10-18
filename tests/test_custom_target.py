@@ -1,10 +1,14 @@
 """Tests for add_custom_target support."""
 
+import platform
 import re
 from pathlib import Path
 
 from cja.generator import BuildContext, process_commands
 from cja.parser import Command
+from tests.helpers import cd_command, join_command_lines
+
+EXE_EXT = ".exe" if platform.system() == "Windows" else ""
 
 
 def test_add_custom_target_minimal() -> None:
@@ -274,7 +278,7 @@ add_custom_target(
     ninja_file = source_dir / "build.ninja"
     ninja_content = ninja_file.read_text()
 
-    assert "cd $builddir && echo hello" in ninja_content
+    assert f"{cd_command('$builddir')} && echo hello" in ninja_content
 
 
 def test_add_custom_target_target_file_in_command(tmp_path: Path) -> None:
@@ -338,10 +342,10 @@ add_custom_target(
     build_dir = (tmp_path / "build").as_posix()
 
     cmd_line = next(line for line in ninja_content.splitlines() if "--flag" in line)
-    assert cmd_line.strip().startswith("cmd = cd build && ")
-    assert f"{build_dir}/myapp" in cmd_line
+    run_app = f"env FOO=1 {build_dir}/myapp{EXE_EXT} --flag"
+    touch = f"touch {build_dir}/run_app.stamp"
+    assert cmd_line.strip() == f"cmd = {join_command_lines(cd_command('build'), run_app, touch)}"
     assert "'$builddir/myapp'" not in cmd_line
-    assert cmd_line.endswith(f"&& touch {build_dir}/run_app.stamp")
 
 
 def test_add_custom_target_uses_terminal(tmp_path: Path) -> None:

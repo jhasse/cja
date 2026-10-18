@@ -37,8 +37,8 @@ from .utils import (
 def _quote_ninja_cmd_part(part: str) -> str:
     """Quote one argv token for a Ninja rule command line.
 
-    On Windows, Ninja passes the command through cmd.exe, which does not treat
-    single quotes as quoting. shlex.quote uses single quotes there, so convert
+    On Windows, the command runs either directly or through cmd.exe, neither of
+    which treats single quotes as quoting. shlex.quote uses single quotes there, so convert
     paths to forward slashes and reserve double quotes for arguments with spaces.
     """
     if part == "$builddir":
@@ -644,34 +644,46 @@ def _include_flag(path: str, source_dir: Path) -> str:
     return _quote_if_spaced(f"-I{_ninja_flag_path(path, source_dir)}")
 
 
-def _cd_prefix(working_dir: str, source_dir: Path) -> str:
-    """Return a ``cd <dir> && `` prefix for a custom command working directory.
+def _cd_command(working_dir: str, source_dir: Path) -> str | None:
+    """Return the ``cd <dir>`` command line for a custom command working directory.
 
     Ninja runs from the source root. Absolute paths under that tree are rewritten
     as source-relative paths (e.g. ``/proj/build/generated`` → ``build/generated``).
     Paths already using ``$builddir`` are left unchanged. When the working
-    directory is the source root itself, no ``cd`` is emitted.
+    directory is the source root itself, None is returned as no ``cd`` is needed.
+    On Windows it's ``cd /D`` like in CMake, so that the drive changes, too.
     """
     if not working_dir:
-        return ""
-    if working_dir == "$builddir" or working_dir.startswith("$builddir/"):
-        return f"cd {to_posix_path(working_dir)} && "
-
+        return None
+    target = working_dir
+    is_builddir = working_dir == "$builddir" or working_dir.startswith("$builddir/")
     wd = Path(working_dir)
-    if not wd.is_absolute():
-        return f"cd {to_posix_path(working_dir)} && "
+    if not is_builddir and wd.is_absolute():
+        try:
+            source_resolved = source_dir.resolve()
+            wd_resolved = wd.resolve()
+            if wd_resolved == source_resolved:
+                return None
+            if wd_resolved.is_relative_to(source_resolved):
+                target = str(wd_resolved.relative_to(source_resolved))
+        except (OSError, RuntimeError, ValueError):
+            pass
+    if platform.system() == "Windows":
+        return f"cd /D {_quote_ninja_cmd_part(target)}"
+    return f"cd {to_posix_path(target)}"
 
-    try:
-        source_resolved = source_dir.resolve()
-        wd_resolved = wd.resolve()
-        if wd_resolved == source_resolved:
-            return ""
-        if wd_resolved.is_relative_to(source_resolved):
-            rel = wd_resolved.relative_to(source_resolved)
-            return f"cd {to_posix_path(rel)} && "
-    except (OSError, RuntimeError, ValueError):
-        pass
-    return f"cd {to_posix_path(working_dir)} && "
+
+def _join_command_lines(lines: list[str]) -> str:
+    """Join the command lines of a custom command into one Ninja ``command``.
+
+    On Windows, Ninja starts the command with CreateProcess, without a shell, so
+    ``&&`` and builtins like ``cd`` don't exist. Like CMake, wrap several command
+    lines in ``cmd.exe /C "..."`` there; a single one is still run directly.
+    """
+    joined = " && ".join(lines)
+    if platform.system() == "Windows" and len(lines) > 1:
+        return f'cmd.exe /C "{joined}"'
+    return joined
 
 
 def handle_add_subdirectory(
@@ -1274,8 +1286,6 @@ def generate_ninja(
                 for command in custom_cmd.commands
             ]
 
-            cmd_str = " && ".join(cmd_parts)
-
             depends = [_resolve_dependency(dep) for dep in custom_cmd.depends]
             main_dep = custom_cmd.main_dependency
             if main_dep:
@@ -1283,8 +1293,10 @@ def generate_ninja(
 
             working_dir = custom_cmd.working_directory
             if working_dir:
-                working_dir = _expand_genex(working_dir)
-                cmd_str = f"{_cd_prefix(working_dir, ctx.source_dir)}{cmd_str}"
+                cd_cmd = _cd_command(_expand_genex(working_dir), ctx.source_dir)
+                if cd_cmd:
+                    cmd_parts.insert(0, cd_cmd)
+            cmd_str = _join_command_lines(cmd_parts)
 
             n.build(
                 outputs,
@@ -1325,21 +1337,23 @@ def generate_ninja(
                     for command in ct.commands
                 ]
 
-                ct_cmd_str = " && ".join(ct_cmd_parts)
                 if ct.working_directory:
                     ct_wd = _expand_genex(ct.working_directory)
-                    ct_cmd_str = f"{_cd_prefix(ct_wd, ctx.source_dir)}{ct_cmd_str}"
+                    cd_cmd = _cd_command(ct_wd, ctx.source_dir)
+                    if cd_cmd:
+                        ct_cmd_parts.insert(0, cd_cmd)
 
                 # Use a stamp file so ninja can track when the target last ran
                 stamp = f"$builddir/{ct.name}.stamp"
                 # After a WORKING_DIRECTORY cd, the relative $builddir is no longer valid
                 touched = _absolute_target_file(stamp) if ct.working_directory else stamp
+                ct_cmd_parts.append(f"touch {touched}")
                 n.build(
                     [stamp],
                     "custom_command",
                     ct_depends,
                     order_only=ct_dep_order_only or None,
-                    variables={"cmd": f"{ct_cmd_str} && touch {touched}"},
+                    variables={"cmd": _join_command_lines(ct_cmd_parts)},
                     pool="console" if ct.uses_terminal else None,
                 )
                 n.build([ct.name], "phony", [stamp])
@@ -2307,7 +2321,7 @@ def generate_ninja(
                 pb_cmd_parts.append(
                     f"{cmake_cmd_quoted} -E touch {_quote_ninja_cmd_part(stamp_path)}"
                 )
-                pb_cmd_str = " && ".join(pb_cmd_parts)
+                pb_cmd_str = _join_command_lines(pb_cmd_parts)
                 n.build([stamp], "custom_command", [exe_name], variables={"cmd": pb_cmd_str})
                 n.newline()
                 if in_all:

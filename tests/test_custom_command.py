@@ -8,6 +8,7 @@ import pytest
 
 from cja.generator import BuildContext, process_commands
 from cja.parser import Command
+from tests.helpers import cd_command, join_command_lines
 
 EXE_EXT = ".exe" if platform.system() == "Windows" else ""
 
@@ -224,11 +225,12 @@ add_custom_command(
     ninja_file = source_dir / "build.ninja"
     ninja_content = ninja_file.read_text()
 
-    # The command should have 'cd scripts &&' and 'hello world' should be quoted if VERBATIM worked
+    # The command should cd to scripts and 'hello world' should be quoted if VERBATIM worked
     # shlex.join(["echo", "hello world"]) -> 'echo "hello world"' or 'echo 'hello world''
-    assert (
-        "cmd = cd scripts && echo 'hello world'" in ninja_content
-        or 'cmd = cd scripts && echo "hello world"' in ninja_content
+    assert any(
+        f"cmd = {join_command_lines(cd_command('scripts'), f'echo {q}hello world{q}')}"
+        in ninja_content
+        for q in "'\""
     )
 
 
@@ -255,8 +257,8 @@ add_custom_command(
     configure(source_dir, "build")
 
     ninja_content = (source_dir / "build.ninja").read_text()
-    assert "cd build/generated && echo hello" in ninja_content
-    assert f"cd {source_dir.as_posix()}/build/generated" not in ninja_content
+    assert f"{cd_command('build/generated')} && echo hello" in ninja_content
+    assert f"{cd_command(source_dir.as_posix())}/build/generated" not in ninja_content
 
 
 def test_add_custom_command_multiple_commands(tmp_path: Path) -> None:
@@ -280,7 +282,8 @@ add_custom_command(
     ninja_file = source_dir / "build.ninja"
     ninja_content = ninja_file.read_text()
 
-    assert "cmd = echo first > out.txt && echo second >> out.txt" in ninja_content
+    expected = join_command_lines("echo first > out.txt", "echo second >> out.txt")
+    assert f"cmd = {expected}" in ninja_content
 
 
 def test_add_custom_command_target_file_dir_working_directory(tmp_path: Path) -> None:
@@ -309,7 +312,7 @@ add_custom_command(
     ninja_file = source_dir / "build.ninja"
     ninja_content = ninja_file.read_text()
 
-    assert "cd $builddir && echo" in ninja_content
+    assert f"{cd_command('$builddir')} && echo" in ninja_content
 
 
 def test_add_custom_command_target_file_in_command(tmp_path: Path) -> None:
@@ -620,13 +623,15 @@ add_custom_command(TARGET myapp POST_BUILD
     configure(source_dir, "build")
 
     # Unwrap ninja "$" line continuations so the full cmd is searchable.
-    unwrapped = (source_dir / "build.ninja").read_text().replace("$\n", "")
+    unwrapped = re.sub(r"\$\n *", "", (source_dir / "build.ninja").read_text())
     edge = unwrapped.find("CMakeFiles/myapp.post_build: custom_command")
     assert edge != -1
     cmd_start = unwrapped.find("cmd =", edge)
     assert cmd_start != -1
     cmd = unwrapped[cmd_start : unwrapped.find("\n", cmd_start)]
 
+    # Ninja runs commands without a shell, so && needs cmd.exe
+    assert cmd.startswith('cmd = cmd.exe /C "') and cmd.endswith('"')
     assert "-E touch" in cmd
     assert "CMakeFiles/myapp.post_build" in cmd
     assert "data/asset.txt" in cmd
@@ -762,3 +767,28 @@ add_custom_target(gen ALL DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/protocol.h")
         "build $builddir/protocol.h: custom_command $builddir/_deps/dep-src/protocol.xml"
         in ninja_content
     )
+
+
+@pytest.mark.parametrize("system", ["Linux", "Windows"])
+def test_custom_command_lines_run_without_shell_on_windows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, system: str
+) -> None:
+    """Ninja uses CreateProcess on Windows, so cd and && need cmd.exe like in CMake."""
+    from cja import generator
+
+    monkeypatch.setattr(generator.platform, "system", lambda: system)
+
+    if system == "Windows":
+        cd = generator._cd_command(str(tmp_path / "build" / "gen dir"), tmp_path)
+        assert cd == 'cd /D "build/gen dir"'
+        assert generator._join_command_lines([cd, "python gen.py"]) == (
+            'cmd.exe /C "cd /D "build/gen dir" && python gen.py"'
+        )
+    else:
+        cd = generator._cd_command(str(tmp_path / "build" / "gen"), tmp_path)
+        assert cd == "cd build/gen"
+        assert generator._join_command_lines([cd, "python gen.py"]) == (
+            "cd build/gen && python gen.py"
+        )
+    assert generator._join_command_lines(["python gen.py"]) == "python gen.py"
+    assert generator._cd_command(str(tmp_path), tmp_path) is None

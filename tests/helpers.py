@@ -1,5 +1,6 @@
 """Shared test helpers."""
 
+import platform
 import shutil
 import subprocess
 from pathlib import Path
@@ -36,3 +37,18 @@ def copy_unignored_tree(src: Path, dst: Path) -> None:
                 shutil.copy2(src_path, dst_path)
     except (FileNotFoundError, subprocess.CalledProcessError):
         shutil.copytree(src, dst, dirs_exist_ok=True)
+
+
+def cd_command(directory: str) -> str:
+    """The cd command line of a custom command's WORKING_DIRECTORY."""
+    if platform.system() == "Windows":
+        return f"cd /D {directory}"
+    return f"cd {directory}"
+
+
+def join_command_lines(*lines: str) -> str:
+    """The ninja command for a custom command's lines, as the generator writes it."""
+    joined = " && ".join(lines)
+    if platform.system() == "Windows" and len(lines) > 1:
+        return f'cmd.exe /C "{joined}"'
+    return joined
