@@ -93,7 +93,7 @@ def test_runtime_flag_is_passed_when_linking(tmp_path: Path) -> None:
     _configure(tmp_path, CMAKE_BUILD_TYPE="Debug", MSVC_VERSION="1930")
     content = re.sub(r"\$\n *", "", (tmp_path / "build.ninja").read_text())
     match = re.search(
-        r"^build \S*app\S*: link\S* .*\n  rtflags = (.*)", content, re.MULTILINE
+        r"^build [^\n]*app[^\n]*: link[^\n]*\n((?:  [^\n]*\n)*)", content, re.MULTILINE
     )
     assert match
-    assert "-Wl,/NODEFAULTLIB:libcmt" in match.group(1).split()
+    assert "  rtflags = -Wl,/NODEFAULTLIB:libcmt\n" in match.group(1)
