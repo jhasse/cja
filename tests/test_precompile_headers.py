@@ -1,5 +1,6 @@
 """Tests for target_precompile_headers command."""
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -11,7 +12,7 @@ from cja.generator import configure
 
 def _compile_block(content: str, output_suffix: str) -> str:
     """Return the build statement for an output, with line continuations joined."""
-    statements = content.replace("$\n    ", "").split("\nbuild ")
+    statements = re.sub(r"\$\n *", "", content).split("\nbuild ")
     return next(
         stmt
         for stmt in statements
