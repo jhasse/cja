@@ -2595,8 +2595,9 @@ def handle_file(
             content = "".join(args[2:])
             mode = "w" if subcommand == "WRITE" else "a"
             assert len(str(ctx.build_dir)) > 1
-            # check that build_dir is below cwd:
-            assert str(ctx.build_dir).startswith(str(Path.cwd()))
+            # check that build_dir is below cwd (as paths, so that a cwd of
+            # d:\proj matches the resolved D:\proj\build on Windows):
+            assert ctx.build_dir.is_relative_to(Path.cwd())
             if strict and not str(Path(filename).resolve()).startswith(
                 str(ctx.build_dir.resolve())
             ):

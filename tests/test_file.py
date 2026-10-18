@@ -508,3 +508,19 @@ def test_file_generate_content(tmp_path: Path) -> None:
     process_commands(commands, ctx)
 
     assert (build_dir / "gen" / "out.txt").read_text() == "hello world"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="drive letters only exist on Windows")
+def test_file_write_with_other_drive_letter_case_in_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cwd of d:/proj must match the resolved D:/proj/build (case-insensitive)."""
+    (tmp_path / "CMakeLists.txt").write_text(
+        "project(DriveCase)\nfile(WRITE ${CMAKE_BINARY_DIR}/out.txt hello)\n"
+    )
+    cwd = str(tmp_path)
+    monkeypatch.chdir(cwd[0].swapcase() + cwd[1:])
+
+    configure(Path("."), "build")
+
+    assert (tmp_path / "build" / "out.txt").read_text() == "hello"
