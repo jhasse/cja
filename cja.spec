@@ -22,6 +22,7 @@ BuildRequires:  git-core
 BuildRequires:  ninja-build
 BuildRequires:  pkgconf-pkg-config
 BuildRequires:  pkgconfig(zlib)
+BuildRequires:  python3-pytest
 
 Requires:       ninja-build
 
@@ -41,7 +42,7 @@ of a phony "test" Ninja target instead of a separate tool like CTest.
 
 
 %generate_buildrequires
-%pyproject_buildrequires -g dev
+%pyproject_buildrequires
 
 
 %build
