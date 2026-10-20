@@ -15,7 +15,7 @@ from cja.lsp.document import (
     parse,
     semantic_tokens,
 )
-from cja.lsp.server import parse_configure_output
+from cja.lsp.server import changed_lines_edit, parse_configure_output
 from cja.lsp.workspace import Workspace
 
 
@@ -265,6 +265,29 @@ add_library(lib STATIC a.c)
     assert symbols[0]["range"]["end"] == {"line": 5, "character": 13}
 
 
+def test_changed_lines_edit() -> None:
+    assert changed_lines_edit("a\nb\n", "a\nb\n") == []
+    assert changed_lines_edit("a\nB( x )\nc\n", "a\nb(x)\nc\n") == [
+        {
+            "range": {"start": {"line": 1, "character": 0}, "end": {"line": 2, "character": 0}},
+            "newText": "b(x)\n",
+        }
+    ]
+    # Lines can be added or removed; CRLF is kept
+    assert changed_lines_edit("a\r\nx(\r\n)\r\nb\r\n", "a\r\nx()\r\nb\r\n") == [
+        {
+            "range": {"start": {"line": 1, "character": 0}, "end": {"line": 3, "character": 0}},
+            "newText": "x()\r\n",
+        }
+    ]
+    assert changed_lines_edit("x(\na)", "x(a)\n") == [
+        {
+            "range": {"start": {"line": 0, "character": 0}, "end": {"line": 1, "character": 2}},
+            "newText": "x(a)\n",
+        }
+    ]
+
+
 def test_parse_configure_output(tmp_path: Path) -> None:
     stderr = (
         "sub/CMakeLists.txt:3: \x1b[1mwarning:\x1b[0m careful\n"
@@ -351,6 +374,28 @@ def test_server_session(tmp_path: Path) -> None:
         {"textDocument": {"uri": uri}, "options": {"tabSize": 2, "insertSpaces": True}},
     )
     assert edits[0]["newText"].startswith("project(demo)\n")
+    # Only the selected statement is formatted
+    client.notify(
+        "textDocument/didChange",
+        {
+            "textDocument": {"uri": uri, "version": 3},
+            "contentChanges": [{"text": text.replace("set(SOURCES", "SET( SOURCES")}],
+        },
+    )
+    edits = client.request(
+        "textDocument/rangeFormatting",
+        {
+            "textDocument": {"uri": uri},
+            "range": {"start": {"line": 2, "character": 0}, "end": {"line": 3, "character": 0}},
+            "options": {"tabSize": 2, "insertSpaces": True},
+        },
+    )
+    assert edits == [
+        {
+            "range": {"start": {"line": 2, "character": 0}, "end": {"line": 3, "character": 0}},
+            "newText": "set(SOURCES main.c)\n",
+        }
+    ]
     location = client.request(
         "textDocument/definition",
         {"textDocument": {"uri": uri}, "position": {"line": 6, "character": 2}},

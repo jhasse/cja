@@ -147,8 +147,8 @@ directories, hidden directories and `_deps` are skipped). The server provides:
   to the documentation of builtin commands
 * **Completion** of command names, of the keywords of the current command, of target names and of variable names
   after `${`
-* **Document symbols** (functions, macros, targets, options and the project), **folding** and **formatting** (like
-  `cja format`)
+* **Document symbols** (functions, macros, targets, options and the project), **folding** and **formatting** of the
+  whole document or of the selected lines (like `cja format` and `cja format --lines`)
 
 Nothing is executed for these. Optionally, the project can also be configured with cja to report the errors and
 warnings of a real configure run (e.g. unsupported arguments with `--strict`) as diagnostics. This runs CMake code

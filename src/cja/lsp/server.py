@@ -94,6 +94,7 @@ class Server:
             "textDocument/documentSymbol": self.document_symbol,
             "textDocument/foldingRange": self.folding_range,
             "textDocument/formatting": self.formatting,
+            "textDocument/rangeFormatting": self.range_formatting,
             "workspace/executeCommand": self.execute_command,
         }
         self.notifications: dict[str, Callable[[Any], None]] = {
@@ -188,6 +189,7 @@ class Server:
                 "documentSymbolProvider": True,
                 "foldingRangeProvider": True,
                 "documentFormattingProvider": True,
+                "documentRangeFormattingProvider": True,
                 "executeCommandProvider": {"commands": [CONFIGURE_COMMAND]},
                 "workspace": {
                     "workspaceFolders": {"supported": True, "changeNotifications": True}
@@ -431,6 +433,50 @@ class Server:
             return []
         index = LineIndex(text.replace("\r\n", "\n"))
         return [{"range": index.range(0, len(index.text)), "newText": formatted}]
+
+    def range_formatting(self, params: dict[str, Any]) -> list[dict[str, Any]] | None:
+        """Format the statements touching the selected lines (like --lines)."""
+        path = uri_to_path(params["textDocument"]["uri"])
+        text = self.documents.get(path)
+        if text is None:
+            return None
+        selection = params["range"]
+        first = selection["start"]["line"]
+        last = selection["end"]["line"]
+        # A selection of whole lines ends at the start of the following line
+        if last > first and selection["end"]["character"] == 0:
+            last -= 1
+        try:
+            formatted = format_source(
+                text, find_style(path.parent), str(path), [(first + 1, last + 1)]
+            )
+        except SyntaxError:
+            return None
+        return changed_lines_edit(text, formatted)
+
+
+def changed_lines_edit(text: str, formatted: str) -> list[dict[str, Any]]:
+    """Return one edit that only replaces the lines which differ."""
+    old = text.replace("\r\n", "\n").splitlines(keepends=True)
+    new = formatted.replace("\r\n", "\n").splitlines(keepends=True)
+    if old == new:
+        return []
+    prefix = 0
+    while prefix < min(len(old), len(new)) and old[prefix] == new[prefix]:
+        prefix += 1
+    suffix = 0
+    while (
+        suffix < min(len(old), len(new)) - prefix
+        and old[len(old) - 1 - suffix] == new[len(new) - 1 - suffix]
+    ):
+        suffix += 1
+    index = LineIndex("".join(old))
+    start = len("".join(old[:prefix]))
+    end = len(index.text) - len("".join(old[len(old) - suffix :]))
+    new_text = "".join(new[prefix : len(new) - suffix])
+    if "\r\n" in formatted:
+        new_text = new_text.replace("\n", "\r\n")
+    return [{"range": index.range(start, end), "newText": new_text}]
 
 
 def parse_configure_output(
