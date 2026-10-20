@@ -1,5 +1,6 @@
 """Tests for set command."""
 
+import os
 from pathlib import Path
 
 import pytest
@@ -250,3 +251,19 @@ def test_set_keywords_only_at_the_end() -> None:
     assert ctx.variables["W"] == "PARENT_SCOPE;y"
     assert ctx.variables["X"] == "a;CACHE;STRING;doc;extra"
     assert "Y" not in ctx.variables
+
+
+def test_set_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Restored afterwards, as set(ENV{...}) changes the real environment.
+    monkeypatch.setenv("CJA_TEST_ENV", "old")
+    monkeypatch.setenv("CJA_TEST_ENV_UNSET", "x")
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="set", args=["ENV{CJA_TEST_ENV}", "a", "b"], line=1),
+        Command(name="set", args=["V", "$ENV{CJA_TEST_ENV}"], line=2),
+        Command(name="unset", args=["ENV{CJA_TEST_ENV_UNSET}"], line=3),
+    ]
+    process_commands(commands, ctx)
+    assert ctx.variables["V"] == "a"
+    assert "ENV{CJA_TEST_ENV}" not in ctx.variables
+    assert "CJA_TEST_ENV_UNSET" not in os.environ

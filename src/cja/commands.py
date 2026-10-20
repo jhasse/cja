@@ -1877,6 +1877,14 @@ def handle_set(
         var_name = ctx.expand_variables(args[0], strict, cmd.line)
         values = args[1:]
 
+        if env_match := re.fullmatch(r"ENV\{(.+)\}", var_name):
+            # Only the first value is used; none or an empty one clears it.
+            if values and values[0]:
+                os.environ[env_match.group(1)] = values[0]
+            else:
+                os.environ.pop(env_match.group(1), None)
+            return
+
         # Handle CMAKE_POLICY_DEFAULT_CMPxxxx specially
         if var_name.startswith("CMAKE_POLICY_DEFAULT_CMP"):
             # Extract the value (should be NEW or OLD)
@@ -1952,7 +1960,9 @@ def handle_unset(
         return
     var_name = ctx.expand_variables(args[0], strict, cmd.line)
     scope = args[1].upper() if len(args) > 1 else ""
-    if scope == "PARENT_SCOPE":
+    if env_match := re.fullmatch(r"ENV\{(.+)\}", var_name):
+        os.environ.pop(env_match.group(1), None)
+    elif scope == "PARENT_SCOPE":
         # Signal caller to remove the variable
         ctx.parent_scope_vars[var_name] = None
     elif scope == "CACHE":
