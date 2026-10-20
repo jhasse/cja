@@ -1891,28 +1891,27 @@ def handle_set(
             # Don't actually set the variable, just acknowledge it
             return
 
-        # Filter out CACHE, PARENT_SCOPE, and track FORCE
-        filtered_values: list[str] = []
-        has_force = False
-        has_parent_scope = False
-        has_cache = False
-        skip_next = 0
-        for idx, val in enumerate(values):
-            if skip_next > 0:
-                skip_next -= 1
-                continue
-            if val == "CACHE":
-                has_cache = True
-                # CACHE TYPE "docstring" [FORCE] - skip type and docstring
-                skip_next = 2
-                continue
-            if val == "FORCE":
+        # Like CMake, PARENT_SCOPE and CACHE <type> <docstring> [FORCE] are
+        # only recognized at the end of the arguments.
+        has_parent_scope = has_force = has_cache = False
+        if values and values[-1] == "PARENT_SCOPE":
+            has_parent_scope = True
+            values = values[:-1]
+        else:
+            if len(values) > 3 and values[-1] == "FORCE":
                 has_force = True
-                continue
-            if val == "PARENT_SCOPE":
-                has_parent_scope = True
-                continue
-            filtered_values.append(val)
+                values = values[:-1]
+            if len(values) > 2 and values[-3] == "CACHE":
+                has_cache = True
+                # INTERNAL implies FORCE.
+                has_force = has_force or values[-2] == "INTERNAL"
+                values = values[:-3]
+            elif "CACHE" in values[-2:]:
+                if strict:
+                    ctx.print_error("set given invalid arguments for CACHE mode.", cmd.line)
+                    sys.exit(1)
+                return
+        filtered_values = values
 
         if has_cache:
             # An existing cache entry is only overwritten with FORCE, and a

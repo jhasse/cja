@@ -223,3 +223,30 @@ message(STATUS "unset: [${C5}]")
     assert "string: [CACHE]" in out
     assert "math: [3]" in out
     assert "unset: [a]" in out
+
+
+def test_set_cache_internal_implies_force() -> None:
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="set", args=["L", "", "CACHE", "INTERNAL", ""], line=1),
+        Command(name="set", args=["L", "a", "CACHE", "INTERNAL", ""], line=2),
+        Command(name="set", args=["L", "a", "b", "CACHE", "INTERNAL", ""], line=3),
+    ]
+    process_commands(commands, ctx)
+    assert ctx.variables["L"] == "a;b"
+
+
+def test_set_keywords_only_at_the_end() -> None:
+    """FORCE, CACHE and PARENT_SCOPE elsewhere are ordinary values."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="set", args=["V", "x", "FORCE"], line=1),
+        Command(name="set", args=["W", "PARENT_SCOPE", "y"], line=2),
+        Command(name="set", args=["X", "a", "CACHE", "STRING", "doc", "extra"], line=3),
+        Command(name="set", args=["Y", "a", "CACHE", "z"], line=4),
+    ]
+    process_commands(commands, ctx)
+    assert ctx.variables["V"] == "x;FORCE"
+    assert ctx.variables["W"] == "PARENT_SCOPE;y"
+    assert ctx.variables["X"] == "a;CACHE;STRING;doc;extra"
+    assert "Y" not in ctx.variables
