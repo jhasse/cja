@@ -49,10 +49,6 @@ def configure(tmp_path: Path, source: str, strict: bool = False) -> BuildContext
             "add_custom_target(): BYPRODUCTS",
         ),
         (
-            "execute_process(COMMAND echo a COMMAND cat)",
-            "execute_process(): COMMAND",
-        ),
-        (
             "execute_process(COMMAND echo a OUTPUT_FILE out.txt)",
             "execute_process(): OUTPUT_FILE",
         ),

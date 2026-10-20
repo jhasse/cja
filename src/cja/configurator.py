@@ -8,6 +8,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import typing
 import urllib.request
 from contextlib import suppress
@@ -440,6 +441,54 @@ def _unsupported_fetchcontent_args(args: list[str]) -> list[str]:
     if "URL" in args and len(values_after("URL")) > 1:
         unsupported.append("URL")
     return unsupported
+
+
+def _run_pipeline(
+    commands: list[list[str]],
+    cwd: str | None,
+    stdout: int | None,
+    stderr: int | None,
+) -> tuple[list[int | None], str, str]:
+    """Run commands connected by pipes, like execute_process().
+
+    Returns the exit code of each command (None if it couldn't be started),
+    the output of the last command and the errors of all commands.
+    """
+    procs: list[subprocess.Popen[str] | None] = []
+    with tempfile.TemporaryFile("w+") as error_file:
+        # Output of the previous command
+        pipe: typing.IO[str] | None = None
+        for idx, argv in enumerate(commands):
+            is_last = idx == len(commands) - 1
+            proc: subprocess.Popen[str] | None = None
+            if argv:
+                try:
+                    proc = subprocess.Popen(
+                        argv,
+                        stdin=pipe if pipe or idx == 0 else subprocess.DEVNULL,
+                        stdout=stdout if is_last else subprocess.PIPE,
+                        stderr=error_file if stderr == subprocess.PIPE else stderr,
+                        text=True,
+                        cwd=cwd,
+                    )
+                except OSError:
+                    # FileNotFoundError covers the usual missing-executable
+                    # case on POSIX. On Windows, an invalid executable path
+                    # can also surface as a generic OSError (e.g. WinError 87).
+                    pass
+            if pipe:
+                # Only the command started above reads it now.
+                pipe.close()
+            pipe = proc.stdout if proc and not is_last else None
+            procs.append(proc)
+
+        output = ""
+        last = procs[-1]
+        if last is not None:
+            output = last.communicate()[0] or ""
+        returncodes = [proc.wait() if proc else None for proc in procs]
+        error_file.seek(0)
+        return returncodes, output, error_file.read()
 
 
 def process_commands(
@@ -3494,6 +3543,7 @@ int main() {{
                 current_command: list[str] = []
                 working_directory: str | None = None
                 result_variable: str | None = None
+                results_variable: str | None = None
                 output_variable: str | None = None
                 error_variable: str | None = None
                 output_quiet = False
@@ -3519,6 +3569,10 @@ int main() {{
                         arg_idx += 1
                         if arg_idx < len(args):
                             result_variable = args[arg_idx]
+                    elif arg == "RESULTS_VARIABLE":
+                        arg_idx += 1
+                        if arg_idx < len(args):
+                            results_variable = args[arg_idx]
                     elif arg == "OUTPUT_VARIABLE":
                         arg_idx += 1
                         if arg_idx < len(args):
@@ -3540,7 +3594,6 @@ int main() {{
                         "OUTPUT_FILE",
                         "ERROR_FILE",
                         "TIMEOUT",
-                        "RESULTS_VARIABLE",
                     ):
                         ctx.check_unsupported_args(cmd, [arg], strict)
                         arg_idx += 1
@@ -3562,119 +3615,72 @@ int main() {{
 
                 if current_command:
                     commands_list.append(current_command)
-                if len(commands_list) > 1:
-                    # The commands should be connected by pipes.
-                    ctx.check_unsupported_args(cmd, ["COMMAND"], strict)
 
-                # Execute the commands (sequentially if multiple)
                 if commands_list:
-                    last_returncode: int | None = None
-                    last_stdout: str = ""
-                    last_stderr: str = ""
-                    for idx, exec_cmd in enumerate(commands_list):
-                        # Match CMake: unquoted variable references that
-                        # expand to empty produce no argument. Drop empty
-                        # entries so we don't pass an empty string to
-                        # subprocess (which raises WinError 87 on Windows
-                        # when used as the executable).
-                        exec_cmd = [a for a in exec_cmd if a != ""]
+                    stdout_setting = None
+                    stderr_setting = None
+                    if output_quiet:
+                        stdout_setting = subprocess.DEVNULL
+                    elif output_variable:
+                        stdout_setting = subprocess.PIPE
+                    if error_quiet:
+                        stderr_setting = subprocess.DEVNULL
+                    elif error_variable:
+                        stderr_setting = subprocess.PIPE
 
-                        is_last = idx == len(commands_list) - 1
+                    # Match CMake: unquoted variable references that expand to
+                    # empty produce no argument. An empty command (e.g. only
+                    # undefined variables were referenced) is treated like
+                    # "command not found" rather than crashing.
+                    returncodes, stdout_text, stderr_text = _run_pipeline(
+                        [[a for a in c if a != ""] for c in commands_list],
+                        working_directory,
+                        stdout_setting,
+                        stderr_setting,
+                    )
+                    exit_codes = [1 if code is None else code for code in returncodes]
 
-                        # An empty command (e.g. only undefined variables
-                        # were referenced) is treated like "command not
-                        # found" rather than crashing.
-                        if not exec_cmd:
-                            last_returncode = 1
-                            last_stdout = ""
-                            last_stderr = ""
-                            if command_error_is_fatal:
-                                fatal_kind = command_error_is_fatal.upper()
-                                if fatal_kind == "ANY" or (
-                                    fatal_kind == "LAST" and is_last
-                                ):
-                                    ctx.print_error(
-                                        "execute_process failed: empty command",
-                                        cmd.line,
-                                    )
-                                    raise SystemExit(1)
-                            continue
-
-                        stdout_setting = None
-                        stderr_setting = None
-                        if output_quiet:
-                            stdout_setting = subprocess.DEVNULL
-                        elif output_variable:
-                            stdout_setting = subprocess.PIPE
-                        if error_quiet:
-                            stderr_setting = subprocess.DEVNULL
-                        elif error_variable:
-                            stderr_setting = subprocess.PIPE
-
-                        try:
-                            result = subprocess.run(
-                                exec_cmd,
-                                stdout=stdout_setting,
-                                stderr=stderr_setting,
-                                text=True,
-                                cwd=working_directory,
-                                check=False,
-                            )
-                        except (FileNotFoundError, OSError):
-                            # FileNotFoundError covers the usual missing-
-                            # executable case on POSIX. On Windows, an
-                            # invalid executable path can also surface as
-                            # a generic OSError (e.g. WinError 87).
-                            last_returncode = 1
-                            last_stdout = ""
-                            last_stderr = ""
-                            if command_error_is_fatal:
-                                fatal_kind = command_error_is_fatal.upper()
-                                if fatal_kind == "ANY" or (
-                                    fatal_kind == "LAST" and is_last
-                                ):
-                                    ctx.print_error(
-                                        "execute_process failed: command not found",
-                                        cmd.line,
-                                    )
-                                    raise SystemExit(1)
-                            continue
-
-                        last_returncode = result.returncode
-                        last_stdout = result.stdout or ""
-                        last_stderr = result.stderr or ""
-
-                        if command_error_is_fatal:
-                            fatal_kind = command_error_is_fatal.upper()
-                            fatal_now = False
-                            if fatal_kind == "ANY" and result.returncode != 0 or (
-                                fatal_kind == "LAST"
-                                and is_last
-                                and result.returncode != 0
-                            ):
-                                fatal_now = True
-                            if fatal_now:
+                    if command_error_is_fatal:
+                        fatal_kind = command_error_is_fatal.upper()
+                        checked = list(enumerate(returncodes))
+                        if fatal_kind == "LAST":
+                            checked = checked[-1:]
+                        for idx, code in checked:
+                            if code is None:
+                                reason = (
+                                    "empty command"
+                                    if not commands_list[idx]
+                                    else "command not found"
+                                )
                                 ctx.print_error(
-                                    f"execute_process failed with exit code {result.returncode}",
+                                    f"execute_process failed: {reason}", cmd.line
+                                )
+                                raise SystemExit(1)
+                            if code != 0:
+                                ctx.print_error(
+                                    f"execute_process failed with exit code {code}",
                                     cmd.line,
                                 )
                                 raise SystemExit(1)
 
-                    if last_returncode is not None:
-                        if result_variable:
-                            ctx.variables[result_variable] = str(last_returncode)
+                    if result_variable:
+                        ctx.variables[result_variable] = str(exit_codes[-1])
+                    if results_variable:
+                        ctx.variables[results_variable] = ";".join(
+                            str(code) for code in exit_codes
+                        )
 
-                        if output_variable:
-                            output = "" if output_quiet else last_stdout
-                            if output_strip:
-                                output = output.rstrip()
-                            ctx.variables[output_variable] = output
+                    if output_variable:
+                        output = "" if output_quiet else stdout_text
+                        if output_strip:
+                            output = output.rstrip()
+                        ctx.variables[output_variable] = output
 
-                        if error_variable:
-                            error = "" if error_quiet else last_stderr
-                            if error_strip:
-                                error = error.rstrip()
-                            ctx.variables[error_variable] = error
+                    if error_variable:
+                        error = "" if error_quiet else stderr_text
+                        if error_strip:
+                            error = error.rstrip()
+                        ctx.variables[error_variable] = error
 
             case _:
                 # Check if this is a user-defined function or macro call

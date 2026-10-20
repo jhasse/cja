@@ -321,3 +321,48 @@ def test_execute_process_command_error_is_fatal_any(
 
     with pytest.raises(SystemExit):
         process_commands(commands, ctx)
+
+
+def test_execute_process_pipeline() -> None:
+    """Multiple COMMANDs share the error output, and each one has a result."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    # No ";" as that would split the arguments.
+    first = "import sys\nsys.stderr.write('e1 ')\nsys.exit(3)"
+    last = "import sys\nprint(repr(sys.stdin.read()))\nsys.stderr.write('e2')"
+    commands = [
+        Command(
+            name="execute_process",
+            args=[
+                *["COMMAND", sys.executable, "-c", first],
+                *["COMMAND", "nonexistent_command_xyz"],
+                *["COMMAND", sys.executable, "-c", last],
+                *["OUTPUT_VARIABLE", "OUT", "ERROR_VARIABLE", "ERR"],
+                *["RESULT_VARIABLE", "RES", "RESULTS_VARIABLE", "ALL"],
+            ],
+            line=1,
+        )
+    ]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["OUT"].strip() == "''"
+    assert ctx.variables["ERR"] == "e1 e2"
+    assert ctx.variables["RES"] == "0"
+    assert ctx.variables["ALL"] == "3;1;0"
+
+
+def test_execute_process_pipeline_output() -> None:
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    second = "import sys\nprint(''.join(sorted(sys.stdin.read().splitlines())))"
+    commands = [
+        Command(
+            name="execute_process",
+            args=[
+                *["COMMAND", sys.executable, "-c", "print('b')\nprint('a')"],
+                *["COMMAND", sys.executable, "-c", second],
+                *["OUTPUT_VARIABLE", "OUT", "OUTPUT_STRIP_TRAILING_WHITESPACE"],
+            ],
+            line=1,
+        )
+    ]
+    process_commands(commands, ctx)
+    assert ctx.variables["OUT"] == "ab"
