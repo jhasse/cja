@@ -419,10 +419,13 @@ def compile_feature_to_flag(
     ``properties`` are those of the target being compiled; they decide whether
     GNU extensions are enabled (C_EXTENSIONS defaults to ON, like in CMake).
     """
-    # Map cxx_std_XX features to -std=c++XX flags
+    # Map cxx_std_XX features to -std=c++XX or -std=gnu++XX flags
     if feature.startswith("cxx_std_"):
         std_version = feature[8:]  # Extract "11", "14", "17", "20", "23", etc.
-        return f"-std=c++{std_version}"
+        # Unlike CMake, GNU extensions are only enabled with CXX_EXTENSIONS ON.
+        extensions = (properties or {}).get("CXX_EXTENSIONS", "").strip()
+        prefix = "gnu++" if extensions and is_truthy(extensions) else "c++"
+        return f"-std={prefix}{std_version}"
     # Map c_std_XX features to -std=gnuXX or -std=cXX flags
     if feature.startswith("c_std_"):
         std_version = feature[6:]
@@ -443,6 +446,22 @@ def target_std_flags(properties: dict[str, str]) -> list[str]:
             if flag:
                 flags.append(flag)
     return flags
+
+
+def _visibility_options(properties: dict[str, str]) -> list[str]:
+    """Compile options for the *_VISIBILITY_PRESET and VISIBILITY_INLINES_HIDDEN
+    properties, limited to the language they're for.
+    """
+    if platform.system() == "Windows":
+        return []
+    options: list[str] = []
+    for lang in ("C", "CXX"):
+        preset = properties.get(f"{lang}_VISIBILITY_PRESET", "")
+        if preset:
+            options.append(f"$<$<COMPILE_LANGUAGE:{lang}>:-fvisibility={preset}>")
+    if is_truthy(properties.get("VISIBILITY_INLINES_HIDDEN", "")):
+        options.append("$<$<COMPILE_LANGUAGE:CXX>:-fvisibility-inlines-hidden>")
+    return options
 
 
 def _is_windows_clangxx(cxx: str) -> bool:
@@ -1796,9 +1815,11 @@ def generate_ninja(
             # Raw compile_options are kept for per-source evaluation so that
             # $<COMPILE_LANGUAGE:...> can be evaluated against each source's
             # language.  The target-level strip drops language-gated options.
-            lib_compile_options_raw: list[str] = list(dir_compile_options) + list(
-                lib.compile_options
-            )
+            lib_compile_options_raw: list[str] = [
+                *dir_compile_options,
+                *lib.compile_options,
+                *_visibility_options(lib.properties),
+            ]
             for option in lib.compile_options:
                 opt = strip_generator_expressions(option)
                 if opt:
@@ -1998,6 +2019,9 @@ def generate_ninja(
                 lib_name = target_files[lib.name]
 
                 register_output(lib_name, lib.defined_file, lib.defined_line)
+                linker_language = lib.properties.get("LINKER_LANGUAGE", "")
+                if linker_language in ("C", "CXX"):
+                    uses_cxx = linker_language == "CXX"
                 link_rule = "solink_cxx" if uses_cxx else "solink"
                 lib_link_options = _dependency_link_options(
                     ctx, lib.link_options, order_link_libraries(lib.link_libraries)
@@ -2067,9 +2091,11 @@ def generate_ninja(
                 compile_flags.append(_format_compile_definition_flag(definition))
             # Keep raw compile_options so $<COMPILE_LANGUAGE:...> can be
             # evaluated per source.  The target-level strip drops them.
-            exe_compile_options_raw: list[str] = list(dir_compile_options) + list(
-                exe.compile_options
-            )
+            exe_compile_options_raw: list[str] = [
+                *dir_compile_options,
+                *exe.compile_options,
+                *_visibility_options(exe.properties),
+            ]
             for option in exe.compile_options:
                 opt = strip_generator_expressions(option)
                 if opt:
@@ -2393,6 +2419,9 @@ def generate_ninja(
             # Link
             exe_name = target_files[exe.name]
             register_output(exe_name, exe.defined_file, exe.defined_line)
+            linker_language = exe.properties.get("LINKER_LANGUAGE", "")
+            if linker_language in ("C", "CXX"):
+                uses_cxx = linker_language == "CXX"
             link_rule = "link_cxx" if uses_cxx else "link"
             variables: dict[str, str | list[str] | None] = {}
             if link_flags:

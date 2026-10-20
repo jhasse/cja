@@ -299,3 +299,33 @@ def test_output_name_and_directory(tmp_path: Path) -> None:
     ):
         assert f"build {output}:" in content
     assert f"bin/myapp-dbg{exe_ext}" in content.split("rule test_run", 1)[1]
+
+
+def test_visibility_extensions_and_linker_language(tmp_path: Path) -> None:
+    (tmp_path / "CMakeLists.txt").write_text(
+        "project(test_props C CXX)\n"
+        "set(CMAKE_CXX_VISIBILITY_PRESET hidden)\n"
+        "add_library(foo SHARED foo.c bar.cpp)\n"
+        "set_target_properties(foo PROPERTIES C_VISIBILITY_PRESET protected"
+        " VISIBILITY_INLINES_HIDDEN ON CXX_STANDARD 17 CXX_EXTENSIONS ON)\n"
+        "add_executable(app main.c)\n"
+        "set_target_properties(app PROPERTIES LINKER_LANGUAGE CXX)\n"
+    )
+    for name in ("foo.c", "bar.cpp", "main.c"):
+        (tmp_path / name).write_text("int main(void) { return 0; }\n")
+
+    configure(tmp_path, "build")
+
+    lines = (tmp_path / "build.ninja").read_text().splitlines()
+    c_flags = lines[next(i for i, l in enumerate(lines) if "foo.c" in l) + 1]
+    cxx_flags = lines[next(i for i, l in enumerate(lines) if "bar.cpp" in l) + 1]
+    assert "-std=gnu++17" in cxx_flags
+    if platform.system() != "Windows":
+        assert "-fvisibility=protected" in c_flags
+        assert "-fvisibility-inlines-hidden" not in c_flags
+        assert "-fvisibility=hidden" in cxx_flags
+        assert "-fvisibility-inlines-hidden" in cxx_flags
+    app_link = next(
+        l for l in lines if l.startswith(("build $builddir/app:", "build $builddir/app.exe:"))
+    )
+    assert ": link_cxx " in app_link

@@ -154,6 +154,10 @@ def _default_target_properties(ctx: BuildContext) -> dict[str, str]:
     win32_executable = ctx.variables.get("CMAKE_WIN32_EXECUTABLE", "")
     if win32_executable:
         properties["WIN32_EXECUTABLE"] = win32_executable
+    for prop in ("C_VISIBILITY_PRESET", "CXX_VISIBILITY_PRESET", "VISIBILITY_INLINES_HIDDEN"):
+        value = ctx.variables.get(f"CMAKE_{prop}", "")
+        if value and value != UNDEFINED_VAR_SENTINEL:
+            properties[prop] = value
     for kind in ("RUNTIME", "LIBRARY", "ARCHIVE"):
         output_dir = ctx.variables.get(f"CMAKE_{kind}_OUTPUT_DIRECTORY", "")
         if output_dir and output_dir != UNDEFINED_VAR_SENTINEL:
