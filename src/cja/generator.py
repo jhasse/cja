@@ -2704,6 +2704,8 @@ def run_script(
 
     commands = parse_file(script_path)
     process_commands(commands, ctx, trace, strict)
+    if ctx.send_error:
+        raise SystemExit(1)
     return ctx
 
 
@@ -2830,6 +2832,8 @@ def configure(
             ctx.variables["MSVC_VERSION"] = msvc_version
 
     process_commands(commands, ctx, trace, strict)
+    if ctx.send_error:
+        raise SystemExit(1)
 
     # Generate ninja manifest in source directory (named after build dir)
     output_path = source_dir / f"{build_dir}.ninja"

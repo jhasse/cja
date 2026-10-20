@@ -3449,6 +3449,7 @@ int main() {{
                         raise SystemExit(1)
                     elif mode == "SEND_ERROR":
                         ctx.print_error(message, cmd.line)
+                        ctx.send_error = True
                     elif mode in ("WARNING", "AUTHOR_WARNING", "DEPRECATION"):
                         ctx.print_warning(message, cmd.line)
                     elif mode == "STATUS":

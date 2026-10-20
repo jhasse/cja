@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from cja.generator import BuildContext, process_commands
+from cja.generator import BuildContext, configure, process_commands
 from cja.parser import Command
 
 
@@ -77,3 +77,20 @@ def test_message_log_level_variable(capsys: pytest.CaptureFixture[str]) -> None:
     ctx.variables["CMAKE_MESSAGE_LOG_LEVEL"] = "WARNING"
     process_commands([*commands, Command(name="message", args=["plain"], line=1)], ctx)
     assert capsys.readouterr().out == ""
+
+
+def test_message_send_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """SEND_ERROR continues processing, but configure fails without generating."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "CMakeLists.txt").write_text(
+        "message(SEND_ERROR first)\nmessage(SEND_ERROR second)\n"
+    )
+    with pytest.raises(SystemExit) as exc_info:
+        configure(tmp_path, "build")
+    assert exc_info.value.code == 1
+    err = capsys.readouterr().err
+    assert "first" in err
+    assert "second" in err
+    assert not (tmp_path / "build.ninja").exists()

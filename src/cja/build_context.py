@@ -200,6 +200,8 @@ class BuildContext:
     # can't distinguish a path with spaces from a multi-word command.
     cja_cmd: list[str] = field(default_factory=list)
     quiet: bool = False
+    # message(SEND_ERROR) was called: keep processing, but fail at the end.
+    send_error: bool = False
 
     def __post_init__(self) -> None:
         self.current_source_dir = self.source_dir
