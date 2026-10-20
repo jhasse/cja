@@ -323,6 +323,12 @@ def _executable_in(directory: str, name: str) -> str | None:
     for ext in extensions:
         candidate = os.path.join(directory, name + ext)
         if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            if ext:
+                # PATHEXT is upper case; report the name as it is on disk.
+                wanted = (name + ext).lower()
+                for entry in os.listdir(directory):
+                    if entry.lower() == wanted:
+                        return os.path.join(directory, entry)
             return candidate
     return None
 
