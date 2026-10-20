@@ -2354,7 +2354,14 @@ int main() {{
             case "add_custom_target":
                 # Support: add_custom_target(<name> [ALL] [COMMAND cmd ...] [DEPENDS ...] [WORKING_DIRECTORY ...] [VERBATIM] [COMMENT ...])
                 if not args:
-                    break
+                    if strict:
+                        ctx.print_error(
+                            "add_custom_target called with incorrect number of arguments",
+                            cmd.line,
+                        )
+                        sys.exit(1)
+                    frame.pc += 1
+                    continue
                 target_name = ctx.expand_variables(args[0], strict, cmd.line)
                 ct_commands: list[list[str]] = []
                 ct_depends: list[str] = []

@@ -369,3 +369,14 @@ add_custom_target(plain COMMAND echo plain)
         "  pool = console\n"
     ) in ninja_content
     assert "build $builddir/plain.stamp: custom_command\n  cmd =" in ninja_content
+
+
+def test_add_custom_target_without_arguments_is_skipped() -> None:
+    """A call without arguments doesn't stop processing the rest of the file."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="add_custom_target", args=[], line=1),
+        Command(name="set", args=["AFTER", "1"], line=2),
+    ]
+    process_commands(commands, ctx)
+    assert ctx.variables["AFTER"] == "1"
