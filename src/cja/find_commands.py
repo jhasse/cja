@@ -6,14 +6,18 @@ The richer ``find_package`` command lives in :mod:`cja.find_package`.
 
 import os
 import platform
-import shutil
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from .build_context import BuildContext
 from .parser import Command
-from .utils import UNDEFINED_VAR_SENTINEL, split_unquoted_list_args, to_posix_path
+from .utils import (
+    UNDEFINED_VAR_SENTINEL,
+    is_truthy,
+    split_unquoted_list_args,
+    to_posix_path,
+)
 
 
 def _search_dirs_with_defaults(
@@ -119,7 +123,8 @@ def _name_dir_pairs(
                 yield name, d
 
 
-# Flags that only exclude search locations cja never looks in anyway.
+# Flags that only exclude search locations cja never looks in anyway (except
+# NO_SYSTEM_ENVIRONMENT_PATH for find_program, which searches PATH).
 _NO_OP_FLAGS = frozenset(
     {
         "OPTIONAL",
@@ -131,7 +136,8 @@ _NO_OP_FLAGS = frozenset(
         "NO_CMAKE_FIND_ROOT_PATH",
     }
 )
-# Flags that exclude search locations cja does look in, but can't exclude yet.
+# Flags that exclude search locations find_path(), find_file() and
+# find_library() look in, but can't exclude yet. find_program() supports them.
 _UNSUPPORTED_FLAGS = frozenset(
     {"NO_CMAKE_PATH", "NO_CMAKE_ENVIRONMENT_PATH", "NO_CMAKE_SYSTEM_PATH"}
 )
@@ -147,8 +153,9 @@ class _FindArgs:
     no_cache: bool = False
     no_default_path: bool = False
     names_per_dir: bool = False
-    # Arguments that would change the result in CMake but are ignored by cja.
-    unsupported: list[str] = field(default_factory=list[str])
+    validator: str = ""
+    # NO_*_PATH and *_FIND_ROOT_PATH flags
+    flags: set[str] = field(default_factory=set[str])
 
 
 def _parse_find_args(args: list[str]) -> _FindArgs:
@@ -178,7 +185,8 @@ def _parse_find_args(args: list[str]) -> _FindArgs:
             i += 1
         elif arg == "VALIDATOR":
             current = None
-            result.unsupported.append(arg)
+            if i + 1 < len(args):
+                result.validator = args[i + 1]
             i += 1
         elif arg == "REQUIRED":
             result.required = True
@@ -192,10 +200,8 @@ def _parse_find_args(args: list[str]) -> _FindArgs:
         elif arg == "NAMES_PER_DIR":
             result.names_per_dir = True
             current = None
-        elif arg in _NO_OP_FLAGS:
-            current = None
-        elif arg in _UNSUPPORTED_FLAGS:
-            result.unsupported.append(arg)
+        elif arg in _NO_OP_FLAGS or arg in _UNSUPPORTED_FLAGS:
+            result.flags.add(arg)
             current = None
         elif current is not None:
             current.append(arg)
@@ -207,6 +213,12 @@ def _parse_find_args(args: list[str]) -> _FindArgs:
     result.paths[:] = _expand_env(result.paths)
     result.hints[:] = _expand_env(result.hints)
     return result
+
+
+def _unsupported_find_args(parsed: _FindArgs) -> list[str]:
+    """Return the arguments that find_path/find_file/find_library ignore."""
+    unsupported = ["VALIDATOR"] if parsed.validator else []
+    return unsupported + sorted(parsed.flags & _UNSUPPORTED_FLAGS)
 
 
 def _expand_env(dirs: list[str]) -> list[str]:
@@ -253,43 +265,110 @@ def _store_find_result(
         ctx.variables[var_name] = value
 
 
+def _program_search_dirs(ctx: BuildContext, parsed: _FindArgs) -> list[str]:
+    """Return the directories find_program() searches, in CMake's order."""
+    dirs: list[str] = []
+
+    def add_prefixes(prefixes: list[str]) -> None:
+        for prefix in prefixes:
+            dirs.extend([f"{prefix}/bin", f"{prefix}/sbin", prefix])
+
+    def variable(name: str) -> list[str]:
+        value = ctx.variables.get(name, "")
+        if not value or value == UNDEFINED_VAR_SENTINEL:
+            return []
+        return split_unquoted_list_args(value)
+
+    def environment(name: str) -> list[str]:
+        return [d for d in os.environ.get(name, "").split(os.pathsep) if d]
+
+    use_defaults = not parsed.no_default_path
+    if use_defaults and "NO_CMAKE_PATH" not in parsed.flags:
+        add_prefixes(variable("CMAKE_PREFIX_PATH"))
+        dirs.extend(variable("CMAKE_PROGRAM_PATH"))
+    if use_defaults and "NO_CMAKE_ENVIRONMENT_PATH" not in parsed.flags:
+        add_prefixes(environment("CMAKE_PREFIX_PATH"))
+        dirs.extend(environment("CMAKE_PROGRAM_PATH"))
+    dirs.extend(parsed.hints)
+    if use_defaults and "NO_SYSTEM_ENVIRONMENT_PATH" not in parsed.flags:
+        dirs.extend(environment("PATH"))
+    if use_defaults and "NO_CMAKE_SYSTEM_PATH" not in parsed.flags:
+        if platform.system() == "Windows":
+            add_prefixes(["C:/Program Files", "C:/Program Files (x86)"])
+        else:
+            if platform.system() == "Darwin" and Path("/opt/homebrew").is_dir():
+                add_prefixes(["/opt/homebrew"])
+            add_prefixes(["/usr/local", "/usr"])
+            dirs.extend(["/bin", "/sbin"])
+        dirs.extend(variable("CMAKE_SYSTEM_PROGRAM_PATH"))
+    dirs.extend(parsed.paths)
+
+    # Each directory is tried with every suffix before the directory itself.
+    result: list[str] = []
+    for d in dirs:
+        d = os.path.expanduser(d.strip())
+        if not d:
+            continue
+        for candidate in [*(os.path.join(d, s) for s in parsed.suffixes), d]:
+            if candidate not in result:
+                result.append(candidate)
+    return result
+
+
+def _executable_in(directory: str, name: str) -> str | None:
+    """Return the path of the program ``name`` in ``directory``, if it is one."""
+    extensions = [""]
+    if platform.system() == "Windows":
+        extensions += os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").split(os.pathsep)
+    for ext in extensions:
+        candidate = os.path.join(directory, name + ext)
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
+def _is_valid_candidate(
+    ctx: BuildContext, validator: str, candidate: str, strict: bool
+) -> bool:
+    """Call the VALIDATOR function, which sets its result variable to FALSE to reject."""
+    if not validator:
+        return True
+    # Imported here to avoid a circular import.
+    from .configurator import process_commands
+
+    result_var = "__CJA_FIND_VALIDATOR_RESULT"
+    ctx.variables[result_var] = "TRUE"
+    call = Command(name=validator, args=[result_var, candidate], is_quoted=[True, True])
+    process_commands([call], ctx, strict=strict)
+    return is_truthy(ctx.variables.pop(result_var, "TRUE"))
+
+
 def handle_find_program(
     ctx: BuildContext, cmd: Command, args: list[str], strict: bool
 ) -> None:
-    """Handle find_program() command.
-
-    Only PATH is searched, so the options that change where to look aren't
-    supported.
-    """
+    """Handle find_program() command."""
     if len(args) < 2:
         return
 
     parsed = _parse_find_args(args)
-    unsupported = parsed.unsupported
-    for keyword, values in (
-        ("HINTS", parsed.hints),
-        ("PATHS", parsed.paths),
-        ("PATH_SUFFIXES", parsed.suffixes),
-    ):
-        if values:
-            unsupported.append(keyword)
-    if parsed.no_default_path:
-        unsupported.append("NO_DEFAULT_PATH")
-    if "NO_SYSTEM_ENVIRONMENT_PATH" in args:
-        unsupported.append("NO_SYSTEM_ENVIRONMENT_PATH")
-    if parsed.names_per_dir and len(parsed.names) > 1:
-        unsupported.append("NAMES_PER_DIR")
-    ctx.check_unsupported_args(cmd, unsupported, strict)
+    if parsed.validator and parsed.validator.lower() not in ctx.functions:
+        ctx.check_unsupported_args(cmd, ["VALIDATOR"], strict)
+        parsed.validator = ""
 
     var_name = args[0]
     if _is_already_resolved(ctx, var_name):
         return
 
+    search_dirs = _program_search_dirs(ctx, parsed)
     found_path = None
-    for name in parsed.names:
-        found_path = shutil.which(name)
-        if found_path:
-            break
+    for name, d in _name_dir_pairs(parsed.names, search_dirs, parsed.names_per_dir):
+        # A name with a directory part is checked as it is.
+        candidate = _executable_in("" if os.path.dirname(name) else d, name)
+        if candidate:
+            candidate = to_posix_path(os.path.abspath(candidate))
+            if _is_valid_candidate(ctx, parsed.validator, candidate, strict):
+                found_path = candidate
+                break
 
     if found_path:
         _store_find_result(ctx, var_name, found_path, parsed.no_cache)
@@ -309,7 +388,7 @@ def handle_find_path(
         return
 
     parsed = _parse_find_args(args)
-    ctx.check_unsupported_args(cmd, parsed.unsupported, strict)
+    ctx.check_unsupported_args(cmd, _unsupported_find_args(parsed), strict)
 
     var_name = args[0]
     if _is_already_resolved(ctx, var_name):
@@ -348,7 +427,7 @@ def handle_find_file(
         return
 
     parsed = _parse_find_args(args)
-    ctx.check_unsupported_args(cmd, parsed.unsupported, strict)
+    ctx.check_unsupported_args(cmd, _unsupported_find_args(parsed), strict)
 
     var_name = args[0]
     if _is_already_resolved(ctx, var_name):
@@ -434,7 +513,7 @@ def handle_find_library(
         return
 
     parsed = _parse_find_args(args)
-    ctx.check_unsupported_args(cmd, parsed.unsupported, strict)
+    ctx.check_unsupported_args(cmd, _unsupported_find_args(parsed), strict)
 
     var_name = args[0]
     if _is_already_resolved(ctx, var_name):

@@ -138,25 +138,99 @@ def test_find_program_paths_are_not_names() -> None:
     assert ctx.variables["PROG"] == "PROG-NOTFOUND"
 
 
-def test_find_program_unsupported_args_in_strict_mode(
-    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """PATHS and HINTS aren't searched, which is an error in strict mode."""
-    monkeypatch.setenv("PROG_DIR", "/opt/prog")
-    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
-    commands = [
-        Command(
-            name="find_program",
-            args=["PROG", "sh", "HINTS", "/opt/bin", "PATHS", "ENV", "PROG_DIR"],
-            line=1,
-        )
-    ]
-    with pytest.raises(SystemExit) as exc_info:
-        process_commands(commands, ctx, strict=True)
-    assert exc_info.value.code == 1
-    assert (
-        "unsupported arguments to find_program(): HINTS, PATHS" in capsys.readouterr().err
+EXE = ".exe" if os.name == "nt" else ""
+
+
+def make_program(directory: Path, name: str = "tool") -> Path:
+    directory.mkdir(parents=True, exist_ok=True)
+    program = directory / f"{name}{EXE}"
+    program.write_text("#!/bin/sh\n")
+    program.chmod(0o755)
+    return program
+
+
+def find(tmp_path: Path, *args: str, strict: bool = True, **variables: str) -> str:
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    ctx.variables.update(variables)
+    process_commands([Command(name="find_program", args=["PROG", *args], line=1)], ctx, strict=strict)
+    return ctx.variables["PROG"]
+
+
+def test_find_program_hints_and_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """HINTS come before PATH, PATHS after everything else."""
+    monkeypatch.setenv("PATH", str(tmp_path / "env"))
+    hint = make_program(tmp_path / "hint")
+    env = make_program(tmp_path / "env")
+    path = make_program(tmp_path / "path")
+    assert find(tmp_path, "tool", "HINTS", str(hint.parent)) == hint.as_posix()
+    assert find(tmp_path, "tool", "PATHS", str(path.parent)) == env.as_posix()
+    assert find(tmp_path, "tool", "PATHS", str(path.parent), "NO_SYSTEM_ENVIRONMENT_PATH") == (
+        path.as_posix()
     )
+    assert find(tmp_path, "tool", "NO_DEFAULT_PATH") == "PROG-NOTFOUND"
+    assert find(tmp_path, "tool", str(path.parent), "NO_DEFAULT_PATH") == path.as_posix()
+    monkeypatch.setenv("PROG_DIR", str(hint.parent))
+    assert find(tmp_path, "tool", "HINTS", "ENV", "PROG_DIR") == hint.as_posix()
+
+
+def test_find_program_path_suffixes(tmp_path: Path) -> None:
+    """Each directory is tried with the suffixes first."""
+    in_dir = make_program(tmp_path / "dir")
+    in_suffix = make_program(tmp_path / "dir" / "sub")
+    args = ["tool", "PATHS", str(in_dir.parent), "NO_DEFAULT_PATH"]
+    assert find(tmp_path, *args) == in_dir.as_posix()
+    assert find(tmp_path, *args, "PATH_SUFFIXES", "sub") == in_suffix.as_posix()
+
+
+def test_find_program_names_per_dir(tmp_path: Path) -> None:
+    second_name = make_program(tmp_path / "first", "second")
+    first_name = make_program(tmp_path / "second", "first")
+    args = ["NAMES", "first", "second", "PATHS", str(second_name.parent), str(first_name.parent)]
+    assert find(tmp_path, *args, "NO_DEFAULT_PATH") == first_name.as_posix()
+    assert find(tmp_path, *args, "NO_DEFAULT_PATH", "NAMES_PER_DIR") == second_name.as_posix()
+
+
+def test_find_program_cmake_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """<prefix>/bin of CMAKE_PREFIX_PATH and CMAKE_PROGRAM_PATH come before PATH."""
+    monkeypatch.setenv("PATH", str(tmp_path / "env"))
+    monkeypatch.delenv("CMAKE_PREFIX_PATH", raising=False)
+    monkeypatch.delenv("CMAKE_PROGRAM_PATH", raising=False)
+    make_program(tmp_path / "env")
+    in_prefix = make_program(tmp_path / "prefix" / "bin")
+    in_program_path = make_program(tmp_path / "programs")
+    prefix = str(tmp_path / "prefix")
+    assert find(tmp_path, "tool", CMAKE_PREFIX_PATH=prefix) == in_prefix.as_posix()
+    assert find(tmp_path, "tool", CMAKE_PROGRAM_PATH=str(in_program_path.parent)) == (
+        in_program_path.as_posix()
+    )
+    assert find(tmp_path, "tool", "NO_CMAKE_PATH", CMAKE_PREFIX_PATH=prefix) != (
+        in_prefix.as_posix()
+    )
+    monkeypatch.setenv("CMAKE_PREFIX_PATH", prefix)
+    assert find(tmp_path, "tool") == in_prefix.as_posix()
+    assert find(tmp_path, "tool", "NO_CMAKE_ENVIRONMENT_PATH") != in_prefix.as_posix()
+
+
+def test_find_program_validator(tmp_path: Path) -> None:
+    from cja.parser import parse
+
+    rejected = make_program(tmp_path / "rejected")
+    accepted = make_program(tmp_path / "accepted")
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    source = f"""\
+function(check result candidate)
+  list(APPEND candidates "${{candidate}}")
+  set(candidates "${{candidates}}" PARENT_SCOPE)
+  if(candidate MATCHES "rejected")
+    set(${{result}} FALSE PARENT_SCOPE)
+  endif()
+endfunction()
+find_program(PROG tool VALIDATOR check NO_DEFAULT_PATH
+             PATHS "{rejected.parent.as_posix()}" "{accepted.parent.as_posix()}")
+"""
+    process_commands(parse(source), ctx, strict=True)
+    assert ctx.variables["PROG"] == accepted.as_posix()
+    assert ctx.variables["candidates"] == f"{rejected.as_posix()};{accepted.as_posix()}"
 
 
 def test_find_program_supported_args_in_strict_mode() -> None:
