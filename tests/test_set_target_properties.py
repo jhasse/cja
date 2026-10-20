@@ -1,5 +1,6 @@
 """Tests for set_target_properties command."""
 
+import platform
 from pathlib import Path
 
 from cja.generator import configure
@@ -260,3 +261,41 @@ def test_compile_flags_and_link_flags(tmp_path: Path) -> None:
     assert "-DOTHER" in other_flags
     assert "-DSRC_C" not in other_flags
     assert any("libs" in line and "--app-link-flag" in line for line in lines)
+
+
+def test_output_name_and_directory(tmp_path: Path) -> None:
+    """OUTPUT_NAME, PREFIX, SUFFIX, <CONFIG>_POSTFIX and *_OUTPUT_DIRECTORY."""
+    exe_ext = ".exe" if platform.system() == "Windows" else ""
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "CMakeLists.txt").write_text(
+        "project(test_props C)\n"
+        "set(CMAKE_BUILD_TYPE Debug)\n"
+        "set(CMAKE_DEBUG_POSTFIX _d)\n"
+        "add_subdirectory(sub)\n"
+        "add_executable(app main.c)\n"
+        "set_target_properties(app PROPERTIES RUNTIME_OUTPUT_DIRECTORY bin"
+        " OUTPUT_NAME myapp DEBUG_POSTFIX -dbg)\n"
+        "add_executable(app2 main.c)\n"
+        "set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/archive)\n"
+        "add_library(st STATIC a.c)\n"
+        'set_target_properties(st PROPERTIES PREFIX "" SUFFIX .lib OUTPUT_NAME static)\n'
+        "add_test(NAME t COMMAND app)\n"
+    )
+    (tmp_path / "sub" / "CMakeLists.txt").write_text(
+        "add_executable(subexe ../main.c)\n"
+        "set_target_properties(subexe PROPERTIES RUNTIME_OUTPUT_DIRECTORY out)\n"
+    )
+    (tmp_path / "main.c").write_text("int main(void) { return 0; }\n")
+    (tmp_path / "a.c").write_text("int a(void) { return 0; }\n")
+
+    configure(tmp_path, "build")
+
+    content = (tmp_path / "build.ninja").read_text()
+    for output in (
+        f"$builddir/bin/myapp-dbg{exe_ext}",
+        f"$builddir/app2{exe_ext}",
+        "$builddir/archive/static_d.lib",
+        f"$builddir/sub/out/subexe{exe_ext}",
+    ):
+        assert f"build {output}:" in content
+    assert f"bin/myapp-dbg{exe_ext}" in content.split("rule test_run", 1)[1]

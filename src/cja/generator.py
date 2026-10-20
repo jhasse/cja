@@ -1174,29 +1174,80 @@ def generate_ninja(
                 return "$builddir"
             return f"$builddir/{to_posix_path(str(rel))}"
 
-        # Pre-compute target file directories for $<TARGET_FILE_DIR:...> genex
-        target_file_dirs: dict[str, str] = {}
-        for exe in ctx.executables:
-            target_file_dirs[exe.name] = _output_prefix(exe.binary_dir)
-        for lib in ctx.libraries:
-            if not lib.is_alias:
-                target_file_dirs[lib.name] = _output_prefix(lib.binary_dir)
+        def _target_output(target: Library | Executable) -> tuple[str, str, str]:
+            """Where a target's output file goes.
 
-        # Pre-compute target file paths for $<TARGET_FILE:...> genex
-        target_files: dict[str, str] = {}
-        for exe in ctx.executables:
-            prefix = _output_prefix(exe.binary_dir)
-            target_files[exe.name] = f"{prefix}/{exe.name}{exe_ext}"
-        for lib in ctx.libraries:
-            if lib.is_alias or lib.lib_type in ("OBJECT", "INTERFACE"):
-                continue
-            prefix = _output_prefix(lib.binary_dir)
-            if lib.lib_type == "SHARED":
-                target_files[lib.name] = f"{prefix}/lib{lib.name}{shared_lib_ext}"
-            elif lib.lib_type == "MODULE":
-                target_files[lib.name] = f"{prefix}/lib{lib.name}{module_lib_ext}"
+            Returns its directory, the same as a Ninja path, and its file name.
+            """
+            # The kind of output file, as in RUNTIME_OUTPUT_DIRECTORY
+            if isinstance(target, Executable) or (
+                target.lib_type == "SHARED" and platform.system() == "Windows"
+            ):
+                kind = "RUNTIME"
+            elif target.lib_type == "STATIC":
+                kind = "ARCHIVE"
             else:
-                target_files[lib.name] = f"{prefix}/lib{lib.name}{lib_ext}"
+                kind = "LIBRARY"
+            props = target.properties
+            binary_dir = target.binary_dir or str(ctx.build_dir)
+            directory = binary_dir
+            ninja_dir = _output_prefix(target.binary_dir)
+            output_dir = strip_generator_expressions(
+                props.get(f"{kind}_OUTPUT_DIRECTORY", ""), ctx.variables
+            )
+            if output_dir:
+                # Relative to the target's binary directory
+                directory = to_posix_path(Path(binary_dir) / output_dir)
+                try:
+                    rel = Path(os.path.abspath(directory)).relative_to(
+                        os.path.abspath(ctx.build_dir)
+                    )
+                    ninja_dir = "$builddir" + (
+                        "" if str(rel) == "." else f"/{to_posix_path(rel)}"
+                    )
+                except ValueError:
+                    ninja_dir = to_posix_path(os.path.abspath(directory))
+
+            name = next(
+                (
+                    props[prop]
+                    for prop in (
+                        f"{kind}_OUTPUT_NAME_{build_type}",
+                        f"{kind}_OUTPUT_NAME",
+                        f"OUTPUT_NAME_{build_type}",
+                        f"{build_type}_OUTPUT_NAME",
+                        "OUTPUT_NAME",
+                    )
+                    if props.get(prop)
+                ),
+                target.name,
+            )
+            if isinstance(target, Executable):
+                prefix, suffix = "", exe_ext
+            else:
+                prefix = "lib"
+                suffix = {"SHARED": shared_lib_ext, "MODULE": module_lib_ext}.get(
+                    target.lib_type, lib_ext
+                )
+            prefix = props.get("PREFIX", prefix)
+            suffix = props.get("SUFFIX", suffix)
+            postfix = props.get(f"{build_type}_POSTFIX", "")
+            return directory, ninja_dir, f"{prefix}{name}{postfix}{suffix}"
+
+        # Pre-compute target file directories and paths for the
+        # $<TARGET_FILE_DIR:...> and $<TARGET_FILE:...> genex
+        target_file_dirs: dict[str, str] = {}
+        target_files: dict[str, str] = {}
+        for target in (*ctx.executables, *ctx.libraries):
+            if isinstance(target, Library) and target.is_alias:
+                continue
+            _, ninja_dir, file_name = _target_output(target)
+            target_file_dirs[target.name] = ninja_dir
+            if isinstance(target, Executable) or target.lib_type not in (
+                "OBJECT",
+                "INTERFACE",
+            ):
+                target_files[target.name] = f"{ninja_dir}/{file_name}"
 
         def _resolve_target_dep(name: str) -> str | None:
             """Resolve a target name to a ninja node for use as an order-only dep."""
@@ -1932,8 +1983,7 @@ def generate_ninja(
                 n.newline()
             elif lib.lib_type == "STATIC":
                 # Create static library archive
-                prefix = _output_prefix(lib.binary_dir)
-                lib_name = f"{prefix}/lib{lib.name}{lib_ext}"
+                lib_name = target_files[lib.name]
                 register_output(lib_name, lib.defined_file, lib.defined_line)
                 n.build(
                     lib_name,
@@ -1945,11 +1995,7 @@ def generate_ninja(
                 lib_outputs[lib.name] = lib_name
             elif lib.lib_type in ("SHARED", "MODULE"):
                 # Create shared/module library output so aliases can resolve to real artifacts.
-                prefix = _output_prefix(lib.binary_dir)
-                if lib.lib_type == "SHARED":
-                    lib_name = f"{prefix}/lib{lib.name}{shared_lib_ext}"
-                else:
-                    lib_name = f"{prefix}/lib{lib.name}{module_lib_ext}"
+                lib_name = target_files[lib.name]
 
                 register_output(lib_name, lib.defined_file, lib.defined_line)
                 link_rule = "solink_cxx" if uses_cxx else "solink"
@@ -2345,8 +2391,7 @@ def generate_ninja(
                 link_flags.append(_MSVC_RUNTIME_LINK_FLAG)
 
             # Link
-            prefix = _output_prefix(exe.binary_dir)
-            exe_name = f"{prefix}/{exe.name}{exe_ext}"
+            exe_name = target_files[exe.name]
             register_output(exe_name, exe.defined_file, exe.defined_line)
             link_rule = "link_cxx" if uses_cxx else "link"
             variables: dict[str, str | list[str] | None] = {}
@@ -2422,28 +2467,15 @@ def generate_ninja(
             # filesystem paths so the is_builddir comparison works correctly.
             target_file_dirs_resolved: dict[str, str] = {}
             target_files_resolved: dict[str, str] = {}
-            for exe in ctx.executables:
-                bd = exe.binary_dir if exe.binary_dir else str(ctx.build_dir)
-                target_file_dirs_resolved[exe.name] = bd
-                target_files_resolved[exe.name] = to_posix_path(
-                    f"{bd}/{exe.name}{exe_ext}"
-                )
-            for lib in ctx.libraries:
-                if not lib.is_alias:
-                    bd = lib.binary_dir if lib.binary_dir else str(ctx.build_dir)
-                    target_file_dirs_resolved[lib.name] = bd
-                    if lib.lib_type == "SHARED":
-                        target_files_resolved[lib.name] = to_posix_path(
-                            f"{bd}/lib{lib.name}{shared_lib_ext}"
-                        )
-                    elif lib.lib_type == "MODULE":
-                        target_files_resolved[lib.name] = to_posix_path(
-                            f"{bd}/lib{lib.name}{module_lib_ext}"
-                        )
-                    elif lib.lib_type not in ("OBJECT", "INTERFACE"):
-                        target_files_resolved[lib.name] = to_posix_path(
-                            f"{bd}/lib{lib.name}{lib_ext}"
-                        )
+            for target in (*ctx.executables, *ctx.libraries):
+                if isinstance(target, Library) and target.is_alias:
+                    continue
+                directory, _, file_name = _target_output(target)
+                target_file_dirs_resolved[target.name] = directory
+                if target.name in target_files:
+                    target_files_resolved[target.name] = to_posix_path(
+                        f"{directory}/{file_name}"
+                    )
 
             def _expand_genex_for_test(arg: str) -> str:
                 return strip_generator_expressions(

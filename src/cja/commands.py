@@ -154,6 +154,10 @@ def _default_target_properties(ctx: BuildContext) -> dict[str, str]:
     win32_executable = ctx.variables.get("CMAKE_WIN32_EXECUTABLE", "")
     if win32_executable:
         properties["WIN32_EXECUTABLE"] = win32_executable
+    for kind in ("RUNTIME", "LIBRARY", "ARCHIVE"):
+        output_dir = ctx.variables.get(f"CMAKE_{kind}_OUTPUT_DIRECTORY", "")
+        if output_dir and output_dir != UNDEFINED_VAR_SENTINEL:
+            properties[f"{kind}_OUTPUT_DIRECTORY"] = output_dir
     if ctx.exclude_from_all:
         properties["EXCLUDE_FROM_ALL"] = "TRUE"
     return properties
@@ -1462,6 +1466,12 @@ def handle_add_library(
         default_properties = _default_target_properties(ctx)
         if exclude_from_all:
             default_properties["EXCLUDE_FROM_ALL"] = "TRUE"
+        # Unlike executables, libraries get CMAKE_<CONFIG>_POSTFIX.
+        for var_name in list(ctx.variables):
+            match = re.fullmatch(r"CMAKE_(\w+)_POSTFIX", var_name)
+            value = ctx.variables[var_name] if match else ""
+            if match and value and value != UNDEFINED_VAR_SENTINEL:
+                default_properties[f"{match.group(1)}_POSTFIX"] = value
         ctx.libraries.append(
             Library(
                 name=name,
