@@ -1255,6 +1255,25 @@ def handle_get_directory_property(
         ctx.variables[var_name] = ""
 
 
+def _split_program_from_args(command: str) -> tuple[str, str]:
+    """Find the program at the start of a command line, like CMake does.
+
+    Returns ``(program, args)``, or ``("", "")`` if no program was found.
+    """
+
+    def find(candidate: str) -> str:
+        if Path(candidate).is_file():
+            return candidate
+        return shutil.which(candidate) or ""
+
+    if program := find(command):
+        return program, ""
+    for idx, char in enumerate(command):
+        if char == " " and (program := find(command[:idx])):
+            return program, command[idx:]
+    return "", ""
+
+
 def handle_get_filename_component(
     ctx: BuildContext,
     cmd: Command,
@@ -1266,18 +1285,24 @@ def handle_get_filename_component(
         var_name = args[0]
         filename = args[1]
         mode = args[2]
-        unsupported = ["CACHE"] if "CACHE" in args[3:] else []
-        if mode not in (
+        modes = (
             "DIRECTORY",
             "PATH",
             "NAME",
             "EXT",
             "NAME_WE",
+            "LAST_EXT",
+            "NAME_WLE",
             "ABSOLUTE",
             "REALPATH",
-        ):
-            unsupported.insert(0, mode)
-        ctx.check_unsupported_args(cmd, unsupported, strict)
+            "PROGRAM",
+        )
+        if mode not in modes:
+            ctx.check_unsupported_args(cmd, [mode], strict)
+        cache = args[-1] == "CACHE"
+        # Like set(... CACHE ...), an existing cache entry is kept.
+        if cache and var_name in ctx.cache_values:
+            return
 
         # Optional BASE_DIR
         base_dir = str(ctx.current_source_dir)
@@ -1289,18 +1314,20 @@ def handle_get_filename_component(
             except ValueError:
                 pass
 
+        results: dict[str, str] = {}
         result = ""
+        basename = os.path.basename(filename)
         if mode in ("DIRECTORY", "PATH"):
             result = os.path.dirname(filename)
         elif mode == "NAME":
-            result = os.path.basename(filename)
-        elif mode == "EXT":
-            _, ext = os.path.splitext(filename)
-            result = ext
-        elif mode == "NAME_WE":
-            basename = os.path.basename(filename)
-            name_we, _ = os.path.splitext(basename)
-            result = name_we
+            result = basename
+        elif mode in ("EXT", "NAME_WE", "LAST_EXT", "NAME_WLE"):
+            # EXT is everything from the first dot of the name, LAST_EXT
+            # from the last one (a leading dot counts, too).
+            dot = basename.find(".") if mode in ("EXT", "NAME_WE") else basename.rfind(".")
+            if dot == -1:
+                dot = len(basename)
+            result = basename[dot:] if mode.endswith("EXT") else basename[:dot]
         elif mode in ("ABSOLUTE", "REALPATH"):
             p = Path(filename)
             if not p.is_absolute():
@@ -1308,12 +1335,19 @@ def handle_get_filename_component(
             if mode == "REALPATH":
                 result = str(p.resolve())
             else:
-                # ABSOLUTE in CMake just expands to full path without necessarily resolving symlinks,
-                # but resolve() is safer and usually what people want.
-                # Actually, resolve() resolves symlinks. absolute() doesn't.
-                result = str(p.absolute())
+                # Collapses ".." without resolving symlinks.
+                result = os.path.normpath(p.absolute())
+        elif mode == "PROGRAM":
+            result, program_args = _split_program_from_args(filename)
+            if result and "PROGRAM_ARGS" in args[3:-1]:
+                results[args[args.index("PROGRAM_ARGS") + 1]] = program_args
 
-        ctx.variables[var_name] = result
+        results[var_name] = result
+        for name, value in results.items():
+            if cache:
+                ctx.set_cache(name, value)
+            else:
+                ctx.variables[name] = value
 
 
 def handle_add_library(

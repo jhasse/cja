@@ -60,6 +60,7 @@ def target(name: str) -> Command:
         ([], Command("list", ["TRANSFORM", "l", "PREPEND", "x", "AT", "0"]), "AT"),
         ([], Command("list", ["TRANSFORM", "l", "TOUPPER", "REGEX", "a"]), "REGEX"),
         ([], Command("list", ["FILTER", "l", "KEEP", "REGEX", "a"]), "KEEP REGEX"),
+        ([], Command("get_filename_component", ["v", "a.c", "STEM"]), "STEM"),
         ([], Command("string", ["COMPARE", "LESS_EQUAL", "a", "b", "v"]), "LESS_EQUAL"),
         ([], Command("file", ["RELATIVE_PATH", "v", "/a", "/a/b"]), "RELATIVE_PATH"),
         ([], Command("file", ["READ", "f.txt", "v", "HEX"]), "HEX"),
@@ -78,8 +79,6 @@ def target(name: str) -> Command:
             Command("configure_file", ["in", "out", "NEWLINE_STYLE", "CRLF"]),
             "NEWLINE_STYLE",
         ),
-        ([], Command("get_filename_component", ["v", "a.tar.gz", "LAST_EXT"]), "LAST_EXT"),
-        ([], Command("get_filename_component", ["v", "a.c", "NAME", "CACHE"]), "CACHE"),
         ([], Command("set_property", ["CACHE", "X", "PROPERTY", "VALUE", "1"]), "CACHE"),
         ([], Command("get_property", ["v", "DIRECTORY", "PROPERTY", "P"]), "DIRECTORY"),
         (
