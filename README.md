@@ -96,7 +96,7 @@ cja format --check CMakeLists.txt       # exit with 1 if the file isn't formatte
 
 Without file arguments it reads from stdin (use `--assume-filename` to tell it where the file lives).
 
-There is no configuration file of its own. Instead, these options are read from the nearest `.clang-format`:
+These options are read from the nearest `.clang-format`:
 
 * `IndentWidth`, `UseTab` and `TabWidth`
 * `ColumnLimit` (`0` means no limit)
@@ -104,10 +104,20 @@ There is no configuration file of its own. Instead, these options are read from 
 * `LineEnding`
 * `BasedOnStyle` (for the defaults of the options above) and `DisableFormat`
 
+If there's a `.cmake-format.json`, the nearest one overrides them. These options of its `format` section are supported:
+
+* `line_width`, `tab_size` and `use_tabchars`
+* `max_subgroups_hwrap`, `max_pargs_hwrap`, `max_rows_cmdline`, `min_prefix_chars`, `max_prefix_chars` and
+  `max_lines_hwrap`
+* `line_ending`, `command_case` and `disable`
+
+The `parse` section isn't needed: the keywords of custom commands are inferred from their arguments.
+
 Everything else follows cmake-format's defaults, with a few differences:
 
 * A command call that fits on one line is kept on one line, like clang-format does (cmake-format breaks calls with
-  more than two argument groups or six arguments).
+  more than two argument groups or six arguments). Setting `max_subgroups_hwrap` or `max_pargs_hwrap` in
+  `.cmake-format.json` switches to cmake-format's behavior.
 * Comments are never reflowed.
 * The names of user-defined commands keep their spelling (builtin commands are still lowercased) and UPPERCASE words
   in their arguments are treated as keywords.

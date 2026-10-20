@@ -2,13 +2,14 @@
 
 The layout algorithm follows cmake-format: the arguments of each command are
 grouped into positional and keyword groups, and every group tries a series of
-increasingly vertical layouts until one fits. There is no configuration file;
-indentation, column limit, blank lines and line endings are read from the
-nearest ``.clang-format``, everything else uses cmake-format's defaults.
+increasingly vertical layouts until one fits. Indentation, column limit, blank
+lines and line endings are read from the nearest ``.clang-format``. The nearest
+``.cmake-format.json`` overrides these and can set cmake-format's layout options.
 """
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from collections.abc import Callable
@@ -19,7 +20,7 @@ from typing import Any, cast
 from .format_specs import SHELL, SPECS_LOWER, CmdSpec, PSpec, Shell, spec
 
 # ---------------------------------------------------------------------------
-# Style (.clang-format)
+# Style (.clang-format, .cmake-format.json)
 # ---------------------------------------------------------------------------
 
 
@@ -35,16 +36,20 @@ class Style:
     line_ending: str = "DeriveLF"
     disable: bool = False
 
-    # cmake-format defaults, not configurable.
+    # cmake-format defaults, configurable in .cmake-format.json.
     max_subgroups_hwrap: int = 2
     max_pargs_hwrap: int = 6
     max_rows_cmdline: int = 2
     min_prefix_chars: int = 4
     max_prefix_chars: int = 10
     max_lines_hwrap: int = 2
+    # "canonical" lowercases the names of known commands, "lower", "upper" and
+    # "unchanged" apply to all commands.
+    command_case: str = "canonical"
 
-    # Lowercase the names of known commands (cmake-format's "canonical").
-    canonical_case: bool = True
+    # Keep a call on one line if it fits, ignoring max_subgroups_hwrap and
+    # max_pargs_hwrap. Off when .cmake-format.json sets either of them.
+    one_line_if_fits: bool = True
     # Treat UPPERCASE words as keywords in calls to unknown commands.
     guess_keywords: bool = True
 
@@ -142,7 +147,7 @@ def _style_from_file(path: Path) -> Style:
         return Style()
     based_on = options.get("BasedOnStyle", "LLVM")
     if based_on.lower() == "inheritparentconfig":
-        style = find_style(path.parent.parent)
+        style = _find_clang_format_style(path.parent.parent)
     else:
         style = Style()
         _apply_clang_format(style, _BASE_STYLES.get(based_on.lower(), {}))
@@ -150,15 +155,88 @@ def _style_from_file(path: Path) -> Style:
     return style
 
 
-def find_style(directory: Path) -> Style:
-    """Return the style from the nearest .clang-format in directory or above."""
-    directory = directory.resolve()
+def _find_clang_format_style(directory: Path) -> Style:
     for d in (directory, *directory.parents):
         for name in (".clang-format", "_clang-format"):
             candidate = d / name
             if candidate.is_file():
                 return _style_from_file(candidate)
     return Style()
+
+
+_CMAKE_FORMAT_LINE_ENDINGS = {"unix": "LF", "windows": "CRLF", "auto": "DeriveLF"}
+_CMAKE_FORMAT_LAYOUT_OPTIONS = (
+    "max_subgroups_hwrap",
+    "max_pargs_hwrap",
+    "max_rows_cmdline",
+    "min_prefix_chars",
+    "max_prefix_chars",
+    "max_lines_hwrap",
+)
+
+
+def _apply_cmake_format(style: Style, config: dict[str, Any]) -> None:
+    """Apply the options of a .cmake-format.json.
+
+    The "parse" section is ignored: the keywords of commands we don't know are
+    guessed from their arguments instead.
+    """
+    # cmake-format 0.6 moved the options into sections, older versions don't
+    # have them.
+    options = config.get("format", config)
+    if not isinstance(options, dict):
+        return
+    options = cast(dict[str, Any], options)
+
+    def as_int(key: str, minimum: int) -> int | None:
+        value = options.get(key)
+        if isinstance(value, int) and not isinstance(value, bool) and value >= minimum:
+            return value
+        return None
+
+    if (value := as_int("line_width", 1)) is not None:
+        style.line_width = value
+    if (value := as_int("tab_size", 1)) is not None:
+        style.indent_width = style.tab_width = value
+    if isinstance(use_tabchars := options.get("use_tabchars"), bool):
+        style.use_tab = "Always" if use_tabchars else "Never"
+    for key in _CMAKE_FORMAT_LAYOUT_OPTIONS:
+        if (value := as_int(key, 0)) is not None:
+            setattr(style, key, value)
+            if key in ("max_subgroups_hwrap", "max_pargs_hwrap"):
+                style.one_line_if_fits = False
+    if (line_ending := _CMAKE_FORMAT_LINE_ENDINGS.get(str(options.get("line_ending")))):
+        style.line_ending = line_ending
+    if (command_case := options.get("command_case")) in (
+        "canonical",
+        "lower",
+        "upper",
+        "unchanged",
+    ):
+        style.command_case = command_case
+    if isinstance(disable := options.get("disable"), bool):
+        style.disable = disable
+
+
+def find_style(directory: Path) -> Style:
+    """Return the style for CMake files in directory.
+
+    The nearest .clang-format in directory or above is read first, then the
+    nearest .cmake-format.json overrides the options it sets.
+    """
+    directory = directory.resolve()
+    style = _find_clang_format_style(directory)
+    for d in (directory, *directory.parents):
+        candidate = d / ".cmake-format.json"
+        if candidate.is_file():
+            try:
+                config = json.loads(candidate.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                break
+            if isinstance(config, dict):
+                _apply_cmake_format(style, cast(dict[str, Any], config))
+            break
+    return style
 
 
 # ---------------------------------------------------------------------------
@@ -1873,7 +1951,11 @@ def build_statement(stmt: Statement, style: Style) -> StatementNode:
         args = parse_standard(ts, spec("*"), [])
 
     name = stmt.name.text
-    if style.canonical_case:
+    if style.command_case == "lower":
+        name = lower
+    elif style.command_case == "upper":
+        name = name.upper()
+    elif style.command_case == "canonical":
         if cmd_spec is not None and cmd_spec.spelling:
             name = cmd_spec.spelling
         elif cmd_spec is not None or lower in CUSTOM_PARSERS or lower in OTHER_BUILTINS:
@@ -1922,11 +2004,14 @@ def format_statement(stmt: Statement, indent: int, style: Style) -> list[str]:
     node = build_statement(stmt, style)
     # Like clang-format, keep a call on one line if it fits. cmake-format would
     # still break it up when it has many argument groups or arguments.
-    one_line_style = replace(
-        style, max_subgroups_hwrap=sys.maxsize, max_pargs_hwrap=sys.maxsize
-    )
-    end = node.reflow(one_line_style, (0, indent))
-    if not node.valid or end[0] != 0:
+    if style.one_line_if_fits:
+        one_line_style = replace(
+            style, max_subgroups_hwrap=sys.maxsize, max_pargs_hwrap=sys.maxsize
+        )
+        end = node.reflow(one_line_style, (0, indent))
+        if not node.valid or end[0] != 0:
+            node.reflow(style, (0, indent))
+    else:
         node.reflow(style, (0, indent))
     canvas = Canvas()
     node.write(canvas)

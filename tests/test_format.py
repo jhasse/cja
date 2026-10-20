@@ -409,3 +409,39 @@ def test_cli(tmp_path: Path) -> None:
     result = run_cja("format", "bad.cmake", cwd=tmp_path)
     assert result.returncode == 1
     assert "bad.cmake:1:" in result.stderr
+
+
+def test_cmake_format_json(tmp_path: Path) -> None:
+    (tmp_path / ".clang-format").write_text("IndentWidth: 4\nColumnLimit: 100\n")
+    (tmp_path / ".cmake-format.json").write_text(
+        '{"parse": {"additional_commands": {}},'
+        ' "format": {"tab_size": 3, "use_tabchars": true, "line_ending": "windows",'
+        ' "command_case": "upper", "max_pargs_hwrap": 2}}'
+    )
+    style = find_style(tmp_path / "sub")
+    assert style.line_width == 100
+    assert style.indent_width == 3
+    assert style.tab_width == 3
+    assert style.use_tab == "Always"
+    assert style.line_ending == "CRLF"
+    assert style.command_case == "upper"
+    assert not style.one_line_if_fits
+    assert (
+        format_source("if(a)\nset(b c d e)\nendif()\n", style)
+        == "IF(a)\r\n\tSET(b\r\n\t\t c\r\n\t\t d\r\n\t\t e)\r\nENDIF()\r\n"
+    )
+
+    # Options of cmake-format < 0.6 aren't grouped into sections.
+    (tmp_path / ".cmake-format.json").write_text(
+        '{"line_width": 60, "command_case": "unchanged", "tab_size": "x"}'
+    )
+    style = find_style(tmp_path)
+    assert style.line_width == 60
+    assert style.indent_width == 4
+    assert style.one_line_if_fits
+    assert format_source("IF(a)\nSET(b c)\nENDIF()\n", style) == (
+        "IF(a)\n    SET(b c)\nENDIF()\n"
+    )
+
+    (tmp_path / ".cmake-format.json").write_text("{not json")
+    assert find_style(tmp_path).indent_width == 4

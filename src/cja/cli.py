@@ -464,7 +464,8 @@ def main() -> int:
         "format",
         help="Format CMake files",
         description="Format CMake files. Indentation, column limit, blank lines and "
-        "line endings are taken from the nearest .clang-format file.",
+        "line endings are taken from the nearest .clang-format file. The nearest "
+        ".cmake-format.json overrides them.",
     )
     format_parser.add_argument(
         "files",
@@ -486,7 +487,8 @@ def main() -> int:
     format_parser.add_argument(
         "--assume-filename",
         metavar="PATH",
-        help="Path used to find .clang-format when reading from stdin",
+        help="Path used to find .clang-format and .cmake-format.json when reading "
+        "from stdin",
     )
 
     # Extract -P SCRIPT [ARGS...] before argparse so trailing positional script
