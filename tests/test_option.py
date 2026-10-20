@@ -69,4 +69,4 @@ def test_option_undefined_default_var_strict() -> None:
         ),
     ]
     process_commands(commands, ctx, strict=True)
-    assert ctx.variables["CEREAL_INSTALL"] == ""
+    assert ctx.variables["CEREAL_INSTALL"] == "OFF"

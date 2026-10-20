@@ -61,7 +61,7 @@ def configure(tmp_path: Path, source: str, strict: bool = False) -> BuildContext
             "try_compile(): LINK_LIBRARIES",
         ),
         (
-            "try_compile(RES ${CMAKE_BINARY_DIR} ${CMAKE_SOURCE_DIR} proj)",
+            "try_compile(RES bin . proj)",
             "try_compile(): PROJECT",
         ),
         (

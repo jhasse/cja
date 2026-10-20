@@ -277,7 +277,7 @@ def test_cmake_parse_arguments_optional_value_expands_empty_in_strict() -> None:
         Command(name="endif", args=[], line=5),
     ]
     process_commands(commands, ctx, strict=True)
-    assert ctx.variables["PATCHES_EXPANDED"] == ""
+    assert "PATCHES_EXPANDED" not in ctx.variables
     assert "HAS_PATCHES" not in ctx.variables
 
 

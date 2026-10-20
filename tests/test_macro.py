@@ -216,7 +216,7 @@ def test_macro_empty_parameters() -> None:
     ]
     process_commands(commands, ctx)
     assert ctx.variables["ARG1_VAL"] == "only_one"
-    assert ctx.variables["ARG2_VAL"] == ""
+    assert "ARG2_VAL" not in ctx.variables
 
 
 def test_macro_restores_special_vars() -> None:

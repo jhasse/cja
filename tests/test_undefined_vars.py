@@ -16,7 +16,7 @@ def test_undefined_variable_silent_in_normal_mode(capsys) -> None:
 
     captured = capsys.readouterr()
     assert captured.err == ""
-    assert ctx.variables["RESULT"] == ""
+    assert "RESULT" not in ctx.variables
 
 
 def test_undefined_variable_warns_in_strict_mode(capsys) -> None:
@@ -32,7 +32,7 @@ def test_undefined_variable_warns_in_strict_mode(capsys) -> None:
     assert "warning:" in captured.err
     assert "undefined variable referenced: UNDEFINED_VAR" in captured.err
     assert "error:" not in captured.err
-    assert ctx.variables["RESULT"] == ""
+    assert "RESULT" not in ctx.variables
 
 
 def test_nested_undefined_variable_warns_in_strict_mode(capsys) -> None:
@@ -49,7 +49,7 @@ def test_nested_undefined_variable_warns_in_strict_mode(capsys) -> None:
     assert "warning:" in captured.err
     assert "undefined variable referenced: UNDEFINED_VAR" in captured.err
     assert "error:" not in captured.err
-    assert ctx.variables["RESULT"] == ""
+    assert "RESULT" not in ctx.variables
 
 
 def test_nested_undefined_variable_silent_in_normal_mode(capsys) -> None:
@@ -66,7 +66,7 @@ def test_nested_undefined_variable_silent_in_normal_mode(capsys) -> None:
 
     captured = capsys.readouterr()
     assert captured.err == ""
-    assert ctx.variables["RESULT"] == ""
+    assert "RESULT" not in ctx.variables
 
 
 def test_escaped_variable_marker_is_literal_in_strict_mode(capsys) -> None:

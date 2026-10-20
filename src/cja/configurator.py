@@ -809,6 +809,9 @@ def process_commands(
                 allow_undefined_empty=allow_undefined,
             )
             quoted = cmd.is_quoted[idx] if idx < len(cmd.is_quoted) else False
+            if arg and not expanded and not quoted:
+                # An unquoted argument that expands to nothing is dropped.
+                continue
             if ";" in expanded and not quoted:
                 expanded_args.extend(split_unquoted_list_args(expanded))
             else:
