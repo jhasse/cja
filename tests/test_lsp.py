@@ -16,7 +16,7 @@ from cja.lsp.document import (
     semantic_tokens,
 )
 from cja.lsp.server import parse_configure_output
-from cja.lsp.workspace import Workspace
+from cja.lsp.workspace import Workspace, normalize
 
 
 def decode_tokens(text: str, workspace: Workspace | None = None) -> list[tuple[str, str]]:
@@ -355,7 +355,7 @@ def test_server_session(tmp_path: Path) -> None:
         "textDocument/definition",
         {"textDocument": {"uri": uri}, "position": {"line": 6, "character": 2}},
     )
-    assert location[0]["uri"] == (root / "cmake" / "helpers.cmake").as_uri()
+    assert location[0]["uri"] == normalize(root / "cmake" / "helpers.cmake").as_uri()
     assert client.request("unknown/method")["code"] == -32601
 
     assert client.request("shutdown") is None
