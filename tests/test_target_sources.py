@@ -28,6 +28,19 @@ def test_target_sources_executable() -> None:
     assert "util.c" in exe.sources
 
 
+def test_target_sources_executable_without_sources() -> None:
+    """add_executable() without sources creates the target for target_sources()."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="add_executable", args=["myapp"], line=1),
+        Command(name="target_sources", args=["myapp", "PRIVATE", "main.c"], line=2),
+    ]
+    process_commands(commands, ctx)
+
+    exe = ctx.get_executable("myapp")
+    assert exe is not None
+    assert exe.sources == ["main.c"]
+
 def test_target_sources_library() -> None:
     """Test target_sources adds sources to library."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))

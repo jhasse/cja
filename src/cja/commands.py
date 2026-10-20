@@ -1471,7 +1471,8 @@ def handle_add_executable(
         if args[1] == "IMPORTED" and args[0] not in ctx.imported_targets:
             ctx.imported_targets[args[0]] = ImportedTarget()
         return
-    if len(args) >= 2:
+    if args:
+        # Without sources here, they're usually added with target_sources().
         sources: list[str] = []
         default_properties = _default_target_properties(ctx)
         for source in args[1:]:
