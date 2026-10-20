@@ -4,6 +4,7 @@ import os
 import re
 import shutil
 import sys
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -21,7 +22,7 @@ from .syntax import (
     Test,
     evaluate_condition,
 )
-from .targets import Executable, ImportedTarget, Library
+from .targets import TARGET_PROPERTY_FIELDS, Executable, ImportedTarget, Library
 from .utils import (
     UNDEFINED_VAR_SENTINEL,
     cmake_regex_to_python,
@@ -31,6 +32,7 @@ from .utils import (
     join_flags,
     resolve_cmake_path,
     split_flags,
+    split_unquoted_list_args,
     strip_generator_expressions,
     to_posix_path,
     write_if_changed,
@@ -806,6 +808,53 @@ def _apply_imported_target_property(
         )
 
 
+# The commands that set the fields of TARGET_PROPERTY_FIELDS, as they process
+# the values (paths, generator expressions, ...) like the properties need.
+_TARGET_PROPERTY_SETTERS: dict[
+    str, Callable[[BuildContext, Command, list[str], bool], None]
+] = {
+    "SOURCES": handle_target_sources,
+    "INCLUDE_DIRECTORIES": handle_target_include_directories,
+    "COMPILE_DEFINITIONS": handle_target_compile_definitions,
+    "COMPILE_OPTIONS": handle_target_compile_options,
+    "COMPILE_FEATURES": lambda ctx, cmd, args, strict: handle_target_compile_features(
+        ctx, args
+    ),
+    "LINK_LIBRARIES": handle_target_link_libraries,
+    "LINK_OPTIONS": handle_target_link_options,
+    "LINK_DIRECTORIES": handle_target_link_directories,
+}
+
+
+def _set_target_property(
+    ctx: BuildContext,
+    cmd: Command,
+    target: Library | Executable,
+    prop_name: str,
+    values: list[str],
+    strict: bool,
+    append: bool = False,
+    append_string: bool = False,
+) -> None:
+    """Set (or append to) a property of a library or executable."""
+    field_name = TARGET_PROPERTY_FIELDS.get(prop_name)
+    if field_name is not None and hasattr(target, field_name):
+        # Like CMake, APPEND_STRING adds list elements to these, too.
+        if not append:
+            # In place, as aliases share the lists.
+            getattr(target, field_name).clear()
+        items = [item for value in values for item in split_unquoted_list_args(value)]
+        visibility = "INTERFACE" if prop_name.startswith("INTERFACE_") else "PRIVATE"
+        setter = _TARGET_PROPERTY_SETTERS[prop_name.removeprefix("INTERFACE_")]
+        setter(ctx, cmd, [target.name, visibility, *items], strict)
+        return
+    value = ";".join(values)
+    if append and prop_name in target.properties:
+        target.properties[prop_name] += ("" if append_string else ";") + value
+    else:
+        target.properties[prop_name] = value
+
+
 def handle_set_target_properties(
     ctx: BuildContext,
     cmd: Command,
@@ -818,15 +867,17 @@ def handle_set_target_properties(
         target_names = args[:props_idx]
         prop_args = args[props_idx + 1 :]
 
-        # Parse property-value pairs
-        properties: dict[str, str] = {}
-        for j in range(0, len(prop_args), 2):
-            if j + 1 < len(prop_args):
-                properties[prop_args[j]] = prop_args[j + 1]
+        if len(prop_args) % 2 != 0:
+            message = "set_target_properties called with incorrect number of arguments."
+            if strict:
+                ctx.print_error(message, cmd.line)
+                sys.exit(1)
+            ctx.print_warning(message, cmd.line)
+            return
+        properties = dict(zip(prop_args[::2], prop_args[1::2]))
 
         for target_name in target_names:
-            lib = ctx.get_library(target_name)
-            exe = ctx.get_executable(target_name)
+            target = ctx.get_library(target_name) or ctx.get_executable(target_name)
             imported_target = ctx.imported_targets.get(target_name)
 
             for prop_name, prop_value in properties.items():
@@ -834,38 +885,15 @@ def handle_set_target_properties(
                     _apply_imported_target_property(
                         ctx, imported_target, prop_name, prop_value
                     )
-                    continue
-
-                if prop_name == "INTERFACE_INCLUDE_DIRECTORIES":
-                    # Split semicolon-separated list
-                    dirs = prop_value.split(";")
-                    for d in dirs:
-                        expanded = ctx.expand_variables(d, strict, cmd.line)
-                        expanded = resolve_cmake_path(expanded, ctx.current_source_dir)
-                        if lib:
-                            lib.public_include_directories.append(expanded)
-                        elif exe:
-                            exe.include_directories.append(expanded)
-                elif prop_name == "COMPILE_DEFINITIONS":
-                    defs = [d for d in prop_value.split(";") if d]
-                    if lib:
-                        lib.compile_definitions.extend(defs)
-                    elif exe:
-                        exe.compile_definitions.extend(defs)
-                elif prop_name == "INTERFACE_COMPILE_FEATURES" and lib:
-                    lib.public_compile_features = [
-                        f for f in prop_value.split(";") if f
-                    ]
-                else:
-                    if lib:
-                        lib.properties[prop_name] = prop_value
-                    elif exe:
-                        exe.properties[prop_name] = prop_value
-                    elif strict:
-                        ctx.print_warning(
-                            f"set_target_properties: property '{prop_name}' not yet supported",
-                            cmd.line,
-                        )
+                elif target is not None:
+                    _set_target_property(
+                        ctx, cmd, target, prop_name, [prop_value], strict
+                    )
+                elif strict:
+                    ctx.print_warning(
+                        f"set_target_properties: property '{prop_name}' not yet supported",
+                        cmd.line,
+                    )
 
 
 def _find_test(
@@ -989,58 +1017,23 @@ def handle_set_property(
                 )
                 continue
 
-            if prop_name == "INTERFACE_INCLUDE_DIRECTORIES":
-                for value in prop_values:
-                    expanded = ctx.expand_variables(value, strict, cmd.line)
-                    expanded = resolve_cmake_path(expanded, ctx.current_source_dir)
-                    if lib:
-                        if append_mode:
-                            lib.public_include_directories.append(expanded)
-                        else:
-                            lib.public_include_directories = [expanded]
-                    elif exe:
-                        if append_mode:
-                            exe.include_directories.append(expanded)
-                        else:
-                            exe.include_directories = [expanded]
-            elif prop_name == "COMPILE_DEFINITIONS":
-                if lib:
-                    if append_mode:
-                        lib.compile_definitions.extend(prop_values)
-                    else:
-                        lib.compile_definitions = list(prop_values)
-                elif exe:
-                    if append_mode:
-                        exe.compile_definitions.extend(prop_values)
-                    else:
-                        exe.compile_definitions = list(prop_values)
-            elif prop_name == "INTERFACE_COMPILE_FEATURES" and lib:
-                features = [f for v in prop_values for f in v.split(";") if f]
-                if append_mode:
-                    lib.public_compile_features.extend(features)
-                else:
-                    lib.public_compile_features = features
-            else:
-                value = ";".join(prop_values)
-                if lib:
-                    if append_mode and prop_name in lib.properties:
-                        lib.properties[prop_name] += (
-                            "" if append_string else ";"
-                        ) + value
-                    else:
-                        lib.properties[prop_name] = value
-                elif exe:
-                    if append_mode and prop_name in exe.properties:
-                        exe.properties[prop_name] += (
-                            "" if append_string else ";"
-                        ) + value
-                    else:
-                        exe.properties[prop_name] = value
-                elif strict:
-                    ctx.print_warning(
-                        f"set_property(TARGET): property '{prop_name}' not yet supported",
-                        cmd.line,
-                    )
+            target = lib or exe
+            if target is not None:
+                _set_target_property(
+                    ctx,
+                    cmd,
+                    target,
+                    prop_name,
+                    prop_values,
+                    strict,
+                    append_mode,
+                    append_string,
+                )
+            elif strict:
+                ctx.print_warning(
+                    f"set_property(TARGET): property '{prop_name}' not yet supported",
+                    cmd.line,
+                )
 
     elif scope_type == "SOURCE":
         # Source file properties are global, so DIRECTORY and TARGET_DIRECTORY
@@ -1192,19 +1185,11 @@ def handle_get_property(
     elif scope_type == "TARGET":
         # Target property
         if scope_args:
-            target_name = scope_args[0]
-            lib = ctx.get_library(target_name)
-
-            value = ""
-            if prop_name == "INTERFACE_INCLUDE_DIRECTORIES" and lib:
-                value = ";".join(lib.public_include_directories)
-            elif prop_name == "COMPILE_DEFINITIONS" and lib:
-                value = ";".join(lib.compile_definitions)
-
+            value = ctx.target_property(scope_args[0], prop_name)
             if query_type == "DEFINED" or query_type == "SET":
-                ctx.variables[var_name] = "1" if value else "0"
+                ctx.variables[var_name] = "0" if value is None else "1"
             else:
-                ctx.variables[var_name] = value
+                ctx.variables[var_name] = value or ""
 
     elif scope_type == "SOURCE":
         # Source file property

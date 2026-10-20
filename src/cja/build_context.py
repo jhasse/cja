@@ -10,7 +10,13 @@ from termcolor import colored
 
 from .parser import LITERAL_BACKSLASH_MARKER, Command
 from .syntax import FetchContentInfo, FunctionDef, MacroDef, SourceFileProperties, Test
-from .targets import Executable, ImportedTarget, InstallTarget, Library
+from .targets import (
+    TARGET_PROPERTY_FIELDS,
+    Executable,
+    ImportedTarget,
+    InstallTarget,
+    Library,
+)
 from .utils import UNDEFINED_VAR_SENTINEL, make_relative, resolve_cmake_path
 
 
@@ -252,11 +258,15 @@ class BuildContext:
         """A target's property, or None if the target or property is unknown."""
         lib = self.get_library(name)
         exe = self.get_executable(name)
-        if lib is not None and prop == "INTERFACE_INCLUDE_DIRECTORIES":
-            return ";".join(lib.public_include_directories)
-        if lib is not None or exe is not None:
-            target = lib or exe
-            return target.properties.get(prop)  # type: ignore[union-attr]
+        target = lib or exe
+        if target is not None:
+            if prop == "TYPE":
+                return f"{lib.lib_type}_LIBRARY" if lib else "EXECUTABLE"
+            field_name = TARGET_PROPERTY_FIELDS.get(prop)
+            if field_name is not None and hasattr(target, field_name):
+                values: list[str] = getattr(target, field_name)
+                return ";".join(values) if values else None
+            return target.properties.get(prop)
         imported = self.imported_targets.get(name)
         if imported is not None:
             return imported.properties.get(prop)

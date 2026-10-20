@@ -191,3 +191,46 @@ def test_win32_executable_ignored_on_non_windows(tmp_path: Path, monkeypatch) ->
 
     configure(source_dir, "build")
     _assert_no_subsystem_flag((source_dir / "build.ninja").read_text())
+
+
+def test_set_target_properties_usage_requirements(tmp_path: Path) -> None:
+    """Properties like INCLUDE_DIRECTORIES replace what the target_*() commands set."""
+    (tmp_path / "CMakeLists.txt").write_text(
+        "project(test_props C)\n"
+        "add_library(mylib STATIC mylib.c)\n"
+        "target_compile_definitions(mylib PUBLIC OLD_DEF)\n"
+        "set_target_properties(mylib PROPERTIES\n"
+        "  INTERFACE_COMPILE_DEFINITIONS USE_MYLIB\n"
+        "  COMPILE_DEFINITIONS BUILDING_MYLIB\n"
+        '  INTERFACE_LINK_LIBRARIES "m")\n'
+        "add_executable(main main.c)\n"
+        "set_property(TARGET main PROPERTY INCLUDE_DIRECTORIES inc)\n"
+        "set_property(TARGET main APPEND PROPERTY INCLUDE_DIRECTORIES inc2)\n"
+        "set_property(TARGET main PROPERTY LINK_LIBRARIES mylib)\n"
+        "get_target_property(main_inc main INCLUDE_DIRECTORIES)\n"
+        "get_target_property(mylib_defs mylib COMPILE_DEFINITIONS)\n"
+        "get_target_property(main_opts main COMPILE_OPTIONS)\n"
+        "get_property(main_opts_set TARGET main PROPERTY COMPILE_OPTIONS SET)\n"
+        "get_property(mylib_type TARGET mylib PROPERTY TYPE)\n"
+    )
+    (tmp_path / "mylib.c").write_text("int mylib_func(void) { return 0; }\n")
+    (tmp_path / "main.c").write_text("int main(void) { return 0; }\n")
+
+    ctx = configure(tmp_path, "build")
+
+    assert [Path(d) for d in ctx.variables["main_inc"].split(";")] == [
+        (tmp_path / "inc").resolve(),
+        (tmp_path / "inc2").resolve(),
+    ]
+    assert ctx.variables["mylib_defs"] == "BUILDING_MYLIB"
+    assert ctx.variables["main_opts"] == "main_opts-NOTFOUND"
+    assert ctx.variables["main_opts_set"] == "0"
+    assert ctx.variables["mylib_type"] == "STATIC_LIBRARY"
+    lib = ctx.get_library("mylib")
+    assert lib is not None
+    assert lib.public_link_libraries == ["m"]
+    content = (tmp_path / "build.ninja").read_text()
+    assert "OLD_DEF" not in content
+    assert "USE_MYLIB" in content
+    assert "BUILDING_MYLIB" in content
+    assert "inc2" in content

@@ -1987,41 +1987,10 @@ int main() {{
                     target_name = args[1]
                     prop_name = args[2]
 
-                    lib = ctx.get_library(target_name)
-                    exe = ctx.get_executable(target_name)
-                    target = lib or exe
-
-                    if prop_name == "TYPE":
-                        if lib:
-                            ctx.variables[var_name] = f"{lib.lib_type}_LIBRARY"
-                        elif exe:
-                            ctx.variables[var_name] = "EXECUTABLE"
-                        else:
-                            ctx.variables[var_name] = f"{var_name}-NOTFOUND"
-                    elif target is None:
-                        imported = ctx.imported_targets.get(target_name)
-                        if imported is not None and prop_name in imported.properties:
-                            ctx.variables[var_name] = imported.properties[prop_name]
-                        else:
-                            ctx.variables[var_name] = f"{var_name}-NOTFOUND"
-                    elif prop_name == "INCLUDE_DIRECTORIES":
-                        dirs = (
-                            lib.include_directories
-                            if lib is not None
-                            else exe.include_directories  # type: ignore[union-attr]
-                        )
-                        ctx.variables[var_name] = ";".join(dirs) if dirs else ""
-                    elif prop_name == "INTERFACE_INCLUDE_DIRECTORIES":
-                        if lib is not None:
-                            ctx.variables[var_name] = ";".join(
-                                lib.public_include_directories
-                            )
-                        else:
-                            ctx.variables[var_name] = ""
-                    elif prop_name in target.properties:
-                        ctx.variables[var_name] = target.properties[prop_name]
-                    else:
-                        ctx.variables[var_name] = f"{var_name}-NOTFOUND"
+                    value = ctx.target_property(target_name, prop_name)
+                    ctx.variables[var_name] = (
+                        f"{var_name}-NOTFOUND" if value is None else value
+                    )
 
             case "target_link_libraries":
                 check_target_exists(ctx, cmd, args, strict)

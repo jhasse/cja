@@ -87,3 +87,25 @@ class InstallTarget:
 
     targets: list[str]
     destination: str
+
+
+# Target properties that are stored in fields of Library and Executable instead
+# of their ``properties``. Executables only have the non-INTERFACE fields.
+TARGET_PROPERTY_FIELDS = {
+    "SOURCES": "sources",
+    "INTERFACE_SOURCES": "interface_sources",
+    "INCLUDE_DIRECTORIES": "include_directories",
+    "INTERFACE_INCLUDE_DIRECTORIES": "public_include_directories",
+    "COMPILE_DEFINITIONS": "compile_definitions",
+    "INTERFACE_COMPILE_DEFINITIONS": "public_compile_definitions",
+    "COMPILE_OPTIONS": "compile_options",
+    "INTERFACE_COMPILE_OPTIONS": "public_compile_options",
+    "COMPILE_FEATURES": "compile_features",
+    "INTERFACE_COMPILE_FEATURES": "public_compile_features",
+    "LINK_LIBRARIES": "link_libraries",
+    "INTERFACE_LINK_LIBRARIES": "public_link_libraries",
+    "LINK_OPTIONS": "link_options",
+    "INTERFACE_LINK_OPTIONS": "public_link_options",
+    "LINK_DIRECTORIES": "link_directories",
+    "INTERFACE_LINK_DIRECTORIES": "public_link_directories",
+}
