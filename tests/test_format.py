@@ -264,6 +264,10 @@ set(c d)
 """
     )
 
+    # Blank lines in a disabled region are only copied once
+    source = "# cmake-format: off\nset(a 1)\n\nset(b 2)\n# cmake-format: on\n"
+    assert fmt(source) == source
+
 
 def test_lines() -> None:
     source = """\

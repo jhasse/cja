@@ -507,12 +507,14 @@ def parse_body(tokens: list[Token], src: str, filename: str) -> list[BodyItem]:
                     f"Expected ')' for command '{tok.text}'",
                     (filename, tok.line, tok.col + 1, ""),
                 )
+            disabled = disabled_from is not None
             items.append(
                 Statement(
                     tok,
                     args,
-                    blank(),
-                    disabled=disabled_from is not None,
+                    # The disabled region is copied verbatim, blank lines included
+                    0 if disabled else blank(),
+                    disabled=disabled,
                     span=(tok.line, tokens[i].line),
                 )
             )
