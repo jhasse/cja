@@ -67,7 +67,7 @@ def test_get_filename_component_program_and_cache(tmp_path: Path) -> None:
         'get_filename_component(new "a/b.c" NAME CACHE)\n'
     )
     ctx = configure(tmp_path, "build")
-    assert Path(ctx.variables["abs"]) == Path("/x/z/w").absolute()
+    assert Path(ctx.variables["abs"]) == Path(tmp_path.anchor) / "x" / "z" / "w"
     assert Path(ctx.variables["prog"]).name.startswith("sh")
     assert ctx.variables["prog_args"] == " -c foo"
     assert ctx.variables["cached"] == "before"
