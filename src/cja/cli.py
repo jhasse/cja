@@ -220,12 +220,29 @@ def cmd_script(
         return int(e.code) if isinstance(e.code, int) else 1
 
 
+def parse_line_range(value: str) -> tuple[int, int]:
+    """Parse START:END for cja format --lines."""
+    start, sep, end = value.partition(":")
+    try:
+        first, last = int(start), int(end)
+    except ValueError:
+        first = last = 0
+    if not sep or first < 1 or last < first:
+        raise argparse.ArgumentTypeError(
+            f"invalid line range '{value}' (expected START:END with 1 <= START <= END)"
+        )
+    return first, last
+
+
 def cmd_format(args: argparse.Namespace) -> int:
     """Format CMake files like clang-format / cmake-format."""
     error_label = colored("error:", "red", attrs=["bold"])
     files: list[str] = args.files or ["-"]
     if args.in_place and "-" in files:
         print(f"{error_label} -i cannot be used when reading from stdin", file=sys.stderr)
+        return 1
+    if args.lines and len(files) > 1:
+        print(f"{error_label} --lines can only be used with one file", file=sys.stderr)
         return 1
 
     status = 0
@@ -244,7 +261,9 @@ def cmd_format(args: argparse.Namespace) -> int:
                 continue
 
         try:
-            formatted = format_source(source, find_style(path.parent), name)
+            formatted = format_source(
+                source, find_style(path.parent), name, args.lines
+            )
         except SyntaxError as e:
             print(f"{e.filename}:{e.lineno}: {error_label} {e.msg}", file=sys.stderr)
             status = 1
@@ -489,6 +508,14 @@ def main() -> int:
         metavar="PATH",
         help="Path used to find .clang-format and .cmake-format.json when reading "
         "from stdin",
+    )
+    format_parser.add_argument(
+        "--lines",
+        action="append",
+        type=parse_line_range,
+        metavar="START:END",
+        help="Only format statements that touch these lines (1-based, inclusive). "
+        "Can be given multiple times",
     )
 
     # Extract -P SCRIPT [ARGS...] before argparse so trailing positional script

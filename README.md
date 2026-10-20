@@ -92,7 +92,11 @@ cja also generates a `run` phony target that executes the first executable (or t
 cja format CMakeLists.txt               # print the formatted file
 cja format -i CMakeLists.txt foo.cmake  # format files in place
 cja format --check CMakeLists.txt       # exit with 1 if the file isn't formatted
+cja format -i --lines 10:20 CMakeLists.txt  # only format statements touching lines 10-20
 ```
+
+Like clang-format's `--lines`, `--lines START:END` (1-based, inclusive, can be repeated) restricts formatting to the
+statements that touch these lines or the blank lines before them. Everything else is left byte-for-byte unchanged.
 
 Without file arguments it reads from stdin (use `--assume-filename` to tell it where the file lives).
 

@@ -265,6 +265,63 @@ set(c d)
     )
 
 
+def test_lines() -> None:
+    source = """\
+SET(a   1)
+if(X)
+SET(b   2)   # note
+
+
+SET(c   3) SET(d 4)
+endif()
+SET(e
+  5)
+"""
+
+    def fmt_lines(*ranges: tuple[int, int]) -> str:
+        return format_source(source, Style(), lines=list(ranges))
+
+    assert fmt_lines() == source
+    assert fmt_lines((100, 100)) == source
+    # Statements are indented according to the surrounding blocks
+    assert fmt_lines((3, 3)) == source.replace("SET(b   2)   # note", "  set(b 2) # note")
+    # A range that touches any line of a statement formats all of it
+    assert fmt_lines((9, 9)) == source.replace("SET(e\n  5)", "set(e 5)")
+    # Statements sharing a line are formatted together, including the blank
+    # lines before them
+    assert fmt_lines((6, 6)) == source.replace(
+        "\n\n\nSET(c   3) SET(d 4)", "\n\n  set(c 3)\n  set(d 4)"
+    )
+    assert fmt_lines((4, 4)) == fmt_lines((6, 6))
+    assert fmt_lines((1, 9)) == fmt(source)
+
+
+def test_lines_keep_untouched_bytes() -> None:
+    source = "set(a  1)\r\nset(b  2)\n\n\n\nset(c  3)"
+    style = Style()
+    assert format_source(source, style, lines=[(2, 2)]) == (
+        "set(a  1)\r\nset(b 2)\n\n\n\nset(c  3)"
+    )
+    assert format_source(source, style, lines=[(6, 6)]) == (
+        "set(a  1)\r\nset(b  2)\n\nset(c 3)\n"
+    )
+    assert format_source("set(a  1)\n\n\n", style, lines=[(3, 3)]) == "set(a  1)\n"
+    assert format_source("\n\n", style, lines=[(1, 1)]) == ""
+
+
+def test_lines_format_off() -> None:
+    source = """\
+# cmake-format: off
+SET(keep    this)
+# cmake-format: on
+SET(c   d)
+"""
+    assert format_source(source, Style(), lines=[(2, 2)]) == source
+    assert format_source(source, Style(), lines=[(4, 4)]) == source.replace(
+        "SET(c   d)", "set(c d)"
+    )
+
+
 def test_line_endings_and_bom() -> None:
     assert fmt("set(a b)\r\nset(c d)\r\n") == "set(a b)\r\nset(c d)\r\n"
     assert fmt("set(a b)\r\n", line_ending="LF") == "set(a b)\n"
@@ -404,6 +461,26 @@ def test_cli(tmp_path: Path) -> None:
     result = run_cja("format", cwd=tmp_path, stdin="IF(a)\nSET(b c)\nENDIF()\n")
     assert result.returncode == 0
     assert result.stdout == expected
+
+    result = run_cja(
+        "format",
+        "--lines",
+        "3:3",
+        cwd=tmp_path,
+        stdin="IF(a)\nSET(b c)\nENDIF()\n",
+    )
+    assert result.returncode == 0
+    assert result.stdout == "IF(a)\nSET(b c)\nendif()\n"
+
+    result = run_cja("format", "--lines", "2:1", cwd=tmp_path, stdin="")
+    assert result.returncode == 2
+    assert "invalid line range" in result.stderr
+
+    result = run_cja(
+        "format", "--lines", "1:1", "CMakeLists.txt", "CMakeLists.txt", cwd=tmp_path
+    )
+    assert result.returncode == 1
+    assert "one file" in result.stderr
 
     (tmp_path / "bad.cmake").write_text("set(a\n")
     result = run_cja("format", "bad.cmake", cwd=tmp_path)

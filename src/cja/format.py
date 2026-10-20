@@ -374,18 +374,22 @@ class Statement:
     trailing: list[str] | None = None
     # Inside a "cmake-format: off" region: only tracked for indentation.
     disabled: bool = False
+    # First and last source line (1-based), including trailing comments
+    span: tuple[int, int] = (0, 0)
 
 
 @dataclass
 class CommentBlock:
     text: str
     blank_before: int
+    span: tuple[int, int] = (0, 0)
 
 
 @dataclass
 class RawText:
     lines: list[str]
     blank_before: int = 0
+    span: tuple[int, int] = (0, 0)
 
 
 BodyItem = Statement | CommentBlock | RawText
@@ -400,6 +404,14 @@ def _switch(token: Token) -> str | None:
         return None
     m = _SWITCH.match(token.text)
     return m.group(1).lower() if m else None
+
+
+def _span(tok: Token) -> tuple[int, int]:
+    return tok.line, tok.line + tok.text.count("\n")
+
+
+def _raw_span(first: int, lines: list[str]) -> tuple[int, int]:
+    return first, first + len(lines) - 1
 
 
 def parse_body(tokens: list[Token], src: str, filename: str) -> list[BodyItem]:
@@ -445,19 +457,21 @@ def parse_body(tokens: list[Token], src: str, filename: str) -> list[BodyItem]:
                     last.trailing.append(tokens[k].text.rstrip())
                     i = j = k
                     j += 1
+                last.span = (last.span[0], _span(tokens[i])[1])
             elif switch == "off" and disabled_from is None:
-                items.append(CommentBlock(tok.text.rstrip(), blank()))
+                items.append(CommentBlock(tok.text.rstrip(), blank(), _span(tok)))
                 disabled_from = tok
             elif switch == "on" and disabled_from is not None:
                 first = src.find("\n", disabled_from.end) + 1
                 end = src.rfind("\n", 0, tok.start) + 1
                 raw = src[first:end] if 0 < first <= end else ""
-                items.append(RawText(raw.split("\n")[:-1]))
-                items.append(CommentBlock(tok.text.rstrip(), 0))
+                lines = raw.split("\n")[:-1]
+                items.append(RawText(lines, 0, _raw_span(disabled_from.line + 1, lines)))
+                items.append(CommentBlock(tok.text.rstrip(), 0, _span(tok)))
                 disabled_from = None
             else:
                 text = tok.text.rstrip() if tok.kind == COMMENT else tok.text
-                items.append(CommentBlock(text, blank()))
+                items.append(CommentBlock(text, blank(), _span(tok)))
             newlines = 0
             i += 1
         elif tok.kind == UNQUOTED:
@@ -467,7 +481,7 @@ def parse_body(tokens: list[Token], src: str, filename: str) -> list[BodyItem]:
             if i >= n or tokens[i].kind != LPAREN:
                 if re.fullmatch(r"@\w+@", tok.text):
                     # @PACKAGE_INIT@ and friends in configure_file() templates
-                    items.append(RawText([tok.text], blank()))
+                    items.append(RawText([tok.text], blank(), _span(tok)))
                     newlines = 0
                     continue
                 raise SyntaxError(
@@ -493,10 +507,16 @@ def parse_body(tokens: list[Token], src: str, filename: str) -> list[BodyItem]:
                     f"Expected ')' for command '{tok.text}'",
                     (filename, tok.line, tok.col + 1, ""),
                 )
-            i += 1
             items.append(
-                Statement(tok, args, blank(), disabled=disabled_from is not None)
+                Statement(
+                    tok,
+                    args,
+                    blank(),
+                    disabled=disabled_from is not None,
+                    span=(tok.line, tokens[i].line),
+                )
             )
+            i += 1
             newlines = 0
         else:
             raise SyntaxError(
@@ -507,7 +527,8 @@ def parse_body(tokens: list[Token], src: str, filename: str) -> list[BodyItem]:
     if disabled_from is not None:
         first = src.find("\n", disabled_from.end) + 1
         raw = src[first:] if first > 0 else ""
-        items.append(RawText(raw.rstrip("\n").split("\n") if raw.strip("\n") else []))
+        lines = raw.rstrip("\n").split("\n") if raw.strip("\n") else []
+        items.append(RawText(lines, 0, _raw_span(disabled_from.line + 1, lines)))
     return items
 
 
@@ -2018,10 +2039,66 @@ def format_statement(stmt: Statement, indent: int, style: Style) -> list[str]:
     return _indent_lines(canvas.lines(), indent, style)
 
 
-def format_source(
-    source: str, style: Style | None = None, filename: str = "<stdin>"
+def _format_ranges(
+    raw: str,
+    items: list[BodyItem],
+    formatted: list[list[str]],
+    ranges: list[tuple[int, int]],
+    style: Style,
+    eol: str,
 ) -> str:
-    """Format CMake source code and return the result."""
+    """Splice the formatted items that touch ``ranges`` into the original text.
+
+    Items sharing a source line form one unit. A unit is reformatted if a range
+    touches it or the blank lines before it, otherwise its lines (and the blank
+    lines before it) are copied verbatim.
+    """
+    # Start offset of each line in raw, 1-based, plus the end of raw
+    starts = [0, 0] + [i + 1 for i, c in enumerate(raw) if c == "\n"]
+    if starts[-1] != len(raw):
+        starts.append(len(raw))
+
+    units: list[tuple[int, int, int, list[str]]] = []  # first, last, blank, lines
+    for item, lines in zip(items, formatted):
+        first, last = item.span
+        if (isinstance(item, Statement) and item.disabled) or first > last:
+            continue  # copied as part of a RawText
+        if units and first <= units[-1][1]:
+            prev = units[-1]
+            units[-1] = (prev[0], max(prev[1], last), prev[2], prev[3] + lines)
+        else:
+            units.append((first, last, item.blank_before, lines))
+
+    def touched(first: int, last: int) -> bool:
+        return any(start <= last and end >= first for start, end in ranges)
+
+    out: list[str] = []
+    done = 0  # last source line written
+    for first, last, blank, lines in units:
+        if touched(done + 1, last):
+            if done:
+                out.append(eol * min(blank, style.max_empty_lines))
+            out.extend(line + eol for line in lines)
+        else:
+            out.append(raw[starts[done + 1] : starts[last + 1]])
+        done = last
+    if not touched(done + 1, sys.maxsize):
+        out.append(raw[starts[done + 1] :])
+    return "".join(out)
+
+
+def format_source(
+    source: str,
+    style: Style | None = None,
+    filename: str = "<stdin>",
+    lines: list[tuple[int, int]] | None = None,
+) -> str:
+    """Format CMake source code and return the result.
+
+    ``lines`` restricts formatting to statements that touch the given 1-based,
+    inclusive line ranges, like clang-format's ``--lines``. Everything else is
+    left byte-for-byte unchanged.
+    """
     if style is None:
         style = Style()
     if style.disable:
@@ -2029,6 +2106,7 @@ def format_source(
 
     bom = "﻿" if source.startswith("﻿") else ""
     text = source.removeprefix("﻿")
+    raw = text
     crlf = text.count("\r\n")
     text = text.replace("\r\n", "\n")
     if style.line_ending in ("LF", "CRLF"):
@@ -2042,28 +2120,39 @@ def format_source(
 
     items = parse_body(lex(text, filename, style.tab_width), text, filename)
 
-    out: list[str] = []
+    formatted: list[list[str]] = []
     depth = 0
     for item in items:
-        if out:
-            out.extend([""] * min(item.blank_before, style.max_empty_lines))
         if isinstance(item, RawText):
-            out.extend(item.lines)
+            formatted.append(item.lines)
             continue
         if isinstance(item, CommentBlock):
             indent = depth * style.indent_width
             canvas = Canvas()
             canvas.put((0, indent), item.text)
-            out.extend(_indent_lines(canvas.lines(), indent, style))
+            formatted.append(_indent_lines(canvas.lines(), indent, style))
             continue
 
         lower = item.name.text.lower()
         if lower in _BLOCK_CLOSERS or lower in _BLOCK_MIDDLE:
             depth = max(0, depth - 1)
-        if not item.disabled:
-            out.extend(format_statement(item, depth * style.indent_width, style))
+        if item.disabled:
+            formatted.append([])
+        else:
+            formatted.append(
+                format_statement(item, depth * style.indent_width, style)
+            )
         if lower in _BLOCK_OPENERS or lower in _BLOCK_MIDDLE:
             depth += 1
+
+    if lines is not None:
+        return bom + _format_ranges(raw, items, formatted, lines, style, eol)
+
+    out: list[str] = []
+    for item, item_lines in zip(items, formatted):
+        if out:
+            out.extend([""] * min(item.blank_before, style.max_empty_lines))
+        out.extend(item_lines)
 
     if not out:
         return bom
