@@ -30,6 +30,7 @@ from .build_context import (
     TrackedDict,
 )
 from .commands import (
+    check_target_exists,
     handle_add_executable,
     handle_add_library,
     handle_cmake_dependent_option,
@@ -1974,30 +1975,39 @@ int main() {{
                         ctx.variables[var_name] = f"{var_name}-NOTFOUND"
 
             case "target_link_libraries":
+                check_target_exists(ctx, cmd, args, strict)
                 handle_target_link_libraries(ctx, cmd, args, strict)
 
             case "target_link_directories":
+                check_target_exists(ctx, cmd, args, strict)
                 handle_target_link_directories(ctx, cmd, args, strict)
 
             case "target_sources":
+                check_target_exists(ctx, cmd, args, strict)
                 handle_target_sources(ctx, cmd, args, strict)
 
             case "target_compile_features":
+                check_target_exists(ctx, cmd, args, strict)
                 handle_target_compile_features(ctx, args)
 
             case "target_include_directories":
+                check_target_exists(ctx, cmd, args, strict)
                 handle_target_include_directories(ctx, cmd, args, strict)
 
             case "target_compile_definitions":
+                check_target_exists(ctx, cmd, args, strict)
                 handle_target_compile_definitions(ctx, cmd, args, strict)
 
             case "target_compile_options":
+                check_target_exists(ctx, cmd, args, strict)
                 handle_target_compile_options(ctx, cmd, args, strict)
 
             case "target_link_options":
+                check_target_exists(ctx, cmd, args, strict)
                 handle_target_link_options(ctx, cmd, args, strict)
 
             case "target_precompile_headers":
+                check_target_exists(ctx, cmd, args, strict)
                 handle_target_precompile_headers(ctx, cmd, args, strict)
 
             case "include_directories":

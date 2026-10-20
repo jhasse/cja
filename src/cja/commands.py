@@ -157,6 +157,27 @@ def _default_target_properties(ctx: BuildContext) -> dict[str, str]:
     return properties
 
 
+def check_target_exists(
+    ctx: BuildContext, cmd: Command, args: list[str], strict: bool
+) -> None:
+    """Report a target_*() call on a target that doesn't exist, like CMake."""
+    if not args:
+        return
+    name = args[0]
+    if (
+        ctx.get_library(name)
+        or ctx.get_executable(name)
+        or name in ctx.imported_targets
+        or any(ct.name == name for ct in ctx.custom_targets)
+    ):
+        return
+    message = f'{cmd.name} called on unknown target "{name}"'
+    if strict:
+        ctx.print_error(message, cmd.line)
+        sys.exit(1)
+    ctx.print_warning(message, cmd.line)
+
+
 def handle_include_directories(
     ctx: BuildContext,
     cmd: Command,

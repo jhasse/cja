@@ -202,3 +202,18 @@ def test_list_transform_append_and_replace(tmp_path: Path) -> None:
     process_commands(commands, ctx, strict=True)
     assert ctx.variables["a"] == "foo.c.in;bar.c.in"
     assert ctx.variables["l"] == "foo.h;bar.h"
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["target_link_libraries", "target_include_directories", "target_compile_options"],
+)
+def test_target_command_on_unknown_target(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], command: str
+) -> None:
+    """Like CMake, target_*() on a target that doesn't exist is an error."""
+    commands = [Command(command, ["missing", "PRIVATE", "x"], line=1)]
+    process_commands(commands, make_ctx(tmp_path))
+    assert f'warning: {command} called on unknown target "missing"' in capsys.readouterr().err
+    with pytest.raises(SystemExit):
+        process_commands(commands, make_ctx(tmp_path), strict=True)
