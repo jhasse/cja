@@ -128,3 +128,38 @@ Everything else follows cmake-format's defaults, with a few differences:
 * Line endings and a UTF-8 BOM are preserved.
 
 Use `# cmake-format: off` / `# cmake-format: on` (or `# clang-format off` / `on`) to exclude a region.
+
+## LSP Subcommand
+
+`cja lsp` is a [Language Server Protocol](https://microsoft.github.io/language-server-protocol/) server for CMake
+files. It talks to the editor over stdin/stdout (`--stdio` is accepted and is the default), so an editor extension
+only has to launch `cja lsp --stdio`.
+
+When the editor opens a workspace folder, all `CMakeLists.txt` and `*.cmake` files in it are indexed (build
+directories, hidden directories and `_deps` are skipped). The server provides:
+
+* **Semantic highlighting** of commands (builtin, user-defined functions and macros), keywords, variables, function
+  parameters, targets, strings, numbers, constants and comments
+* **Diagnostics** for syntax errors and unbalanced blocks (`if()` without `endif()` and so on) while typing
+* **Go to definition** and **find references** for functions and macros, variables, targets, and the files named by
+  `include()` and `add_subdirectory()`
+* **Hover** with the definition (and the comment above it) of user-defined commands, variables and targets, and a link
+  to the documentation of builtin commands
+* **Completion** of command names, of the keywords of the current command, of target names and of variable names
+  after `${`
+* **Document symbols** (functions, macros, targets, options and the project), **folding** and **formatting** (like
+  `cja format`)
+
+Nothing is executed for these. Optionally, the project can also be configured with cja to report the errors and
+warnings of a real configure run (e.g. unsupported arguments with `--strict`) as diagnostics. This runs CMake code
+from the project (`execute_process()`, downloads with FetchContent, …) and writes the build directory, so it's off by
+default. It runs on save with `configureOnSave`, or when the client sends the `cja.configure` command
+(`workspace/executeCommand`). These options can be passed as `initializationOptions` or as `cja` settings in
+`workspace/didChangeConfiguration`:
+
+| Option            | Default   | Description                                  |
+| ----------------- | --------- | -------------------------------------------- |
+| `configureOnSave` | `false`   | Configure the project when a file is saved   |
+| `buildDir`        | `"build"` | Build directory used for configuring         |
+| `strict`          | `true`    | Configure with `--strict`                    |
+| `configureArgs`   | `[]`      | Additional arguments, e.g. `["-DFOO=ON"]`    |

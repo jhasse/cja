@@ -234,6 +234,16 @@ def parse_line_range(value: str) -> tuple[int, int]:
     return first, last
 
 
+def cmd_lsp() -> int:
+    """Run the language server on stdin/stdout."""
+    from .lsp import serve
+
+    output = sys.stdout.buffer
+    # Anything printed by accident must not end up in the protocol stream.
+    sys.stdout = sys.stderr
+    return serve(sys.stdin.buffer, output)
+
+
 def cmd_format(args: argparse.Namespace) -> int:
     """Format CMake files like clang-format / cmake-format."""
     error_label = colored("error:", "red", attrs=["bold"])
@@ -518,6 +528,21 @@ def main() -> int:
         "Can be given multiple times",
     )
 
+    # Language server subcommand
+    lsp_parser = subparsers.add_parser(
+        "lsp",
+        help="Run a language server for CMake files",
+        description="Run a Language Server Protocol server for CMake files on "
+        "stdin/stdout, for editors like VS Code.",
+    )
+    lsp_parser.add_argument(
+        "--stdio",
+        action="store_true",
+        help="Communicate over stdin/stdout (the default and only transport)",
+    )
+    # Passed by vscode-languageclient; the server exits when stdin is closed.
+    lsp_parser.add_argument("--clientProcessId", help=argparse.SUPPRESS)
+
     # Extract -P SCRIPT [ARGS...] before argparse so trailing positional script
     # arguments are not parsed as subcommands.
     argv = sys.argv[1:]
@@ -539,6 +564,8 @@ def main() -> int:
         args.ninja_args = ninja_args
     elif args.command == "format" and ninja_args:
         format_parser.error(f"unrecognized arguments: {' '.join(ninja_args)}")
+    elif args.command == "lsp" and ninja_args:
+        lsp_parser.error(f"unrecognized arguments: {' '.join(ninja_args)}")
 
     try:
         if args.E:
@@ -565,6 +592,8 @@ def main() -> int:
             return cmd_run(args)
         elif args.command == "format":
             return cmd_format(args)
+        elif args.command == "lsp":
+            return cmd_lsp()
         else:
             # Default: configure only
             return cmd_configure(args)
