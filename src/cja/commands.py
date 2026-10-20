@@ -25,6 +25,7 @@ from .targets import Executable, ImportedTarget, Library
 from .utils import (
     UNDEFINED_VAR_SENTINEL,
     cmake_regex_to_python,
+    is_constant_truthy,
     is_truthy,
     is_verbatim_include,
     join_flags,
@@ -1404,7 +1405,8 @@ def handle_add_library(
 
         # Check for STATIC/SHARED/OBJECT/MODULE/INTERFACE keyword
         sources = args[1:]
-        lib_type = "STATIC"
+        build_shared = ctx.variables.get("BUILD_SHARED_LIBS", "")
+        lib_type = "SHARED" if is_constant_truthy(build_shared) else "STATIC"
         if sources and sources[0] in (
             "STATIC",
             "SHARED",
