@@ -234,3 +234,29 @@ def test_set_target_properties_usage_requirements(tmp_path: Path) -> None:
     assert "USE_MYLIB" in content
     assert "BUILDING_MYLIB" in content
     assert "inc2" in content
+
+
+def test_compile_flags_and_link_flags(tmp_path: Path) -> None:
+    """The legacy COMPILE_FLAGS and LINK_FLAGS strings, on targets and sources."""
+    (tmp_path / "CMakeLists.txt").write_text(
+        "project(test_props C)\n"
+        "add_executable(app main.c other.c)\n"
+        'set_target_properties(app PROPERTIES COMPILE_FLAGS "-DAPP_A -DAPP_B"'
+        " LINK_FLAGS --app-link-flag)\n"
+        "set_source_files_properties(main.c PROPERTIES COMPILE_OPTIONS"
+        ' "-DSRC_A;-DSRC_B" COMPILE_FLAGS -DSRC_C)\n'
+        "set_property(SOURCE other.c APPEND_STRING PROPERTY COMPILE_FLAGS -DOTHER)\n"
+    )
+    (tmp_path / "main.c").write_text("int main(void) { return 0; }\n")
+    (tmp_path / "other.c").write_text("int other(void) { return 0; }\n")
+
+    configure(tmp_path, "build")
+
+    lines = (tmp_path / "build.ninja").read_text().splitlines()
+    main_flags = lines[next(i for i, l in enumerate(lines) if "main.c" in l) + 1]
+    other_flags = lines[next(i for i, l in enumerate(lines) if "other.c" in l) + 1]
+    for flag in ("-DAPP_A", "-DAPP_B", "-DSRC_A", "-DSRC_B", "-DSRC_C"):
+        assert flag in main_flags
+    assert "-DOTHER" in other_flags
+    assert "-DSRC_C" not in other_flags
+    assert any("libs" in line and "--app-link-flag" in line for line in lines)

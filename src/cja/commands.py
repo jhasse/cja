@@ -1070,6 +1070,18 @@ def handle_set_property(
                     file_props.object_depends.extend(prop_values)
                 else:
                     file_props.object_depends = list(prop_values)
+            elif prop_name == "COMPILE_OPTIONS":
+                if not append_mode:
+                    file_props.compile_options.clear()
+                for value in prop_values:
+                    file_props.compile_options.extend(split_unquoted_list_args(value))
+            elif prop_name == "COMPILE_FLAGS":
+                value = " ".join(prop_values)
+                if append_mode and file_props.compile_flags:
+                    separator = "" if append_string else " "
+                    file_props.compile_flags += separator + value
+                else:
+                    file_props.compile_flags = value
             elif prop_name == "SKIP_PRECOMPILE_HEADERS":
                 file_props.skip_precompile_headers = is_truthy(";".join(prop_values))
             elif strict:

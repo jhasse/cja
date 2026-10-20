@@ -47,6 +47,8 @@ class SourceFileProperties:
     object_depends: list[str] = field(default_factory=list)
     include_directories: list[str] = field(default_factory=list)
     compile_definitions: list[str] = field(default_factory=list)
+    compile_options: list[str] = field(default_factory=list)
+    compile_flags: str = ""  # Legacy COMPILE_FLAGS, a command-line string
     skip_precompile_headers: bool = False
 
 

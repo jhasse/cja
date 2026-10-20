@@ -1752,6 +1752,7 @@ def generate_ninja(
                 opt = strip_generator_expressions(option)
                 if opt:
                     lib_compile_flags.append(opt)
+            lib_compile_flags.extend(split_flags(lib.properties.get("COMPILE_FLAGS", "")))
             for feature in lib.compile_features:
                 flag = compile_feature_to_flag(feature, lib.properties)
                 if flag:
@@ -1865,6 +1866,13 @@ def generate_ninja(
                         source_compile_flags.append(
                             _include_flag(inc_dir, ctx.source_dir)
                         )
+                    for option in file_props.compile_options:
+                        opt = strip_generator_expressions(
+                            option, ctx.variables, compile_language=source_language
+                        )
+                        if opt:
+                            source_compile_flags.append(opt)
+                    source_compile_flags.extend(split_flags(file_props.compile_flags))
                     for d in file_props.object_depends:
                         if d in custom_command_outputs:
                             source_depends.append(f"$builddir/{d}")
@@ -1948,6 +1956,7 @@ def generate_ninja(
                 lib_link_options = _dependency_link_options(
                     ctx, lib.link_options, order_link_libraries(lib.link_libraries)
                 )
+                lib_link_options.extend(split_flags(lib.properties.get("LINK_FLAGS", "")))
                 if runtime_flag:
                     lib_link_options.append(_MSVC_RUNTIME_LINK_FLAG)
                 n.build(
@@ -2019,6 +2028,7 @@ def generate_ninja(
                 opt = strip_generator_expressions(option)
                 if opt:
                     compile_flags.append(opt)
+            compile_flags.extend(split_flags(exe.properties.get("COMPILE_FLAGS", "")))
             for feature in exe.compile_features:
                 flag = compile_feature_to_flag(feature, exe.properties)
                 if flag:
@@ -2145,6 +2155,13 @@ def generate_ninja(
                         source_compile_flags.append(
                             _include_flag(inc_dir, ctx.source_dir)
                         )
+                    for option in file_props.compile_options:
+                        opt = strip_generator_expressions(
+                            option, ctx.variables, compile_language=source_language
+                        )
+                        if opt:
+                            source_compile_flags.append(opt)
+                    source_compile_flags.extend(split_flags(file_props.compile_flags))
                     for d in file_props.object_depends:
                         if d in custom_command_outputs:
                             source_depends.append(f"$builddir/{d}")
@@ -2217,6 +2234,7 @@ def generate_ninja(
             link_flags.extend(
                 _dependency_link_options(ctx, exe.link_options, expanded_link_libraries)
             )
+            link_flags.extend(split_flags(exe.properties.get("LINK_FLAGS", "")))
             for lib_name in expanded_link_libraries:
                 linked_lib = ctx.get_library(lib_name)
                 if linked_lib and linked_lib.lib_type == "INTERFACE":

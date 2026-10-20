@@ -2641,6 +2641,14 @@ int main() {{
                                     file_props.compile_definitions.extend(
                                         expanded_values
                                     )
+                                elif prop_name == "COMPILE_OPTIONS":
+                                    file_props.compile_options = [
+                                        v for v in expanded_values if v
+                                    ]
+                                elif prop_name == "COMPILE_FLAGS":
+                                    file_props.compile_flags = ";".join(
+                                        expanded_values
+                                    )
                                 elif prop_name == "SKIP_PRECOMPILE_HEADERS":
                                     file_props.skip_precompile_headers = is_truthy(
                                         ";".join(expanded_values)
