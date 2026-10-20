@@ -166,6 +166,9 @@ def handle_include_directories(
     if not args:
         return
 
+    ctx.check_unsupported_args(
+        cmd, [arg for arg in args if arg in ("BEFORE", "SYSTEM")], strict
+    )
     dirs: list[str] = []
     for arg in args:
         if arg in ("BEFORE", "AFTER", "SYSTEM"):
@@ -220,16 +223,21 @@ def handle_target_link_libraries(
     ctx: BuildContext,
     cmd: Command,
     args: list[str],
+    strict: bool,
 ) -> None:
     """Handle target_link_libraries() command."""
     if len(args) >= 2:
         target_name = args[0]
+        # Linking per configuration isn't supported; "general" is the default.
+        ctx.check_unsupported_args(
+            cmd, [arg for arg in args[1:] if arg in ("debug", "optimized")], strict
+        )
         # Parse libraries with visibility keywords
         # CMake supports: target_link_libraries(<target> <PRIVATE|PUBLIC|INTERFACE> <item>...)
         # Legacy keywords LINK_PUBLIC / LINK_PRIVATE are still used by some projects.
         visibility = "PUBLIC"  # Default visibility
         for arg in args[1:]:
-            if len(arg) == 0:
+            if len(arg) == 0 or arg == "general":
                 continue  # Argument might be an empty variable, skip
             if arg in ("PUBLIC", "LINK_PUBLIC"):
                 visibility = "PUBLIC"
@@ -281,6 +289,7 @@ def handle_target_link_directories(
         public_dirs: list[str] = []
         target_dirs: list[str] = []
         visibility = "PUBLIC"  # Default visibility
+        ctx.check_unsupported_args(cmd, ["BEFORE"] if "BEFORE" in args[1:] else [], strict)
         for arg in args[1:]:
             if arg == "PUBLIC":
                 visibility = "PUBLIC"
@@ -288,6 +297,8 @@ def handle_target_link_directories(
                 visibility = "INTERFACE"
             elif arg == "PRIVATE":
                 visibility = "PRIVATE"
+            elif arg in ("BEFORE", "AFTER"):
+                pass
             else:
                 # Expand variables and resolve relative paths
                 expanded = ctx.expand_variables(arg, strict, cmd.line)
@@ -325,17 +336,40 @@ def handle_target_link_directories(
 
 def handle_target_sources(
     ctx: BuildContext,
+    cmd: Command,
     args: list[str],
+    strict: bool,
 ) -> None:
-    """Handle target_sources() command."""
+    """Handle target_sources() command.
+
+    File sets aren't supported: their FILES are added as plain sources.
+    """
     if len(args) >= 2:
         target_name = args[0]
         target_sources: list[str] = []
         interface_sources: list[str] = []
         visibility = "PRIVATE"
+        ctx.check_unsupported_args(
+            cmd, ["FILE_SET"] if "FILE_SET" in args[1:] else [], strict
+        )
+        skip_next = False
+        in_base_dirs = False
         for source in args[1:]:
+            if skip_next:
+                skip_next = False
+                continue
             if source in ("PUBLIC", "PRIVATE", "INTERFACE"):
                 visibility = source
+                in_base_dirs = False
+                continue
+            if source in ("FILE_SET", "TYPE"):
+                skip_next = True
+                in_base_dirs = False
+                continue
+            if source in ("BASE_DIRS", "FILES"):
+                in_base_dirs = source == "BASE_DIRS"
+                continue
+            if in_base_dirs:
                 continue
             normalized = strip_generator_expressions(source)
             if not normalized:
@@ -413,6 +447,9 @@ def handle_target_include_directories(
     """Handle target_include_directories() command."""
     if len(args) >= 2:
         target_name = args[0]
+        ctx.check_unsupported_args(
+            cmd, [arg for arg in args[1:] if arg in ("SYSTEM", "BEFORE")], strict
+        )
         # Parse directories with visibility keywords
         public_dirs: list[str] = []
         target_dirs: list[str] = []
@@ -424,8 +461,7 @@ def handle_target_include_directories(
                 visibility = "INTERFACE"
             elif arg == "PRIVATE":
                 visibility = "PRIVATE"
-            elif arg == "SYSTEM":
-                # SYSTEM keyword is accepted but we don't differentiate
+            elif arg in ("SYSTEM", "BEFORE", "AFTER"):
                 pass
             else:
                 # Expand variables and resolve relative paths
@@ -554,8 +590,7 @@ def handle_target_compile_options(
             elif arg == "PRIVATE":
                 visibility = "PRIVATE"
             elif arg == "BEFORE":
-                # BEFORE affects ordering only; ignored for now.
-                pass
+                ctx.check_unsupported_args(cmd, [arg], strict)
             else:
                 expanded = ctx.expand_variables(arg, strict, cmd.line)
                 # Keep generator expressions intact: $<COMPILE_LANGUAGE:...>
@@ -986,7 +1021,11 @@ def handle_set_property(
                     )
 
     elif scope_type == "SOURCE":
-        # Source file property
+        # Source file properties are global, so DIRECTORY and TARGET_DIRECTORY
+        # are implied.
+        for keyword in ("DIRECTORY", "TARGET_DIRECTORY"):
+            if keyword in scope_args:
+                scope_args = scope_args[: scope_args.index(keyword)]
         for source_file in scope_args:
             expanded_filename = ctx.expand_variables(source_file, strict, cmd.line)
             expanded_filename = resolve_cmake_path(
@@ -1057,12 +1096,7 @@ def handle_set_property(
                 test.properties[prop_name] = value
 
     elif scope_type in ("CACHE", "INSTALL"):
-        # These scopes are not commonly used in basic builds
-        if strict:
-            ctx.print_warning(
-                f"set_property({scope_type}) is not yet supported",
-                cmd.line,
-            )
+        ctx.check_unsupported_args(cmd, [scope_type], strict)
     else:
         if strict:
             ctx.print_error(
@@ -1177,7 +1211,7 @@ def handle_get_property(
                 ctx.variables[var_name] = value
 
     else:
-        # For other scope types, just set empty
+        ctx.check_unsupported_args(cmd, [scope_type], strict)
         if query_type in ("DEFINED", "SET"):
             ctx.variables[var_name] = "0"
         else:
@@ -1204,6 +1238,9 @@ def handle_get_directory_property(
     var_name = args[0]
     # Last argument is the property name
     prop_name = args[-1]
+    ctx.check_unsupported_args(
+        cmd, [arg for arg in args[1:-1] if arg in ("DIRECTORY", "DEFINITION")], strict
+    )
 
     if prop_name == "PARENT_DIRECTORY":
         # For now, we don't support DIRECTORY <dir> argument properly,
@@ -1220,13 +1257,27 @@ def handle_get_directory_property(
 
 def handle_get_filename_component(
     ctx: BuildContext,
+    cmd: Command,
     args: list[str],
+    strict: bool,
 ) -> None:
     """Handle get_filename_component() command."""
     if len(args) >= 3:
         var_name = args[0]
         filename = args[1]
         mode = args[2]
+        unsupported = ["CACHE"] if "CACHE" in args[3:] else []
+        if mode not in (
+            "DIRECTORY",
+            "PATH",
+            "NAME",
+            "EXT",
+            "NAME_WE",
+            "ABSOLUTE",
+            "REALPATH",
+        ):
+            unsupported.insert(0, mode)
+        ctx.check_unsupported_args(cmd, unsupported, strict)
 
         # Optional BASE_DIR
         base_dir = str(ctx.current_source_dir)
@@ -1269,6 +1320,7 @@ def handle_add_library(
     ctx: BuildContext,
     cmd: Command,
     args: list[str],
+    strict: bool,
 ) -> None:
     """Handle add_library() command."""
     if len(args) >= 1:
@@ -1311,6 +1363,9 @@ def handle_add_library(
                         binary_dir=lib.binary_dir,
                     )
                 )
+            else:
+                # Aliases of imported targets and executables aren't supported.
+                ctx.check_unsupported_args(cmd, ["ALIAS"], strict)
             return
 
         # Check for STATIC/SHARED/OBJECT/MODULE/INTERFACE keyword
@@ -1373,8 +1428,15 @@ def handle_add_executable(
     ctx: BuildContext,
     cmd: Command,
     args: list[str],
+    strict: bool,
 ) -> None:
     """Handle add_executable() command."""
+    if len(args) >= 2 and args[1] in ("IMPORTED", "ALIAS"):
+        # Imported and alias executables can't be used in commands yet.
+        ctx.check_unsupported_args(cmd, [args[1]], strict)
+        if args[1] == "IMPORTED" and args[0] not in ctx.imported_targets:
+            ctx.imported_targets[args[0]] = ImportedTarget()
+        return
     if len(args) >= 2:
         sources: list[str] = []
         default_properties = _default_target_properties(ctx)
@@ -1587,10 +1649,19 @@ def handle_list(
     elif subcommand == "SORT":
         # list(SORT <list> [COMPARE <compare>] [CASE <case>] [ORDER <order>])
         list_name = args[1]
+        defaults = {"COMPARE": "STRING", "CASE": "SENSITIVE", "ORDER": "ASCENDING"}
+        ctx.check_unsupported_args(
+            cmd,
+            [
+                f"{option} {value}"
+                for option, value in zip(args[2::2], args[3::2])
+                if defaults.get(option, value) != value
+            ],
+            strict,
+        )
         list_val = ctx.variables.get(list_name, "")
         if list_val:
             items = list_val.split(";")
-            # Parse options (simplified - ignoring COMPARE, CASE, ORDER for now)
             items.sort()
             ctx.variables[list_name] = ";".join(items)
 
@@ -1695,6 +1766,13 @@ def handle_list(
                 else len(args)
             )
             transform_args = args[3:transform_args_end]
+            num_action_args = {"PREPEND": 1, "APPEND": 1, "REPLACE": 2}
+            if action in ("TOUPPER", "TOLOWER", "STRIP", *num_action_args):
+                # The AT, FOR and REGEX selectors aren't supported.
+                selector = transform_args[num_action_args.get(action, 0) :]
+                ctx.check_unsupported_args(cmd, selector[:1], strict)
+            else:
+                ctx.check_unsupported_args(cmd, [action], strict)
 
             list_val = ctx.variables.get(list_name, "")
             if list_val:
@@ -1705,17 +1783,23 @@ def handle_list(
                     items = [item.lower() for item in items]
                 elif action == "STRIP":
                     items = [item.strip() for item in items]
-                elif action == "PREPEND":
-                    if not transform_args:
+                elif action in num_action_args:
+                    if len(transform_args) < num_action_args[action]:
                         if strict:
                             ctx.print_error(
-                                "list(TRANSFORM ... PREPEND) requires a value",
+                                f"list(TRANSFORM ... {action}) requires a value",
                                 cmd.line,
                             )
                             sys.exit(1)
-                    else:
+                    elif action == "PREPEND":
                         prefix = transform_args[0]
                         items = [f"{prefix}{item}" for item in items]
+                    elif action == "APPEND":
+                        suffix = transform_args[0]
+                        items = [f"{item}{suffix}" for item in items]
+                    else:
+                        regex = cmake_regex_to_python(transform_args[0])
+                        items = [re.sub(regex, transform_args[1], item) for item in items]
                 ctx.variables[out_var] = ";".join(items)
 
     elif subcommand == "FILTER":
@@ -1730,6 +1814,8 @@ def handle_list(
         else:
             list_name = args[1]
             mode = args[2].upper()
+            if mode not in ("INCLUDE", "EXCLUDE") or args[3].upper() != "REGEX":
+                ctx.check_unsupported_args(cmd, [f"{args[2]} {args[3]}"], strict)
             if args[3].upper() == "REGEX" and len(args) >= 5:
                 pattern = args[4]
                 list_val = ctx.variables.get(list_name, "")
@@ -1941,16 +2027,27 @@ def handle_cmake_parse_arguments(
     strict: bool,
 ) -> None:
     """Handle cmake_parse_arguments() command."""
+    parse_argv = bool(cmd.args) and cmd.args[0] == "PARSE_ARGV"
     expanded_args: list[str] = []
-    for idx, arg in enumerate(cmd.args):
-        expanded = ctx.expand_variables(arg, strict, cmd.line)
-        quoted = cmd.is_quoted[idx] if idx < len(cmd.is_quoted) else False
-        if idx < 4:
-            expanded_args.append(expanded)
-        elif ";" in expanded and (not quoted or idx >= 4):
-            expanded_args.extend(expanded.split(";"))
-        else:
-            expanded_args.append(expanded)
+    if parse_argv:
+        # cmake_parse_arguments(PARSE_ARGV <N> <prefix> <options> <one> <multi>)
+        # parses the function's arguments ARGV<N>... one by one.
+        header = [ctx.expand_variables(arg, strict, cmd.line) for arg in cmd.args[1:6]]
+        if len(header) == 5 and header[0].isdigit():
+            expanded_args = header[1:]
+            argc = int(ctx.variables.get("ARGC", "0") or "0")
+            for idx in range(int(header[0]), argc):
+                expanded_args.append(ctx.variables.get(f"ARGV{idx}", ""))
+    else:
+        for idx, arg in enumerate(cmd.args):
+            expanded = ctx.expand_variables(arg, strict, cmd.line)
+            quoted = cmd.is_quoted[idx] if idx < len(cmd.is_quoted) else False
+            if idx < 4:
+                expanded_args.append(expanded)
+            elif ";" in expanded and (not quoted or idx >= 4):
+                expanded_args.extend(expanded.split(";"))
+            else:
+                expanded_args.append(expanded)
 
     if len(expanded_args) < 4:
         if strict:
@@ -1973,7 +2070,7 @@ def handle_cmake_parse_arguments(
 
     # Heuristic: allow missing OPTIONS list (common CPM.cmake pattern).
     # Detect when "options" tokens are actually used like one-value keywords.
-    if expanded_args[3:] and options_raw and one_value_raw:
+    if not parse_argv and expanded_args[3:] and options_raw and one_value_raw:
         keyword_set = set(options + one_value + multi_value)
         candidate_values = expanded_args[3:]
         candidate_values_flat: list[str] = []
@@ -2059,6 +2156,10 @@ def handle_math(
                 output_format = args[idx + 1]
             # Expression is everything between var_name and OUTPUT_FORMAT
             expr_args = args[2:idx]
+        if output_format not in ("DECIMAL", "HEXADECIMAL"):
+            ctx.check_unsupported_args(
+                cmd, [f"OUTPUT_FORMAT {output_format}"], strict
+            )
 
         expr = " ".join(expr_args)
         expr = " ".join(expr.split())
@@ -2346,6 +2447,8 @@ def handle_string(
                 result = s1 < s2
             elif op == "GREATER":
                 result = s1 > s2
+            else:
+                ctx.check_unsupported_args(cmd, [op], strict)
             ctx.variables[out_var] = "1" if result else "0"
 
     elif subcommand == "ASCII":
@@ -2616,6 +2719,9 @@ def handle_file(
             if not Path(filename).is_absolute():
                 filename = str(ctx.current_source_dir / filename)
             var_name = args[2]
+            ctx.check_unsupported_args(
+                cmd, [arg for arg in args[3:] if arg in ("OFFSET", "LIMIT", "HEX")], strict
+            )
             if Path(filename).exists():
                 with open(filename, "r") as f:
                     ctx.variables[var_name] = f.read()
@@ -2714,6 +2820,10 @@ def handle_file(
                     configure_depends = True
                     i += 1
                     continue
+                if recursive and token_upper == "FOLLOW_SYMLINKS":
+                    # Directory symlinks are always followed.
+                    i += 1
+                    continue
                 if token_upper == "LIST_DIRECTORIES" and i + 1 < len(args):
                     list_directories = is_truthy(
                         ctx.expand_variables(args[i + 1], strict, cmd.line)
@@ -2781,6 +2891,20 @@ def handle_file(
                 else:
                     p.unlink()
 
+    elif subcommand in ("TO_CMAKE_PATH", "TO_NATIVE_PATH"):
+        # file(TO_CMAKE_PATH "<path>" <var>) also turns a native search path
+        # (separated by ":" or ";" on Windows) into a list.
+        if len(args) < 3:
+            return
+        path = ";".join(args[1:-1])
+        if subcommand == "TO_CMAKE_PATH":
+            result = ";".join(p.replace("\\", "/") for p in path.split(os.pathsep))
+        elif sys.platform == "win32":
+            result = path.replace("/", "\\")
+        else:
+            result = path
+        ctx.variables[args[-1]] = result
+
     elif subcommand == "MAKE_DIRECTORY":
         # file(MAKE_DIRECTORY [<directories>...])
         for arg in args[1:]:
@@ -2804,6 +2928,12 @@ def handle_file(
                 sys.exit(1)
             return
 
+        # Permissions are always copied from the source (USE_SOURCE_PERMISSIONS).
+        ctx.check_unsupported_args(
+            cmd,
+            [arg for arg in args[dst_idx + 2 :] if arg in _FILE_COPY_UNSUPPORTED],
+            strict,
+        )
         source_args = args[1:dst_idx]
         destination = ctx.expand_variables(args[dst_idx + 1], strict, cmd.line)
         if not Path(destination).is_absolute():
@@ -2846,7 +2976,8 @@ def handle_file(
     elif subcommand == "LOCK":
         # file(LOCK <path> [DIRECTORY] [RELEASE] [GUARD <FUNCTION|FILE|PROCESS>] [RESULT_VARIABLE <variable>] [TIMEOUT <seconds>])
         # Stub for now, just succeeds
-        pass
+        if "RESULT_VARIABLE" in args[:-1]:
+            ctx.variables[args[args.index("RESULT_VARIABLE") + 1]] = "0"
 
     elif subcommand == "GENERATE":
         # file(GENERATE OUTPUT <output> [INPUT <input> | CONTENT <content>]
@@ -2858,9 +2989,17 @@ def handle_file(
         input_path: str | None = None
         content_val: str | None = None
         condition_val: str | None = None
+        unsupported: list[str] = []
         i = 1
         while i < len(args):
             token = args[i].upper()
+            if token in (
+                "TARGET",
+                "NEWLINE_STYLE",
+                "FILE_PERMISSIONS",
+                "USE_SOURCE_PERMISSIONS",
+            ):
+                unsupported.append(token)
             if token == "OUTPUT" and i + 1 < len(args):
                 output_path = args[i + 1]
                 i += 2
@@ -2876,6 +3015,7 @@ def handle_file(
             else:
                 i += 1
 
+        ctx.check_unsupported_args(cmd, unsupported, strict)
         if output_path is None:
             if strict:
                 ctx.print_error("file(GENERATE) requires OUTPUT", cmd.line)
@@ -2920,6 +3060,24 @@ def handle_file(
 
         write_if_changed(Path(output_path), generated)
 
+    else:
+        ctx.check_unsupported_args(cmd, [subcommand], strict)
+
+
+_FILE_COPY_UNSUPPORTED = frozenset(
+    {
+        "FILES_MATCHING",
+        "PATTERN",
+        "REGEX",
+        "EXCLUDE",
+        "PERMISSIONS",
+        "FILE_PERMISSIONS",
+        "DIRECTORY_PERMISSIONS",
+        "NO_SOURCE_PERMISSIONS",
+        "FOLLOW_SYMLINK_CHAIN",
+    }
+)
+
 
 def handle_configure_file(
     ctx: BuildContext,
@@ -2941,6 +3099,16 @@ def handle_configure_file(
     copyonly = "COPYONLY" in args[2:]
     at_only = "@ONLY" in args[2:]
     escape_quotes = "ESCAPE_QUOTES" in args[2:]
+    # Permissions are never copied (NO_SOURCE_PERMISSIONS).
+    ctx.check_unsupported_args(
+        cmd,
+        [
+            arg
+            for arg in args[2:]
+            if arg in ("FILE_PERMISSIONS", "USE_SOURCE_PERMISSIONS", "NEWLINE_STYLE")
+        ],
+        strict,
+    )
 
     src = Path(input_path)
     if not src.is_absolute():

@@ -104,11 +104,16 @@ def build_foreach_info(
     commands: list[Command],
     pc: int,
     args: list[str],
+    strict: bool = False,
 ) -> tuple[int, str, list[str], list[Command]]:
     """Build foreach() iteration info."""
     cmd = commands[pc]
     if not args:
         ctx.raise_syntax_error("foreach() requires at least a loop variable", cmd.line)
+    # foreach(<var>... IN ZIP_LISTS <lists>)
+    for idx in range(1, len(args) - 1):
+        if args[idx] == "IN" and args[idx + 1] == "ZIP_LISTS":
+            ctx.check_unsupported_args(cmd, ["ZIP_LISTS"], strict)
 
     # Find matching endforeach
     endforeach_idx = find_matching_endforeach(commands, pc, ctx)
@@ -136,17 +141,18 @@ def build_foreach_info(
             )
             items = [str(x) for x in range(start, stop + 1, step)]
     elif remaining and remaining[0] == "IN":
-        # foreach(var IN LISTS list1 ... | ITEMS item1 ...)
-        mode = remaining[1] if len(remaining) > 1 else ""
-        values = remaining[2:]
-        if mode == "LISTS":
-            # CMake lists are ";"-separated, so split on ";" (not whitespace).
-            for list_name in values:
-                list_val = ctx.variables.get(list_name, "")
+        # foreach(var IN [LISTS list1 ...] [ITEMS item1 ...])
+        mode = ""
+        for value in remaining[1:]:
+            if value in ("LISTS", "ITEMS") and mode != "ITEMS":
+                mode = value
+            elif mode == "LISTS":
+                # CMake lists are ";"-separated, so split on ";" (not whitespace).
+                list_val = ctx.variables.get(value, "")
                 if list_val:
                     items.extend(list_val.split(";"))
-        elif mode == "ITEMS":
-            items = values
+            elif mode == "ITEMS":
+                items.append(value)
     else:
         # foreach(var item1 item2 ...)
         items = remaining

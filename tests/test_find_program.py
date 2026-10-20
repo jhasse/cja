@@ -122,3 +122,52 @@ def test_find_program_no_cache() -> None:
     )
     assert "NOTFOUND" not in ctx.variables["PY"]
     assert "PY" not in ctx.cache_values
+
+
+def test_find_program_paths_are_not_names() -> None:
+    """The values of PATHS and HINTS aren't program names."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(
+            name="find_program",
+            args=["PROG", "nonexistent_xyz_123", "PATHS", "python3", "HINTS", "sh"],
+            line=1,
+        )
+    ]
+    process_commands(commands, ctx)
+    assert ctx.variables["PROG"] == "PROG-NOTFOUND"
+
+
+def test_find_program_unsupported_args_in_strict_mode(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PATHS and HINTS aren't searched, which is an error in strict mode."""
+    monkeypatch.setenv("PROG_DIR", "/opt/prog")
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(
+            name="find_program",
+            args=["PROG", "sh", "HINTS", "/opt/bin", "PATHS", "ENV", "PROG_DIR"],
+            line=1,
+        )
+    ]
+    with pytest.raises(SystemExit) as exc_info:
+        process_commands(commands, ctx, strict=True)
+    assert exc_info.value.code == 1
+    assert (
+        "unsupported arguments to find_program(): HINTS, PATHS" in capsys.readouterr().err
+    )
+
+
+def test_find_program_supported_args_in_strict_mode() -> None:
+    """Empty HINTS and arguments without effect are fine in strict mode."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(
+            name="find_program",
+            args=["PROG", "NAMES", "sh", "HINTS", "DOC", "Shell", "NAMES_PER_DIR"],
+            line=1,
+        )
+    ]
+    process_commands(commands, ctx, strict=True)
+    assert "NOTFOUND" not in ctx.variables["PROG"]

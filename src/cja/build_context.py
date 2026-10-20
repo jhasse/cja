@@ -287,6 +287,20 @@ class BuildContext:
         location = f"{rel_file}:{line}: " if line > 0 else ""
         print(f"{location}{error_label} {message}", file=sys.stderr)
 
+    def check_unsupported_args(
+        self, cmd: Command, unsupported: list[str], strict: bool
+    ) -> None:
+        """With --strict, error out if the command got arguments cja ignores."""
+        if not strict or not unsupported:
+            return
+        names = list(dict.fromkeys(unsupported))
+        plural = "s" if len(names) > 1 else ""
+        self.print_error(
+            f"unsupported argument{plural} to {cmd.name}(): {', '.join(names)}",
+            cmd.line,
+        )
+        sys.exit(1)
+
     def raise_syntax_error(self, message: str, line: int) -> None:
         """Raise a SyntaxError with file and line information."""
         raise SyntaxError(message, (str(self.current_list_file), line, 0, ""))

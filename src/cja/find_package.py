@@ -454,6 +454,37 @@ _FIND_VALUE_KEYWORDS = {
 }
 
 
+# find_package() flags that exclude locations cja's config search looks in.
+_UNSUPPORTED_FIND_FLAGS = {
+    "NO_DEFAULT_PATH",
+    "NO_PACKAGE_ROOT_PATH",
+    "NO_CMAKE_PATH",
+    "NO_CMAKE_ENVIRONMENT_PATH",
+    "NO_CMAKE_SYSTEM_PATH",
+}
+
+
+def unsupported_find_package_args(args: list[str]) -> list[str]:
+    """Return the find_package() options that cja's search ignores."""
+    unsupported: list[str] = []
+    keyword = ""
+    for arg in args[1:]:
+        upper = arg.upper()
+        if upper in _FIND_VALUE_KEYWORDS:
+            keyword = upper
+        elif (
+            upper in _FIND_FLAG_KEYWORDS
+            or upper.startswith("NO_")
+            or upper in ("REQUIRED", "COMPONENTS", "OPTIONAL_COMPONENTS")
+        ):
+            keyword = ""
+            if upper in _UNSUPPORTED_FIND_FLAGS:
+                unsupported.append(upper)
+        elif keyword and keyword != "REGISTRY_VIEW" and arg:
+            unsupported.append(keyword)
+    return unsupported
+
+
 def _compare_versions(left: str, right: str) -> int:
     """Compare two dotted version strings like CMake's ``VERSION_*`` operators."""
     a = list(_version_tuple(left))

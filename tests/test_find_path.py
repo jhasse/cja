@@ -207,3 +207,41 @@ def test_find_path_searches_again_after_notfound(tmp_path: Path) -> None:
     assert ctx.variables["H"] == (tmp_path / "inc").absolute().as_posix()
     assert ctx.variables["N"] == (tmp_path / "inc").absolute().as_posix()
     assert "N" not in ctx.cache_values
+
+
+def test_find_path_signatures(tmp_path: Path) -> None:
+    """Names come before the first keyword; DOC and its value are skipped."""
+    (tmp_path / "b.h").touch()
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    commands = [
+        Command(
+            name="find_path",
+            args=["A", "a.h", "b.h", "DOC", str(tmp_path), "PATHS", str(tmp_path)],
+            line=1,
+        ),
+        Command(name="find_path", args=["B", "b.h", "DOC", str(tmp_path)], line=2),
+        Command(name="find_path", args=["C", "a.h", str(tmp_path)], line=3),
+    ]
+    process_commands(commands, ctx)
+    assert ctx.variables["A"] == tmp_path.as_posix()
+    assert ctx.variables["B"] == "B-NOTFOUND"
+    assert ctx.variables["C"] == "C-NOTFOUND"
+
+
+def test_find_path_unsupported_args_in_strict_mode(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    commands = [
+        Command(
+            name="find_path",
+            args=["A", "a.h", "NO_SYSTEM_ENVIRONMENT_PATH", "NO_CMAKE_SYSTEM_PATH"],
+            line=1,
+        )
+    ]
+    with pytest.raises(SystemExit):
+        process_commands(commands, ctx, strict=True)
+    assert (
+        "unsupported argument to find_path(): NO_CMAKE_SYSTEM_PATH"
+        in capsys.readouterr().err
+    )

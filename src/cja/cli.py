@@ -367,7 +367,7 @@ def main() -> int:
     parser.add_argument(
         "--strict",
         action="store_true",
-        help="Error on unsupported commands instead of ignoring them",
+        help="Error on unsupported commands and arguments instead of ignoring them",
     )
 
     parser.add_argument(

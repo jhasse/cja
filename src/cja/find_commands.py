@@ -8,26 +8,12 @@ import os
 import platform
 import shutil
 from collections.abc import Iterator
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .build_context import BuildContext
 from .parser import Command
 from .utils import UNDEFINED_VAR_SENTINEL, split_unquoted_list_args, to_posix_path
-
-
-def _pop_find_options(args: list[str]) -> tuple[list[str], bool, bool, bool]:
-    """Strip the flag-like options shared by the find_* commands.
-
-    Returns ``(args, no_cache, no_default_path, names_per_dir)``.
-    """
-    options = {"NO_CACHE", "NO_DEFAULT_PATH", "NAMES_PER_DIR"}
-    remaining = [arg for arg in args if arg not in options]
-    return (
-        remaining,
-        "NO_CACHE" in args,
-        "NO_DEFAULT_PATH" in args,
-        "NAMES_PER_DIR" in args,
-    )
 
 
 def _search_dirs_with_defaults(
@@ -133,88 +119,109 @@ def _name_dir_pairs(
                 yield name, d
 
 
-def _parse_find_args(
-    args: list[str],
-) -> tuple[list[str], list[str], list[str], list[str], bool]:
-    """Parse the common keyword arguments shared by find_path/find_file/find_library.
+# Flags that only exclude search locations cja never looks in anyway.
+_NO_OP_FLAGS = frozenset(
+    {
+        "OPTIONAL",
+        "NO_PACKAGE_ROOT_PATH",
+        "NO_SYSTEM_ENVIRONMENT_PATH",
+        "NO_CMAKE_INSTALL_PREFIX",
+        "CMAKE_FIND_ROOT_PATH_BOTH",
+        "ONLY_CMAKE_FIND_ROOT_PATH",
+        "NO_CMAKE_FIND_ROOT_PATH",
+    }
+)
+# Flags that exclude search locations cja does look in, but can't exclude yet.
+_UNSUPPORTED_FLAGS = frozenset(
+    {"NO_CMAKE_PATH", "NO_CMAKE_ENVIRONMENT_PATH", "NO_CMAKE_SYSTEM_PATH"}
+)
 
-    Returns ``(names, paths, hints, suffixes, required)``.
+
+@dataclass
+class _FindArgs:
+    names: list[str] = field(default_factory=list[str])
+    paths: list[str] = field(default_factory=list[str])
+    hints: list[str] = field(default_factory=list[str])
+    suffixes: list[str] = field(default_factory=list[str])
+    required: bool = False
+    no_cache: bool = False
+    no_default_path: bool = False
+    names_per_dir: bool = False
+    # Arguments that would change the result in CMake but are ignored by cja.
+    unsupported: list[str] = field(default_factory=list[str])
+
+
+def _parse_find_args(args: list[str]) -> _FindArgs:
+    """Parse the arguments shared by the find_* commands like CMake does.
+
+    Arguments before the first keyword are names. Without any of the NAMES,
+    PATHS, HINTS or PATH_SUFFIXES keywords the short signature is used: the
+    first name is the name and the rest are paths.
     """
-    names: list[str] = []
-    paths: list[str] = []
-    hints: list[str] = []
-    suffixes: list[str] = []
-    required = False
-
+    result = _FindArgs()
+    lists = {
+        "NAMES": result.names,
+        "PATHS": result.paths,
+        "HINTS": result.hints,
+        "PATH_SUFFIXES": result.suffixes,
+    }
+    current: list[str] | None = result.names
+    new_style = False
     i = 1
     while i < len(args):
         arg = args[i]
-        if arg == "NAMES":
+        if arg in lists:
+            current = lists[arg]
+            new_style = True
+        elif arg in ("DOC", "REGISTRY_VIEW"):
+            current = None
             i += 1
-            while i < len(args) and args[i] not in (
-                "PATHS",
-                "HINTS",
-                "PATH_SUFFIXES",
-                "REQUIRED",
-            ):
-                names.append(args[i])
-                i += 1
-            continue
-        elif arg == "PATHS":
+        elif arg == "VALIDATOR":
+            current = None
+            result.unsupported.append(arg)
             i += 1
-            while i < len(args) and args[i] not in (
-                "NAMES",
-                "HINTS",
-                "PATH_SUFFIXES",
-                "REQUIRED",
-            ):
-                if args[i] == "ENV" and i + 1 < len(args):
-                    env_value = os.environ.get(args[i + 1], "")
-                    if env_value:
-                        paths.extend(p for p in env_value.split(os.pathsep) if p)
-                    i += 2
-                else:
-                    paths.append(args[i])
-                    i += 1
-            continue
-        elif arg == "HINTS":
-            i += 1
-            while i < len(args) and args[i] not in (
-                "NAMES",
-                "PATHS",
-                "PATH_SUFFIXES",
-                "REQUIRED",
-            ):
-                if args[i] == "ENV" and i + 1 < len(args):
-                    env_value = os.environ.get(args[i + 1], "")
-                    if env_value:
-                        hints.extend(p for p in env_value.split(os.pathsep) if p)
-                    i += 2
-                else:
-                    hints.append(args[i])
-                    i += 1
-            continue
-        elif arg == "PATH_SUFFIXES":
-            i += 1
-            while i < len(args) and args[i] not in (
-                "NAMES",
-                "PATHS",
-                "HINTS",
-                "REQUIRED",
-            ):
-                suffixes.append(args[i])
-                i += 1
-            continue
         elif arg == "REQUIRED":
-            required = True
-        else:
-            if not names:
-                names.append(arg)
-            else:
-                paths.append(arg)
+            result.required = True
+            current = None
+        elif arg == "NO_CACHE":
+            result.no_cache = True
+            current = None
+        elif arg == "NO_DEFAULT_PATH":
+            result.no_default_path = True
+            current = None
+        elif arg == "NAMES_PER_DIR":
+            result.names_per_dir = True
+            current = None
+        elif arg in _NO_OP_FLAGS:
+            current = None
+        elif arg in _UNSUPPORTED_FLAGS:
+            result.unsupported.append(arg)
+            current = None
+        elif current is not None:
+            current.append(arg)
         i += 1
 
-    return names, paths, hints, suffixes, required
+    if not new_style and result.names:
+        result.paths[:0] = result.names[1:]
+        del result.names[1:]
+    result.paths[:] = _expand_env(result.paths)
+    result.hints[:] = _expand_env(result.hints)
+    return result
+
+
+def _expand_env(dirs: list[str]) -> list[str]:
+    """Replace ``ENV <var>`` with the directories listed in that variable."""
+    result: list[str] = []
+    i = 0
+    while i < len(dirs):
+        if dirs[i] == "ENV" and i + 1 < len(dirs):
+            env_value = os.environ.get(dirs[i + 1], "")
+            result.extend(d for d in env_value.split(os.pathsep) if d)
+            i += 2
+        else:
+            result.append(dirs[i])
+            i += 1
+    return result
 
 
 def _is_already_resolved(ctx: BuildContext, var_name: str) -> bool:
@@ -246,72 +253,75 @@ def _store_find_result(
         ctx.variables[var_name] = value
 
 
-def handle_find_program(ctx: BuildContext, cmd: Command, args: list[str]) -> None:
-    """Handle find_program() command."""
+def handle_find_program(
+    ctx: BuildContext, cmd: Command, args: list[str], strict: bool
+) -> None:
+    """Handle find_program() command.
+
+    Only PATH is searched, so the options that change where to look aren't
+    supported.
+    """
     if len(args) < 2:
         return
+
+    parsed = _parse_find_args(args)
+    unsupported = parsed.unsupported
+    for keyword, values in (
+        ("HINTS", parsed.hints),
+        ("PATHS", parsed.paths),
+        ("PATH_SUFFIXES", parsed.suffixes),
+    ):
+        if values:
+            unsupported.append(keyword)
+    if parsed.no_default_path:
+        unsupported.append("NO_DEFAULT_PATH")
+    if "NO_SYSTEM_ENVIRONMENT_PATH" in args:
+        unsupported.append("NO_SYSTEM_ENVIRONMENT_PATH")
+    if parsed.names_per_dir and len(parsed.names) > 1:
+        unsupported.append("NAMES_PER_DIR")
+    ctx.check_unsupported_args(cmd, unsupported, strict)
 
     var_name = args[0]
     if _is_already_resolved(ctx, var_name):
         return
-    no_cache = "NO_CACHE" in args
-    # Parse arguments: find_program(VAR name1 [name2...] [NAMES name1...] [REQUIRED])
-    names: list[str] = []
-    required = False
-    arg_idx = 1
-    while arg_idx < len(args):
-        arg = args[arg_idx]
-        if arg == "REQUIRED":
-            required = True
-        elif arg == "NAMES":
-            # Collect names until next keyword or end
-            arg_idx += 1
-            while arg_idx < len(args) and args[arg_idx] not in (
-                "REQUIRED",
-                "PATHS",
-                "HINTS",
-                "DOC",
-            ):
-                names.append(args[arg_idx])
-                arg_idx += 1
-            continue
-        elif arg not in ("PATHS", "HINTS", "DOC", "NO_CACHE"):
-            names.append(arg)
-        arg_idx += 1
 
     found_path = None
-    for name in names:
+    for name in parsed.names:
         found_path = shutil.which(name)
         if found_path:
             break
 
     if found_path:
-        _store_find_result(ctx, var_name, found_path, no_cache)
+        _store_find_result(ctx, var_name, found_path, parsed.no_cache)
     else:
-        _store_find_result(ctx, var_name, f"{var_name}-NOTFOUND", no_cache)
-        if required:
-            raise FileNotFoundError(f"Could not find program: {' or '.join(names)}")
+        _store_find_result(ctx, var_name, f"{var_name}-NOTFOUND", parsed.no_cache)
+        if parsed.required:
+            raise FileNotFoundError(
+                f"Could not find program: {' or '.join(parsed.names)}"
+            )
 
 
-def handle_find_path(ctx: BuildContext, cmd: Command, args: list[str]) -> None:
+def handle_find_path(
+    ctx: BuildContext, cmd: Command, args: list[str], strict: bool
+) -> None:
     """Handle find_path() command."""
     if len(args) < 2:
         return
 
+    parsed = _parse_find_args(args)
+    ctx.check_unsupported_args(cmd, parsed.unsupported, strict)
+
     var_name = args[0]
     if _is_already_resolved(ctx, var_name):
         return
-    args, no_cache, no_default_path, names_per_dir = _pop_find_options(args)
-
-    names, paths, hints, suffixes, required = _parse_find_args(args)
 
     search_dirs = _search_dirs_with_defaults(
-        ctx, "path", hints, paths, no_default_path
+        ctx, "path", parsed.hints, parsed.paths, parsed.no_default_path
     )
 
     found_dir = None
-    for name, d in _name_dir_pairs(names, search_dirs, names_per_dir):
-        for suffix in [""] + suffixes:
+    for name, d in _name_dir_pairs(parsed.names, search_dirs, parsed.names_per_dir):
+        for suffix in [""] + parsed.suffixes:
             base_path = Path(d) / suffix
             if (base_path / name).exists():
                 found_dir = str(base_path.absolute())
@@ -320,14 +330,16 @@ def handle_find_path(ctx: BuildContext, cmd: Command, args: list[str]) -> None:
             break
 
     if found_dir:
-        _store_find_result(ctx, var_name, found_dir, no_cache)
+        _store_find_result(ctx, var_name, found_dir, parsed.no_cache)
     else:
-        _store_find_result(ctx, var_name, f"{var_name}-NOTFOUND", no_cache)
-        if required:
-            raise FileNotFoundError(f"Could not find path for: {', '.join(names)}")
+        _store_find_result(ctx, var_name, f"{var_name}-NOTFOUND", parsed.no_cache)
+        if parsed.required:
+            raise FileNotFoundError(f"Could not find path for: {', '.join(parsed.names)}")
 
 
-def handle_find_file(ctx: BuildContext, cmd: Command, args: list[str]) -> None:
+def handle_find_file(
+    ctx: BuildContext, cmd: Command, args: list[str], strict: bool
+) -> None:
     """Handle find_file() command.
 
     Like find_path but stores the full path to the file (including its name).
@@ -335,20 +347,20 @@ def handle_find_file(ctx: BuildContext, cmd: Command, args: list[str]) -> None:
     if len(args) < 2:
         return
 
+    parsed = _parse_find_args(args)
+    ctx.check_unsupported_args(cmd, parsed.unsupported, strict)
+
     var_name = args[0]
     if _is_already_resolved(ctx, var_name):
         return
-    args, no_cache, no_default_path, names_per_dir = _pop_find_options(args)
-
-    names, paths, hints, suffixes, required = _parse_find_args(args)
 
     search_dirs = _search_dirs_with_defaults(
-        ctx, "path", hints, paths, no_default_path
+        ctx, "path", parsed.hints, parsed.paths, parsed.no_default_path
     )
 
     found_file = None
-    for name, d in _name_dir_pairs(names, search_dirs, names_per_dir):
-        for suffix in [""] + suffixes:
+    for name, d in _name_dir_pairs(parsed.names, search_dirs, parsed.names_per_dir):
+        for suffix in [""] + parsed.suffixes:
             candidate = Path(d) / suffix / name
             if candidate.exists():
                 found_file = str(candidate.absolute())
@@ -357,11 +369,11 @@ def handle_find_file(ctx: BuildContext, cmd: Command, args: list[str]) -> None:
             break
 
     if found_file:
-        _store_find_result(ctx, var_name, found_file, no_cache)
+        _store_find_result(ctx, var_name, found_file, parsed.no_cache)
     else:
-        _store_find_result(ctx, var_name, f"{var_name}-NOTFOUND", no_cache)
-        if required:
-            raise FileNotFoundError(f"Could not find file for: {', '.join(names)}")
+        _store_find_result(ctx, var_name, f"{var_name}-NOTFOUND", parsed.no_cache)
+        if parsed.required:
+            raise FileNotFoundError(f"Could not find file for: {', '.join(parsed.names)}")
 
 
 def _library_extensions(ctx: BuildContext) -> list[str]:
@@ -414,21 +426,23 @@ def _find_library_file(
     return None
 
 
-def handle_find_library(ctx: BuildContext, cmd: Command, args: list[str]) -> None:
+def handle_find_library(
+    ctx: BuildContext, cmd: Command, args: list[str], strict: bool
+) -> None:
     """Handle find_library() command."""
     if len(args) < 2:
         return
 
+    parsed = _parse_find_args(args)
+    ctx.check_unsupported_args(cmd, parsed.unsupported, strict)
+
     var_name = args[0]
     if _is_already_resolved(ctx, var_name):
         return
-    args, no_cache, no_default_path, names_per_dir = _pop_find_options(args)
 
-    names, paths, hints, suffixes, required = _parse_find_args(args)
+    search_dirs = _search_dirs_with_defaults(ctx, "lib", parsed.hints, parsed.paths, parsed.no_default_path)
 
-    search_dirs = _search_dirs_with_defaults(ctx, "lib", hints, paths, no_default_path)
-
-    if platform.system() == "Darwin" and not no_default_path:
+    if platform.system() == "Darwin" and not parsed.no_default_path:
         default_framework_dirs = [
             "/System/Library/Frameworks",
             "/Library/Frameworks",
@@ -440,23 +454,23 @@ def handle_find_library(ctx: BuildContext, cmd: Command, args: list[str]) -> Non
     extensions = _library_extensions(ctx)
 
     found_lib: str | None = None
-    if names_per_dir:
+    if parsed.names_per_dir:
         for d in search_dirs:
-            for name in names:
-                found_lib = _find_library_file([d], suffixes, extensions, name)
+            for name in parsed.names:
+                found_lib = _find_library_file([d], parsed.suffixes, extensions, name)
                 if found_lib:
                     break
             if found_lib:
                 break
     else:
-        for name in names:
-            found_lib = _find_library_file(search_dirs, suffixes, extensions, name)
+        for name in parsed.names:
+            found_lib = _find_library_file(search_dirs, parsed.suffixes, extensions, name)
             if found_lib:
                 break
 
     if found_lib:
-        _store_find_result(ctx, var_name, found_lib, no_cache)
+        _store_find_result(ctx, var_name, found_lib, parsed.no_cache)
     else:
-        _store_find_result(ctx, var_name, f"{var_name}-NOTFOUND", no_cache)
-        if required:
-            raise FileNotFoundError(f"Could not find library: {', '.join(names)}")
+        _store_find_result(ctx, var_name, f"{var_name}-NOTFOUND", parsed.no_cache)
+        if parsed.required:
+            raise FileNotFoundError(f"Could not find library: {', '.join(parsed.names)}")

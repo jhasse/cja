@@ -3,6 +3,7 @@
 import hashlib
 import os
 import platform
+import re
 import shlex
 import shutil
 import subprocess
@@ -79,6 +80,7 @@ from .find_package import (
     handle_builtin_find_package,
     handle_find_package_handle_standard_args,
     setup_find_module_request,
+    unsupported_find_package_args,
 )
 from .frame import Frame
 from .parser import Command
@@ -233,6 +235,210 @@ def _parse_source_check_args(args: list[str]) -> tuple[str, str, list[str]]:
             continue
         i += 1
     return code, result_var, fail_regexes
+
+
+def _add_custom_command_target(
+    ctx: BuildContext, cmd: Command, args: list[str], strict: bool
+) -> None:
+    """Handle add_custom_command(TARGET <name> POST_BUILD|PRE_BUILD|PRE_LINK ...)."""
+    if len(args) < 3:
+        return
+    acc_target_name = ctx.expand_variables(args[1], strict, cmd.line)
+    acc_when = args[2]  # POST_BUILD, PRE_BUILD, or PRE_LINK
+    acc_commands: list[list[str]] = []
+    acc_section: str | None = None
+    acc_unsupported: list[str] = []
+    acc_expand_lists = False
+    for acc_arg in args[3:]:
+        if acc_arg in ("COMMAND",):
+            acc_section = acc_arg
+            acc_commands.append([])
+        elif acc_arg in ("VERBATIM", "USES_TERMINAL"):
+            acc_section = None
+        elif acc_arg == "COMMAND_EXPAND_LISTS":
+            acc_expand_lists = True
+            acc_section = None
+        elif acc_arg in (
+            "COMMENT",
+            "WORKING_DIRECTORY",
+            "BYPRODUCTS",
+            "JOB_POOL",
+            "JOB_SERVER_AWARE",
+        ):
+            # Only COMMENT, JOB_POOL and JOB_SERVER_AWARE
+            # are harmless to drop.
+            acc_section = acc_arg
+        elif acc_arg == "ARGS":
+            # Legacy CMake keyword; ignored.
+            pass
+        else:
+            expanded_acc = ctx.expand_variables(acc_arg, strict, cmd.line)
+            if acc_section == "COMMAND" and acc_commands:
+                acc_commands[-1].append(expanded_acc)
+            elif acc_section in ("WORKING_DIRECTORY", "BYPRODUCTS") and expanded_acc:
+                acc_unsupported.append(acc_section)
+    if acc_expand_lists and any(
+        ";" in a for c in acc_commands for a in c
+    ):
+        acc_unsupported.append("COMMAND_EXPAND_LISTS")
+    acc_target_exe = ctx.get_executable(acc_target_name)
+    acc_target_lib = ctx.get_library(acc_target_name)
+    acc_target_obj = acc_target_exe or acc_target_lib
+    # Only POST_BUILD steps of executables are generated.
+    if acc_commands and (
+        acc_when != "POST_BUILD"
+        or acc_target_lib is not None
+        or any(ct.name == acc_target_name for ct in ctx.custom_targets)
+    ):
+        acc_unsupported.append(acc_when)
+    ctx.check_unsupported_args(cmd, acc_unsupported, strict)
+    if acc_commands and acc_target_obj is not None:
+        if acc_when == "POST_BUILD":
+            acc_target_obj.post_build_commands.extend(acc_commands)
+        elif acc_when == "PRE_BUILD":
+            acc_target_obj.pre_build_commands.extend(acc_commands)
+        elif acc_when == "PRE_LINK":
+            acc_target_obj.pre_link_commands.extend(acc_commands)
+
+
+# The keywords of try_compile()'s signatures.
+_TRY_COMPILE_KEYWORDS = frozenset(
+    {
+        "SOURCES",
+        "OUTPUT_VARIABLE",
+        "CMAKE_FLAGS",
+        "COMPILE_DEFINITIONS",
+        "LINK_LIBRARIES",
+        "COPY_FILE",
+        "COPY_FILE_ERROR",
+        "LINK_OPTIONS",
+        "LINKER_LANGUAGE",
+        "PROJECT",
+        "SOURCE_DIR",
+        "BINARY_DIR",
+        "TARGET",
+        "SOURCE_FROM_CONTENT",
+        "SOURCE_FROM_VAR",
+        "SOURCE_FROM_FILE",
+        "NO_CACHE",
+        "NO_LOG",
+        "LOG_DESCRIPTION",
+        "C_STANDARD",
+        "C_STANDARD_REQUIRED",
+        "C_EXTENSIONS",
+        "CXX_STANDARD",
+        "CXX_STANDARD_REQUIRED",
+        "CXX_EXTENSIONS",
+        "OBJC_STANDARD",
+        "OBJC_STANDARD_REQUIRED",
+        "OBJC_EXTENSIONS",
+        "OBJCXX_STANDARD",
+        "OBJCXX_STANDARD_REQUIRED",
+        "OBJCXX_EXTENSIONS",
+        "CUDA_STANDARD",
+        "CUDA_STANDARD_REQUIRED",
+        "CUDA_EXTENSIONS",
+        "HIP_STANDARD",
+        "HIP_STANDARD_REQUIRED",
+        "HIP_EXTENSIONS",
+    }
+)
+
+
+def _parse_try_compile_args(
+    ctx: BuildContext, args: list[str]
+) -> tuple[Path, list[str], str, list[str]]:
+    """Parse try_compile().
+
+    Returns ``(bindir, sources, output_var, unsupported)``.
+    """
+    # CMake 3.25 made the binary directory optional.
+    if args[1] in _TRY_COMPILE_KEYWORDS:
+        bindir = ctx.build_dir / "CMakeFiles" / "CMakeScratch"
+        i = 1
+    else:
+        bindir = Path(args[1])
+        if not bindir.is_absolute():
+            bindir = ctx.current_source_dir / bindir
+        i = 2
+    bindir.mkdir(parents=True, exist_ok=True)
+
+    sources: list[str] = []
+    output_var = ""
+    try_unsupported: list[str] = []
+    if i < len(args) and args[i] not in _TRY_COMPILE_KEYWORDS:
+        src_or_dir = Path(args[i])
+        if not src_or_dir.is_absolute():
+            src_or_dir = ctx.current_source_dir / src_or_dir
+        if src_or_dir.is_dir():
+            # try_compile(<result> <bindir> <srcdir> <projectName> ...)
+            try_unsupported.append("PROJECT")
+        else:
+            # try_compile(<result> <bindir> <srcfile> ...)
+            sources.append(args[i])
+            i += 1
+    while i < len(args):
+        token = args[i]
+        if token == "SOURCES":
+            i += 1
+            while i < len(args) and args[i] not in _TRY_COMPILE_KEYWORDS:
+                sources.append(args[i])
+                i += 1
+            continue
+        if token == "OUTPUT_VARIABLE" and i + 1 < len(args):
+            output_var = args[i + 1]
+            i += 2
+            continue
+        if token in _TRY_COMPILE_KEYWORDS and token not in (
+            "NO_CACHE",
+            "NO_LOG",
+            "LOG_DESCRIPTION",
+        ):
+            try_unsupported.append(token)
+        i += 1
+    return bindir, sources, output_var, try_unsupported
+
+
+# FetchContent_Declare() options that change what is populated but aren't
+# implemented. Options that only affect logging or updates are accepted.
+_UNSUPPORTED_FETCHCONTENT_OPTIONS = frozenset(
+    {
+        "SOURCE_SUBDIR",
+        "DOWNLOAD_COMMAND",
+        "PATCH_COMMAND",
+        "UPDATE_COMMAND",
+        "FIND_PACKAGE_ARGS",
+        "OVERRIDE_FIND_PACKAGE",
+        "SYSTEM",
+        "DOWNLOAD_NO_EXTRACT",
+        "DOWNLOAD_NAME",
+        "SVN_REPOSITORY",
+        "HG_REPOSITORY",
+        "CVS_REPOSITORY",
+    }
+)
+
+
+def _unsupported_fetchcontent_args(args: list[str]) -> list[str]:
+    """Return the FetchContent_Declare() options cja would ignore."""
+
+    def values_after(keyword: str) -> list[str]:
+        values: list[str] = []
+        for value in args[args.index(keyword) + 1 :]:
+            if re.fullmatch(r"[A-Z][A-Z0-9_]*", value):
+                break
+            if value:
+                values.append(value)
+        return values
+
+    unsupported = [arg for arg in args if arg in _UNSUPPORTED_FETCHCONTENT_OPTIONS]
+    # Submodules aren't cloned.
+    if "GIT_SUBMODULES" in args and values_after("GIT_SUBMODULES"):
+        unsupported.append("GIT_SUBMODULES")
+    # Only the first URL is tried.
+    if "URL" in args and len(values_after("URL")) > 1:
+        unsupported.append("URL")
+    return unsupported
 
 
 def process_commands(
@@ -632,7 +838,7 @@ def process_commands(
 
             case "foreach":
                 endforeach_idx, loop_var, items, body = build_foreach_info(
-                    ctx, current_commands, frame.pc, args
+                    ctx, current_commands, frame.pc, args, strict
                 )
                 frame.pc = endforeach_idx + 1
                 stack.append(
@@ -664,6 +870,8 @@ def process_commands(
                 ctx.raise_syntax_error("Unexpected endmacro()", cmd.line)
 
             case "return":
+                if "PROPAGATE" in args and args[-1] != "PROPAGATE":
+                    ctx.check_unsupported_args(cmd, ["PROPAGATE"], strict)
                 # Find the innermost function or include frame (highest index).
                 # return() exits the nearest enclosing scope — an include() scope
                 # takes precedence over an enclosing function if it is closer.
@@ -824,6 +1032,16 @@ def process_commands(
                                 ctx.variables[f"{project_name}_VERSION_{suffix}"] = val
                                 ctx.variables[f"CMAKE_PROJECT_VERSION_{suffix}"] = val
 
+                    for keyword in ("DESCRIPTION", "HOMEPAGE_URL"):
+                        value = ""
+                        if keyword in args[1:]:
+                            kw_idx = args.index(keyword, 1)
+                            if kw_idx + 1 < len(args):
+                                value = args[kw_idx + 1]
+                        ctx.variables[f"PROJECT_{keyword}"] = value
+                        ctx.variables[f"{project_name}_{keyword}"] = value
+                        ctx.variables[f"CMAKE_PROJECT_{keyword}"] = value
+
                     # Like CMake, include these files as the final step of project().
                     project_include = ctx.variables.get("CMAKE_PROJECT_INCLUDE", "")
                     if project_include:
@@ -849,6 +1067,8 @@ def process_commands(
                 pass
 
             case "add_subdirectory":
+                if "SYSTEM" in args[1:]:
+                    ctx.check_unsupported_args(cmd, ["SYSTEM"], strict)
                 sub_exclude_from_all = "EXCLUDE_FROM_ALL" in args
                 args = [a for a in args if a not in ("EXCLUDE_FROM_ALL", "SYSTEM")]
                 if args:
@@ -955,6 +1175,9 @@ def process_commands(
 
             case "fetchcontent_declare":
                 if len(args) >= 2:
+                    ctx.check_unsupported_args(
+                        cmd, _unsupported_fetchcontent_args(args[1:]), strict
+                    )
                     name = args[0]
                     ctx.fetched_content[name.lower()] = FetchContentInfo(
                         name=name, args=args[1:]
@@ -967,14 +1190,25 @@ def process_commands(
                         pass
                     # Set variables even if not populated yet, as CMake does
                     # Actually, we should check our internal state
-                    source_dir = ctx.variables.get(f"{name}_SOURCE_DIR", "")
-                    binary_dir = ctx.variables.get(f"{name}_BINARY_DIR", "")
-                    populated = ctx.variables.get(f"{name}_POPULATED", "FALSE")
-                    ctx.variables[f"{name}_SOURCE_DIR"] = source_dir
-                    ctx.variables[f"{name}_BINARY_DIR"] = binary_dir
-                    ctx.variables[f"{name}_POPULATED"] = populated
+                    properties = {
+                        "SOURCE_DIR": ctx.variables.get(f"{name}_SOURCE_DIR", ""),
+                        "BINARY_DIR": ctx.variables.get(f"{name}_BINARY_DIR", ""),
+                        "POPULATED": ctx.variables.get(f"{name}_POPULATED", "FALSE"),
+                    }
+                    # FetchContent_GetProperties(<name> [SOURCE_DIR <var>] ...)
+                    # sets only the requested variables.
+                    out_vars = {
+                        key: args[i + 1]
+                        for i, key in enumerate(args[1:-1], 1)
+                        if key in properties
+                    } or {key: f"{name}_{key}" for key in properties}
+                    for key, out_var in out_vars.items():
+                        ctx.variables[out_var] = properties[key]
 
             case "fetchcontent_makeavailable" | "fetchcontent_populate":
+                if cmd.name == "fetchcontent_populate" and len(args) > 1:
+                    # FetchContent_Populate(<name> URL ... SOURCE_DIR ...)
+                    ctx.check_unsupported_args(cmd, [args[1]], strict)
                 stack.append(
                     Frame(
                         commands=None,
@@ -1016,6 +1250,8 @@ def process_commands(
                 if args:
                     module_name = args[0]
                     include_options = {arg.upper() for arg in args[1:]}
+                    if "RESULT_VARIABLE" in args[1:]:
+                        ctx.check_unsupported_args(cmd, ["RESULT_VARIABLE"], strict)
                     optional_include = "OPTIONAL" in include_options
                     known_modules = {
                         "CMakePackageConfigHelpers",
@@ -1389,6 +1625,8 @@ def process_commands(
             case "check_c_source_compiles" | "check_cxx_source_compiles":
                 # check_(c|cxx)_source_compiles(<code> <var> [FAIL_REGEX <re>...])
                 if len(args) >= 2:
+                    if "SRC_EXT" in args[2:]:
+                        ctx.check_unsupported_args(cmd, ["SRC_EXT"], strict)
                     code, result_var, fail_regexes = _parse_source_check_args(args)
                     language = (
                         "CXX" if cmd.name == "check_cxx_source_compiles" else "C"
@@ -1463,39 +1701,10 @@ int main() {{
                 # try_compile(<result> <bindir> SOURCES <src>... [OUTPUT_VARIABLE <var>])
                 if len(args) >= 2:
                     result_var = args[0]
-                    bindir = Path(args[1])
-                    if not bindir.is_absolute():
-                        bindir = ctx.current_source_dir / bindir
-                    bindir.mkdir(parents=True, exist_ok=True)
-
-                    sources: list[str] = []
-                    output_var = ""
-                    option_tokens = {
-                        "SOURCES",
-                        "OUTPUT_VARIABLE",
-                        "CMAKE_FLAGS",
-                        "COMPILE_DEFINITIONS",
-                        "LINK_LIBRARIES",
-                        "COPY_FILE",
-                        "COPY_FILE_ERROR",
-                        "LINK_OPTIONS",
-                        "LINKER_LANGUAGE",
-                    }
-                    i = 2
-                    while i < len(args):
-                        token = args[i]
-                        if token == "SOURCES":
-                            i += 1
-                            while i < len(args) and args[i] not in option_tokens:
-                                sources.append(args[i])
-                                i += 1
-                            continue
-                        if token == "OUTPUT_VARIABLE" and i + 1 < len(args):
-                            output_var = args[i + 1]
-                            i += 2
-                            continue
-                        # Ignore unsupported options for now.
-                        i += 1
+                    bindir, sources, output_var, try_unsupported = (
+                        _parse_try_compile_args(ctx, args)
+                    )
+                    ctx.check_unsupported_args(cmd, try_unsupported, strict)
 
                     success = True
                     compile_output = ""
@@ -1694,10 +1903,10 @@ int main() {{
                     ctx.set_cache(variable, "1" if found else "")
 
             case "add_library":
-                handle_add_library(ctx, cmd, args)
+                handle_add_library(ctx, cmd, args, strict)
 
             case "add_executable":
-                handle_add_executable(ctx, cmd, args)
+                handle_add_executable(ctx, cmd, args, strict)
 
             case "set_target_properties":
                 handle_set_target_properties(ctx, cmd, args, strict)
@@ -1717,7 +1926,7 @@ int main() {{
                 handle_get_directory_property(ctx, cmd, args, strict)
 
             case "get_filename_component":
-                handle_get_filename_component(ctx, args)
+                handle_get_filename_component(ctx, cmd, args, strict)
 
             case "get_target_property":
                 if len(args) >= 3:
@@ -1762,13 +1971,13 @@ int main() {{
                         ctx.variables[var_name] = f"{var_name}-NOTFOUND"
 
             case "target_link_libraries":
-                handle_target_link_libraries(ctx, cmd, args)
+                handle_target_link_libraries(ctx, cmd, args, strict)
 
             case "target_link_directories":
                 handle_target_link_directories(ctx, cmd, args, strict)
 
             case "target_sources":
-                handle_target_sources(ctx, args)
+                handle_target_sources(ctx, cmd, args, strict)
 
             case "target_compile_features":
                 handle_target_compile_features(ctx, args)
@@ -1908,7 +2117,7 @@ int main() {{
                         idx += 1
                         continue
                     if token == "INSTALL_PREFIX":
-                        # Accepted for compatibility, currently ignored.
+                        ctx.check_unsupported_args(cmd, [token], strict)
                         idx += 2 if idx + 1 < len(args) else 1
                         continue
                     idx += 1
@@ -2030,32 +2239,7 @@ int main() {{
             case "add_custom_command":
                 # Support TARGET form: add_custom_command(TARGET <name> POST_BUILD|PRE_BUILD|PRE_LINK COMMAND ...)
                 if args and args[0] == "TARGET":
-                    if len(args) >= 3:
-                        acc_target_name = ctx.expand_variables(args[1], strict, cmd.line)
-                        acc_when = args[2]  # POST_BUILD, PRE_BUILD, or PRE_LINK
-                        acc_commands: list[list[str]] = []
-                        acc_section: str | None = None
-                        for acc_arg in args[3:]:
-                            if acc_arg in ("COMMAND",):
-                                acc_section = acc_arg
-                                acc_commands.append([])
-                            elif acc_arg in ("VERBATIM", "COMMENT", "USES_TERMINAL", "COMMAND_EXPAND_LISTS"):
-                                acc_section = None
-                            else:
-                                expanded_acc = ctx.expand_variables(acc_arg, strict, cmd.line)
-                                if acc_section == "COMMAND" and acc_commands:
-                                    acc_commands[-1].append(expanded_acc)
-                        if acc_commands:
-                            acc_target_exe = ctx.get_executable(acc_target_name)
-                            acc_target_lib = ctx.get_library(acc_target_name)
-                            acc_target_obj = acc_target_exe or acc_target_lib
-                            if acc_target_obj is not None:
-                                if acc_when == "POST_BUILD":
-                                    acc_target_obj.post_build_commands.extend(acc_commands)
-                                elif acc_when == "PRE_BUILD":
-                                    acc_target_obj.pre_build_commands.extend(acc_commands)
-                                elif acc_when == "PRE_LINK":
-                                    acc_target_obj.pre_link_commands.extend(acc_commands)
+                    _add_custom_command_target(ctx, cmd, args, strict)
                 else:
                     # Minimal support: add_custom_command(OUTPUT ... COMMAND ... DEPENDS ... MAIN_DEPENDENCY ... WORKING_DIRECTORY ... VERBATIM)
                     outputs: list[str] = []
@@ -2065,6 +2249,8 @@ int main() {{
                     working_directory: str | None = None
                     verbatim = False
                     uses_terminal = False
+                    expand_lists = False
+                    cc_unsupported: list[str] = []
                     arg_idx = 0
                     current_section = None
                     while arg_idx < len(args):
@@ -2085,17 +2271,32 @@ int main() {{
                         elif arg == "USES_TERMINAL":
                             uses_terminal = True
                             current_section = None
+                        elif arg == "COMMAND_EXPAND_LISTS":
+                            expand_lists = True
+                            current_section = None
+                        elif arg in ("APPEND", "DEPENDS_EXPLICIT_ONLY", "CODEGEN"):
+                            cc_unsupported.append(arg)
+                            current_section = None
                         elif arg == "ARGS":
                             # Legacy CMake keyword; ignored.
                             pass
-                        elif arg in ("COMMENT", "COMMAND_EXPAND_LISTS", "DEPFILE", "JOB_POOL", "BYPRODUCTS"):
+                        elif arg in (
+                            "COMMENT",
+                            "DEPFILE",
+                            "JOB_POOL",
+                            "JOB_SERVER_AWARE",
+                            "BYPRODUCTS",
+                            "IMPLICIT_DEPENDS",
+                        ):
                             current_section = arg  # values for these are ignored
                         else:
                             arg = ctx.expand_variables(arg, strict, cmd.line)
                             if not arg:
                                 arg_idx += 1
                                 continue
-                            if current_section == "OUTPUT":
+                            if current_section in ("DEPFILE", "BYPRODUCTS", "IMPLICIT_DEPENDS"):
+                                cc_unsupported.append(current_section)
+                            elif current_section == "OUTPUT":
                                 # Make relative to build_dir or source_dir
                                 rel = make_relative(arg, ctx.build_dir)
                                 if rel == arg:
@@ -2129,6 +2330,9 @@ int main() {{
                                 working_directory = arg
                         arg_idx += 1
 
+                    if expand_lists and any(";" in a for c in command_list for a in c):
+                        cc_unsupported.append("COMMAND_EXPAND_LISTS")
+                    ctx.check_unsupported_args(cmd, cc_unsupported, strict)
                     if outputs and command_list:
                         ctx.custom_commands.append(
                             CustomCommand(
@@ -2157,6 +2361,8 @@ int main() {{
                 ct_uses_terminal = False
                 ct_comment = ""
                 ct_section: str | None = None
+                ct_expand_lists = False
+                ct_unsupported: list[str] = []
                 ct_idx = 1
                 while ct_idx < len(args):
                     arg = args[ct_idx]
@@ -2171,18 +2377,22 @@ int main() {{
                             ct_verbatim = True
                         elif arg == "USES_TERMINAL":
                             ct_uses_terminal = True
+                        else:
+                            ct_expand_lists = True
                         ct_section = None
                     elif arg == "ARGS":
                         # Legacy CMake keyword; ignored.
                         pass
-                    elif arg == "SOURCES":
-                        ct_section = "SOURCES"
+                    elif arg in ("SOURCES", "BYPRODUCTS", "JOB_POOL", "JOB_SERVER_AWARE"):
+                        ct_section = arg
                     else:
                         arg = ctx.expand_variables(arg, strict, cmd.line)
                         if not arg:
                             ct_idx += 1
                             continue
-                        if ct_section == "COMMAND":
+                        if ct_section == "BYPRODUCTS":
+                            ct_unsupported.append(ct_section)
+                        elif ct_section == "COMMAND":
                             ct_commands[-1].append(arg)
                         elif ct_section == "DEPENDS":
                             is_target = (
@@ -2204,6 +2414,9 @@ int main() {{
                         elif ct_section == "SOURCES":
                             pass  # Ignored, only for IDE integration
                     ct_idx += 1
+                if ct_expand_lists and any(";" in a for c in ct_commands for a in c):
+                    ct_unsupported.append("COMMAND_EXPAND_LISTS")
+                ctx.check_unsupported_args(cmd, ct_unsupported, strict)
 
                 ctx.custom_targets.append(
                     CustomTarget(
@@ -2275,13 +2488,33 @@ int main() {{
                             # Collect command args until next keyword
                             cmd_args = []
                             for a in args[cmd_idx + 1 :]:
-                                if a == "WORKING_DIRECTORY":
+                                if a in (
+                                    "WORKING_DIRECTORY",
+                                    "CONFIGURATIONS",
+                                    "COMMAND_EXPAND_LISTS",
+                                ):
                                     break
                                 cmd_args.append(a)
                             test_command = [
                                 ctx.expand_variables(a, strict, cmd.line)
                                 for a in cmd_args
                             ]
+                        test_unsupported: list[str] = []
+                        if "CONFIGURATIONS" in args:
+                            cfg_idx = args.index("CONFIGURATIONS")
+                            if args[cfg_idx + 1 : cfg_idx + 2] not in (
+                                [],
+                                [""],
+                                ["COMMAND"],
+                                ["WORKING_DIRECTORY"],
+                                ["COMMAND_EXPAND_LISTS"],
+                            ):
+                                test_unsupported.append("CONFIGURATIONS")
+                        if "COMMAND_EXPAND_LISTS" in args and any(
+                            ";" in a for a in test_command
+                        ):
+                            test_unsupported.append("COMMAND_EXPAND_LISTS")
+                        ctx.check_unsupported_args(cmd, test_unsupported, strict)
                         if "WORKING_DIRECTORY" in args:
                             wd_idx = args.index("WORKING_DIRECTORY")
                             if wd_idx + 1 < len(args):
@@ -2310,7 +2543,17 @@ int main() {{
             case "set_source_files_properties":
                 if "PROPERTIES" in args:
                     prop_idx = args.index("PROPERTIES")
-                    files = args[:prop_idx]
+                    # Source file properties apply to all directories, so the
+                    # DIRECTORY and TARGET_DIRECTORY scopes aren't needed.
+                    scope_idx = min(
+                        (
+                            args.index(kw)
+                            for kw in ("DIRECTORY", "TARGET_DIRECTORY")
+                            if kw in args[:prop_idx]
+                        ),
+                        default=prop_idx,
+                    )
+                    files = args[:scope_idx]
                     props = args[prop_idx + 1 :]
 
                     for filename in files:
@@ -2375,16 +2618,16 @@ int main() {{
                 pass
 
             case "find_program":
-                handle_find_program(ctx, cmd, args)
+                handle_find_program(ctx, cmd, args, strict)
 
             case "find_path":
-                handle_find_path(ctx, cmd, args)
+                handle_find_path(ctx, cmd, args, strict)
 
             case "find_file":
-                handle_find_file(ctx, cmd, args)
+                handle_find_file(ctx, cmd, args, strict)
 
             case "find_library":
-                handle_find_library(ctx, cmd, args)
+                handle_find_library(ctx, cmd, args, strict)
 
             case "find_package_handle_standard_args":
                 handle_find_package_handle_standard_args(ctx, cmd, args)
@@ -2487,6 +2730,9 @@ int main() {{
 
             case "find_package":
                 if args:
+                    ctx.check_unsupported_args(
+                        cmd, unsupported_find_package_args(args), strict
+                    )
                     package_name = args[0]
                     upper_args = {arg.upper() for arg in args[1:]}
                     required = "REQUIRED" in upper_args
@@ -2696,6 +2942,8 @@ int main() {{
                         flex_defines_file = args[arg_idx + 1]
                         arg_idx += 2
                     else:
+                        if token == "OPTIONS":
+                            ctx.check_unsupported_args(cmd, [token], strict)
                         arg_idx += 1
 
                 flex_exe = ctx.variables.get("FLEX_EXECUTABLE", "") or "flex"
@@ -2809,9 +3057,9 @@ int main() {{
                     elif token == "REPORT_FILE" and arg_idx + 1 < len(args):
                         bison_report_file = args[arg_idx + 1]
                         arg_idx += 2
-                    elif token in ("VERBOSE", "REPORT"):
-                        arg_idx += 1
                     else:
+                        if token in ("VERBOSE", "REPORT", "OPTIONS"):
+                            ctx.check_unsupported_args(cmd, [token], strict)
                         arg_idx += 1
 
                 bison_exe = ctx.variables.get("BISON_EXECUTABLE", "") or "bison"
@@ -2938,6 +3186,7 @@ int main() {{
                             "NO_CMAKE_PATH",
                             "NO_CMAKE_ENVIRONMENT_PATH",
                             "IMPORTED_TARGET",
+                            "GLOBAL",
                         )
                     ]
 
@@ -3270,11 +3519,15 @@ int main() {{
                         "OUTPUT_FILE",
                         "ERROR_FILE",
                         "TIMEOUT",
-                        "COMMAND_ECHO",
-                        "ENCODING",
+                        "RESULTS_VARIABLE",
                     ):
-                        # Skip unsupported options and their values
+                        ctx.check_unsupported_args(cmd, [arg], strict)
                         arg_idx += 1
+                    elif arg in ("COMMAND_ECHO", "ENCODING"):
+                        # Skip options without effect on the result
+                        arg_idx += 1
+                    elif arg in ("ECHO_OUTPUT_VARIABLE", "ECHO_ERROR_VARIABLE"):
+                        pass
                     elif arg == "COMMAND_ERROR_IS_FATAL":
                         arg_idx += 1
                         if arg_idx < len(args):
@@ -3288,6 +3541,9 @@ int main() {{
 
                 if current_command:
                     commands_list.append(current_command)
+                if len(commands_list) > 1:
+                    # The commands should be connected by pipes.
+                    ctx.check_unsupported_args(cmd, ["COMMAND"], strict)
 
                 # Execute the commands (sequentially if multiple)
                 if commands_list:
