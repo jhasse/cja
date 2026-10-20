@@ -57,7 +57,8 @@ def normalize(path: Path) -> Path:
 
 
 def is_cmake_file(path: Path) -> bool:
-    return path.name == "CMakeLists.txt" or path.suffix == ".cmake"
+    name = path.name.lower()
+    return name == "cmakelists.txt" or name.endswith(".cmake")
 
 
 @dataclass
@@ -229,7 +230,7 @@ class Workspace:
         # A module: look in the workspace, then in cja's bundled modules
         filename = f"{name}.cmake"
         for file in sorted(self.files, key=str):
-            if file.name == filename:
+            if file.name.lower() == filename.lower():
                 return file
         bundled = BUNDLED_MODULES / filename
         return bundled if bundled.is_file() else None
