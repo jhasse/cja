@@ -164,7 +164,9 @@ def describe(workspace: Workspace, locations: Any, root: Path) -> list[tuple[str
         parsed = workspace.get(location.path)
         assert parsed is not None
         text = parsed.text[location.start : location.end]
-        result.append((location.path.relative_to(root).as_posix(), text))
+        # Workspace paths are normalized (lower-cased on Windows): restore the real spelling
+        actual = next(p for p in root.rglob("*") if normalize(p) == location.path)
+        result.append((actual.relative_to(root).as_posix(), text))
     return result
 
 
