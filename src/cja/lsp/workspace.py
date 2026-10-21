@@ -57,7 +57,8 @@ def normalize(path: Path) -> Path:
 
 
 def is_cmake_file(path: Path) -> bool:
-    return path.name == "CMakeLists.txt" or path.suffix == ".cmake"
+    name = path.name.lower()
+    return name == "cmakelists.txt" or name.endswith(".cmake")
 
 
 @dataclass
@@ -104,6 +105,7 @@ class Workspace:
 
     def load(self, path: Path) -> ParsedFile | None:
         """Parse a file from disk."""
+        path = normalize(path)
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -112,11 +114,13 @@ class Workspace:
         return self.update(path, text)
 
     def update(self, path: Path, text: str) -> ParsedFile:
+        path = normalize(path)
         parsed = parse(text)
         self.files[path] = parsed
         return parsed
 
     def get(self, path: Path) -> ParsedFile | None:
+        path = normalize(path)
         return self.files.get(path) or self.load(path)
 
     def functions(self) -> dict[str, str]:
@@ -138,10 +142,12 @@ class Workspace:
 
     def _ordered_files(self, first: Path) -> list[tuple[Path, ParsedFile]]:
         """All files, starting with ``first``."""
+        first = normalize(first)
         files = sorted(self.files.items(), key=lambda item: str(item[0]))
         return sorted(files, key=lambda item: item[0] != first)
 
     def symbol_at(self, path: Path, offset: int) -> Symbol | None:
+        path = normalize(path)
         parsed = self.get(path)
         if parsed is None:
             return None
@@ -172,6 +178,7 @@ class Workspace:
         return Symbol(kind, name, scoped)
 
     def definitions(self, path: Path, offset: int) -> list[Location]:
+        path = normalize(path)
         symbol = self.symbol_at(path, offset)
         if symbol is None:
             return []
@@ -223,7 +230,7 @@ class Workspace:
         # A module: look in the workspace, then in cja's bundled modules
         filename = f"{name}.cmake"
         for file in sorted(self.files, key=str):
-            if file.name == filename:
+            if file.name.lower() == filename.lower():
                 return file
         bundled = BUNDLED_MODULES / filename
         return bundled if bundled.is_file() else None
@@ -231,6 +238,7 @@ class Workspace:
     def references(
         self, path: Path, offset: int, include_declaration: bool
     ) -> list[Location]:
+        path = normalize(path)
         symbol = self.symbol_at(path, offset)
         if symbol is None or symbol.kind == "file":
             return []
@@ -285,6 +293,7 @@ class Workspace:
 
     def hover(self, path: Path, offset: int) -> str | None:
         """Return Markdown describing the symbol at the offset."""
+        path = normalize(path)
         symbol = self.symbol_at(path, offset)
         if symbol is None or symbol.kind == "file":
             return None
@@ -324,6 +333,7 @@ class Workspace:
         return "\n\n---\n\n".join(parts)
 
     def completions(self, path: Path, offset: int) -> list[dict[str, Any]]:
+        path = normalize(path)
         parsed = self.get(path)
         if parsed is None:
             return []
