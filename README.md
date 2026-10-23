@@ -29,6 +29,12 @@ Or, if you're in a managed Python environment:
 pipx install cja
 ```
 
+### Bash completion
+
+Distribution packages install it automatically. Otherwise copy
+[completions/cja.bash](completions/cja.bash) to `~/.local/share/bash-completion/completions/cja`.
+Besides subcommands and options it completes the targets of `cja build`.
+
 ## Comparison to CMake
 
 * The `build.ninja` file is generated in your project root, not in the build directory. To allow multiple build

@@ -25,9 +25,9 @@ requires = ["uv_build>=0.9.26"]
 build-backend = "uv_build"
 
 [tool.uv.build-backend]
-# Ship the test suite (and the example projects it builds) in the sdist, so
-# that distributions can run it.
-source-include = ["tests/**", "examples/**"]
+# Ship the test suite (and the example projects it builds) and the shell
+# completion in the sdist, so that distributions can run and install them.
+source-include = ["tests/**", "examples/**", "completions/**"]
 source-exclude = ["examples/*/build*"]
 
 [dependency-groups]

@@ -52,6 +52,7 @@ of a phony "test" Ninja target instead of a separate tool like CTest.
 %install
 %pyproject_install
 %pyproject_save_files -l cja
+install -Dpm 0644 completions/cja.bash %{buildroot}%{bash_completions_dir}/cja
 
 
 %check
@@ -65,6 +66,7 @@ done
 %files -f %{pyproject_files}
 %doc README.md
 %{_bindir}/cja
+%{bash_completions_dir}/cja
 
 
 %changelog
