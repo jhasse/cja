@@ -169,3 +169,17 @@ default. It runs on save with `configureOnSave`, or when the client sends the `c
 | `buildDir`        | `"build"` | Build directory used for configuring         |
 | `strict`          | `true`    | Configure with `--strict`                    |
 | `configureArgs`   | `[]`      | Additional arguments, e.g. `["-DFOO=ON"]`    |
+
+## Building the RPM
+
+[cja.spec](cja.spec) builds an RPM for Fedora. To build one from the working tree with
+[mock](https://rpm-software-management.github.io/mock/):
+
+```sh
+uv build --sdist -o dist
+mock --buildsrpm --spec cja.spec --sources dist --resultdir rpm
+mock --rebuild rpm/cja-*.src.rpm --resultdir rpm
+```
+
+`Version` in the spec must match the version in [pyproject.toml](pyproject.toml). The test suite runs during the
+build; tests that download dependencies are skipped.
