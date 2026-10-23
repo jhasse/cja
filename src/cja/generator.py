@@ -114,16 +114,10 @@ def _infer_compiler_id(compiler: str) -> str:
         tool = parts[1]
     base = Path(tool).name.lower()
 
-    if base in ("clang", "clang++", "clang-cl") or "clang" in base:
+    if "clang" in base:
         return "Clang"
     if base in ("gcc", "g++") or base.startswith(("gcc-", "g++-")):
         return "GNU"
-    if base in ("cl", "cl.exe"):
-        return "MSVC"
-    if base in ("icx", "icpx", "dpcpp"):
-        return "IntelLLVM"
-    if base in ("icc", "icpc"):
-        return "Intel"
 
     # Fallback for generic compiler driver names like cc/c++.
     try:
@@ -139,12 +133,6 @@ def _infer_compiler_id(compiler: str) -> str:
         return "Clang"
     if "gcc" in out or "gnu" in out:
         return "GNU"
-    if "microsoft" in out or "msvc" in out:
-        return "MSVC"
-    if "intel" in out and ("llvm" in out or "oneapi" in out):
-        return "IntelLLVM"
-    if "intel" in out:
-        return "Intel"
 
     return "Unknown"
 

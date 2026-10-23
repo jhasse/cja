@@ -155,28 +155,21 @@ def _check_source_compiles(
     required_includes = _as_list("CMAKE_REQUIRED_INCLUDES", split_words=False)
     required_link_options = _as_list("CMAKE_REQUIRED_LINK_OPTIONS")
     required_libraries = _as_list("CMAKE_REQUIRED_LIBRARIES")
-    compiler_name = Path(compiler).name.lower()
-    msvc_like = compiler_name in {"cl", "cl.exe"} or compiler_name.startswith(
-        "clang-cl"
-    )
-    if not msvc_like:
-        # GNU-like command lines take libraries as -lfoo or as file paths.
-        # CMAKE_REQUIRED_LIBRARIES entries may be bare names ("dl", "m"),
-        # ".lib" names (on Windows), file paths, or already-formed flags;
-        # translate the first two while leaving the rest untouched.
-        translated_libraries: list[str] = []
-        for lib in required_libraries:
-            if lib.startswith("-") or "/" in lib or os.sep in lib:
-                translated_libraries.append(lib)
-            elif lib.lower().endswith(".lib") and Path(lib).name == lib:
-                translated_libraries.append(f"-l{lib[:-4]}")
-            elif Path(lib).exists() or lib.endswith(
-                (".a", ".so", ".dylib", ".o")
-            ):
-                translated_libraries.append(lib)
-            else:
-                translated_libraries.append(f"-l{lib}")
-        required_libraries = translated_libraries
+    # The compiler takes libraries as -lfoo or as file paths.
+    # CMAKE_REQUIRED_LIBRARIES entries may be bare names ("dl", "m"), ".lib"
+    # names (on Windows), file paths, or already-formed flags; translate the
+    # first two while leaving the rest untouched.
+    translated_libraries: list[str] = []
+    for lib in required_libraries:
+        if lib.startswith("-") or "/" in lib or os.sep in lib:
+            translated_libraries.append(lib)
+        elif lib.lower().endswith(".lib") and Path(lib).name == lib:
+            translated_libraries.append(f"-l{lib[:-4]}")
+        elif Path(lib).exists() or lib.endswith((".a", ".so", ".dylib", ".o")):
+            translated_libraries.append(lib)
+        else:
+            translated_libraries.append(f"-l{lib}")
+    required_libraries = translated_libraries
 
     # STATIC_LIBRARY means "compile only" (no linking), matching CMake's
     # CMAKE_TRY_COMPILE_TARGET_TYPE handling.

@@ -173,11 +173,10 @@ def test_status_marker_cp1252_fallback(monkeypatch) -> None:
         ("GNU", "-flto=auto"),
         ("Clang", "-flto=thin"),
         ("AppleClang", "-flto=thin"),
-        ("IntelLLVM", "-flto=auto"),
     ],
 )
 def test_ipo_flag(compiler_id: str, expected: str) -> None:
-    """Clang uses ThinLTO, every other compiler -flto=auto."""
+    """Clang and AppleClang use ThinLTO, GCC -flto=auto."""
     variables = {
         "CMAKE_C_COMPILER_ID": compiler_id,
         "CMAKE_CXX_COMPILER_ID": compiler_id,
