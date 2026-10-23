@@ -1,6 +1,8 @@
 """Tests for CMAKE_BUILD_TYPE support."""
 
 import platform
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -191,6 +193,36 @@ def test_ipo_release_variable_not_applied_to_debug(tmp_path: Path) -> None:
     build_ninja = source_dir / "build.ninja"
     content = build_ninja.read_text()
     assert "-flto" not in content
+
+
+@pytest.mark.skipif(
+    shutil.which("clang") is None or shutil.which("ninja") is None,
+    reason="clang or ninja is not installed",
+)
+def test_ipo_uses_thin_lto_with_clang(tmp_path: Path) -> None:
+    """Test IPO uses ThinLTO with Clang, like CMake, and the result links."""
+    source_dir = tmp_path / "hello"
+    copy_unignored_tree(EXAMPLES_DIR / "hello", source_dir)
+
+    cmake_file = source_dir / "CMakeLists.txt"
+    content = cmake_file.read_text()
+    content = content.replace(
+        "project(hello)",
+        "project(hello)\n"
+        "set(CMAKE_BUILD_TYPE Release)\n"
+        "set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)",
+    )
+    cmake_file.write_text(content)
+
+    configure(
+        source_dir,
+        "build",
+        variables={"CMAKE_C_COMPILER": "clang", "CMAKE_CXX_COMPILER": "clang++"},
+    )
+
+    content = (source_dir / "build.ninja").read_text()
+    assert "-flto=thin" in content
+    subprocess.run(["ninja", "-f", "build.ninja"], cwd=source_dir, check=True)
 
 
 def test_ipo_uses_lld_link_on_windows(tmp_path: Path) -> None:

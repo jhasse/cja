@@ -97,6 +97,7 @@ from .utils import (
     archive_filename_from_url,
     extract_archive,
     flatten_single_extracted_subdir,
+    ipo_flag,
     is_truthy,
     make_relative,
     split_unquoted_list_args,
@@ -1536,7 +1537,8 @@ def process_commands(
                     else:
                         arg_idx += 1
 
-                # Check if LTO is supported by trying to compile with -flto
+                # Check if LTO is supported by trying to compile with the flag
+                # the generator uses
                 supported = False
                 error_msg = ""
                 try:
@@ -1546,7 +1548,13 @@ def process_commands(
                         f.write(b"int main() { return 0; }\n")
                         temp_src = f.name
                     temp_out = temp_src + ".out"
-                    cmd = [ctx.c_compiler, "-flto", "-o", temp_out, temp_src]
+                    cmd = [
+                        ctx.c_compiler,
+                        ipo_flag(ctx.variables),
+                        "-o",
+                        temp_out,
+                        temp_src,
+                    ]
                     # Match the linker flags and ordering used by the generator.
                     for name in ("CMAKE_EXE_LINKER_FLAGS", "CMAKE_LINKER_FLAGS"):
                         cmd.extend(shlex.split(ctx.variables.get(name, "")))

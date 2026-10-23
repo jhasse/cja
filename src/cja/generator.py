@@ -23,6 +23,7 @@ from .parser import Command
 from .syntax import Test
 from .targets import Executable, Library
 from .utils import (
+    ipo_flag,
     is_truthy,
     is_verbatim_include,
     make_relative,
@@ -890,13 +891,7 @@ def generate_ninja(
     ipo_flags = ""
     ipo_link_flags = ""
     if ipo_enabled:
-        c_id = ctx.variables.get("CMAKE_C_COMPILER_ID", "")
-        cxx_id = ctx.variables.get("CMAKE_CXX_COMPILER_ID", "")
-        # GCC supports parallel LTO partitioning with -flto=auto.
-        if c_id == "GNU" or cxx_id == "GNU":
-            ipo_flags = "-flto=auto"
-        else:
-            ipo_flags = "-flto"
+        ipo_flags = ipo_flag(ctx.variables)
         ipo_link_flags = ipo_flags
         # link.exe can't read LLVM bitcode objects; lld-link performs the LTO step.
         if platform.system() == "Windows":

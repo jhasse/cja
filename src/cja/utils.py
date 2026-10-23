@@ -304,6 +304,19 @@ def is_truthy(value: str) -> bool:
     return True
 
 
+def ipo_flag(variables: dict[str, str]) -> str:
+    """Return the compiler flag that enables interprocedural optimization."""
+    compiler_ids = (
+        variables.get("CMAKE_C_COMPILER_ID", ""),
+        variables.get("CMAKE_CXX_COMPILER_ID", ""),
+    )
+    # Like CMake, use ThinLTO with Clang: it links much faster than full LTO.
+    if "Clang" in compiler_ids or "AppleClang" in compiler_ids:
+        return "-flto=thin"
+    # GCC supports parallel LTO partitioning with -flto=auto.
+    return "-flto=auto"
+
+
 def is_constant_truthy(value: str) -> bool:
     """Check if a literal constant is truthy."""
     upper = value.upper()

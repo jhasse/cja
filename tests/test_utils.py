@@ -4,9 +4,12 @@ import tarfile
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from cja.utils import (
     archive_filename_from_url,
     extract_archive,
+    ipo_flag,
     make_relative,
     status_marker,
     strip_generator_expressions,
@@ -162,3 +165,21 @@ def test_status_marker_cp1252_fallback(monkeypatch) -> None:
     monkeypatch.setattr("cja.utils.sys.stdout", SimpleNamespace(encoding="cp1252"))
     assert status_marker(True) == "+"
     assert status_marker(False) == "x"
+
+
+@pytest.mark.parametrize(
+    "compiler_id, expected",
+    [
+        ("GNU", "-flto=auto"),
+        ("Clang", "-flto=thin"),
+        ("AppleClang", "-flto=thin"),
+        ("IntelLLVM", "-flto=auto"),
+    ],
+)
+def test_ipo_flag(compiler_id: str, expected: str) -> None:
+    """Clang uses ThinLTO, every other compiler -flto=auto."""
+    variables = {
+        "CMAKE_C_COMPILER_ID": compiler_id,
+        "CMAKE_CXX_COMPILER_ID": compiler_id,
+    }
+    assert ipo_flag(variables) == expected
