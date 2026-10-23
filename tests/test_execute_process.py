@@ -327,8 +327,8 @@ def test_execute_process_pipeline() -> None:
     """Multiple COMMANDs share the error output, and each one has a result."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
     # No ";" as that would split the arguments.
-    first = "import sys\nsys.stderr.write('e1 ')\nsys.exit(3)"
-    last = "import sys\nprint(repr(sys.stdin.read()))\nsys.stderr.write('e2')"
+    first = "import sys\nsys.stderr.write('e1\\n')\nsys.exit(3)"
+    last = "import sys\nprint(repr(sys.stdin.read()))\nsys.stderr.write('e2\\n')"
     commands = [
         Command(
             name="execute_process",
@@ -345,7 +345,8 @@ def test_execute_process_pipeline() -> None:
     process_commands(commands, ctx)
 
     assert ctx.variables["OUT"].strip() == "''"
-    assert ctx.variables["ERR"] == "e1 e2"
+    # The commands run concurrently, so their errors can come in any order.
+    assert sorted(ctx.variables["ERR"].splitlines()) == ["e1", "e2"]
     assert ctx.variables["RES"] == "0"
     assert ctx.variables["ALL"] == "3;1;0"
 
