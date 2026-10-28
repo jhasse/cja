@@ -284,3 +284,32 @@ def test_circular_static_libraries_are_repeated(tmp_path: Path) -> None:
         f"$builddir/libb{LIB_EXT}",
     ]
     assert "-lm" in content
+
+
+def test_shared_library_links_its_libraries(tmp_path: Path) -> None:
+    """A SHARED library links its own libraries, also ones defined after it."""
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    commands = [
+        Command(name="add_library", args=["core", "SHARED", "core.cpp"], line=1),
+        Command(
+            name="target_link_libraries",
+            args=["core", "PRIVATE", "m", "helper"],
+            line=2,
+        ),
+        Command(name="add_library", args=["helper", "STATIC", "helper.cpp"], line=3),
+    ]
+    process_commands(commands, ctx)
+
+    ninja_file = tmp_path / "build.ninja"
+    generate_ninja(ctx, ninja_file, "build")
+    content = re.sub(r" \$\n +", " ", ninja_file.read_text())
+
+    edge = re.search(
+        r"^build \$builddir/\w*core\.\w+: solink_cxx (.*)\n((?:  .*\n)*)",
+        content,
+        re.MULTILINE,
+    )
+    assert edge is not None
+    assert f"$builddir/libhelper{LIB_EXT}" in edge.group(1).split()
+    assert "-lm" in edge.group(2)
+

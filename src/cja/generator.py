@@ -1162,6 +1162,9 @@ def generate_ninja(
         lib_outputs: dict[str, str] = {}
         exe_outputs: dict[str, str] = {}
         object_lib_objects: dict[str, list[str]] = {}
+        # Shared/module libraries to link: (library, output, rule, objects,
+        # order-only dependencies, MSVC runtime flag)
+        shared_links: list[tuple[Library, str, str, list[str], list[str], str | None]] = []
         custom_command_outputs: set[str] = set()
 
         def _output_prefix(binary_dir: str) -> str:
@@ -1547,6 +1550,82 @@ def generate_ninja(
                 members = list(reversed(component))
                 ordered.extend(members * 2 if len(members) > 1 else members)
             return ordered
+
+        def link_libraries_inputs_and_flags(
+            target: Library | Executable, expanded_link_libraries: list[str]
+        ) -> tuple[list[str], list[str]]:
+            """Link inputs (archives, objects) and flags for linking a target
+            against its (ordered) link libraries."""
+            link_inputs: list[str] = []
+            link_flags: list[str] = []
+
+            # Propagate link directories from dependencies
+            link_directories = list(target.link_directories)
+            for lib_name in expanded_link_libraries:
+                linked_lib = ctx.get_library(lib_name)
+                if linked_lib:
+                    for link_dir in linked_lib.public_link_directories:
+                        if link_dir not in link_directories:
+                            link_directories.append(link_dir)
+
+            for link_dir in link_directories:
+                link_flags.append(
+                    _quote_if_spaced(f"-L{_ninja_flag_path(link_dir, ctx.source_dir)}")
+                )
+            link_flags.extend(
+                _dependency_link_options(ctx, target.link_options, expanded_link_libraries)
+            )
+            link_flags.extend(split_flags(target.properties.get("LINK_FLAGS", "")))
+            for lib_name in expanded_link_libraries:
+                linked_lib = ctx.get_library(lib_name)
+                if linked_lib and linked_lib.lib_type == "INTERFACE":
+                    # Interface libraries contribute usage requirements only.
+                    continue
+                if lib_name in object_lib_objects:
+                    # Object library: add object files directly
+                    link_inputs.extend(object_lib_objects[lib_name])
+                elif lib_name in lib_outputs:
+                    # Static or shared library: add its output
+                    link_inputs.append(lib_outputs[lib_name])
+                elif lib_name in ctx.imported_targets:
+                    # Imported target (e.g., Threads::Threads): add link flags
+                    imported = ctx.imported_targets[lib_name]
+                    if imported.libs:
+                        link_flags.append(_format_imported_flags(imported.libs))
+                    gtest_vars = {
+                        "GTest::gtest_main": ("GTEST_MAIN_LIBRARIES", "GTEST_LIBRARIES"),
+                        "GTest::gtest": ("GTEST_LIBRARIES",),
+                    }.get(lib_name, ())
+                    for var in gtest_vars:
+                        # In config mode these name the imported targets, whose
+                        # IMPORTED_LOCATION is already in imported.libs.
+                        link_flags.extend(
+                            lib
+                            for lib in ctx.variables.get(var, "").split(";")
+                            if lib and "::" not in lib
+                        )
+                else:
+                    # Generic library name or path
+                    if (
+                        lib_name.startswith(("-", "$"))
+                        or "/" in lib_name
+                        or lib_name.endswith(
+                            (".a", ".so", ".dylib", ".lib", ".dll", ".o", ".obj")
+                        )
+                        or ".so." in lib_name
+                    ):
+                        framework_flags = framework_link_flags(lib_name)
+                        if framework_flags:
+                            link_flags.extend(framework_flags)
+                        elif lib_name.startswith(("-", "$")):
+                            # Flags are used verbatim, like CMake does; pkg-config
+                            # results such as "-L<dir> -lpng16" hold several.
+                            link_flags.append(lib_name)
+                        else:
+                            link_flags.append(_quote_if_spaced(lib_name))
+                    else:
+                        link_flags.append(f"-l{lib_name}")
+            return link_inputs, link_flags
 
         def _collect_directory_property_chain(
             target_dir: Path, prop_name: str
@@ -2006,28 +2085,32 @@ def generate_ninja(
                 if linker_language in ("C", "CXX"):
                     uses_cxx = linker_language == "CXX"
                 link_rule = "solink_cxx" if uses_cxx else "solink"
-                lib_link_options = _dependency_link_options(
-                    ctx, lib.link_options, order_link_libraries(lib.link_libraries)
+                # Linked once the outputs of all libraries are known, as
+                # libraries defined later can be among the dependencies.
+                shared_links.append(
+                    (lib, lib_name, link_rule, objects, lib_dep_order_only, runtime_flag)
                 )
-                lib_link_options.extend(split_flags(lib.properties.get("LINK_FLAGS", "")))
-                if runtime_flag:
-                    lib_link_options.append(_MSVC_RUNTIME_LINK_FLAG)
-                n.build(
-                    lib_name,
-                    link_rule,
-                    objects,
-                    order_only=lib_dep_order_only or None,
-                    variables={"libs": " ".join(lib_link_options)}
-                    if lib_link_options
-                    else None,
-                )
-                n.newline()
                 lib_outputs[lib.name] = lib_name
 
         # Second pass for aliases to map them to original outputs
         for lib in ctx.libraries:
             if lib.is_alias and lib.alias_for in lib_outputs:
                 lib_outputs[lib.name] = lib_outputs[lib.alias_for]
+
+        for lib, lib_name, link_rule, objects, order_only, runtime_flag in shared_links:
+            lib_link_inputs, lib_link_flags = link_libraries_inputs_and_flags(
+                lib, order_link_libraries(lib.link_libraries)
+            )
+            if runtime_flag:
+                lib_link_flags.append(_MSVC_RUNTIME_LINK_FLAG)
+            n.build(
+                lib_name,
+                link_rule,
+                [*objects, *lib_link_inputs],
+                order_only=order_only or None,
+                variables={"libs": " ".join(lib_link_flags)} if lib_link_flags else None,
+            )
+            n.newline()
 
         # Collect default targets (libraries that produce real output files)
         default_targets: list[str] = [
@@ -2271,74 +2354,10 @@ def generate_ninja(
                 )
 
             # Add linked libraries to inputs
-            link_inputs = objects.copy()
-            link_flags: list[str] = []
-
-            # Propagate link directories from dependencies
-            for lib_name in expanded_link_libraries:
-                linked_lib = ctx.get_library(lib_name)
-                if linked_lib:
-                    for link_dir in linked_lib.public_link_directories:
-                        if link_dir not in exe.link_directories:
-                            exe.link_directories.append(link_dir)
-
-            for link_dir in exe.link_directories:
-                link_flags.append(
-                    _quote_if_spaced(f"-L{_ninja_flag_path(link_dir, ctx.source_dir)}")
-                )
-            link_flags.extend(
-                _dependency_link_options(ctx, exe.link_options, expanded_link_libraries)
+            lib_link_inputs, link_flags = link_libraries_inputs_and_flags(
+                exe, expanded_link_libraries
             )
-            link_flags.extend(split_flags(exe.properties.get("LINK_FLAGS", "")))
-            for lib_name in expanded_link_libraries:
-                linked_lib = ctx.get_library(lib_name)
-                if linked_lib and linked_lib.lib_type == "INTERFACE":
-                    # Interface libraries contribute usage requirements only.
-                    continue
-                if lib_name in object_lib_objects:
-                    # Object library: add object files directly
-                    link_inputs.extend(object_lib_objects[lib_name])
-                elif lib_name in lib_outputs:
-                    # Static library: add archive
-                    link_inputs.append(lib_outputs[lib_name])
-                elif lib_name in ctx.imported_targets:
-                    # Imported target (e.g., Threads::Threads): add link flags
-                    imported = ctx.imported_targets[lib_name]
-                    if imported.libs:
-                        link_flags.append(_format_imported_flags(imported.libs))
-                    gtest_vars = {
-                        "GTest::gtest_main": ("GTEST_MAIN_LIBRARIES", "GTEST_LIBRARIES"),
-                        "GTest::gtest": ("GTEST_LIBRARIES",),
-                    }.get(lib_name, ())
-                    for var in gtest_vars:
-                        # In config mode these name the imported targets, whose
-                        # IMPORTED_LOCATION is already in imported.libs.
-                        link_flags.extend(
-                            lib
-                            for lib in ctx.variables.get(var, "").split(";")
-                            if lib and "::" not in lib
-                        )
-                else:
-                    # Generic library name or path
-                    if (
-                        lib_name.startswith(("-", "$"))
-                        or "/" in lib_name
-                        or lib_name.endswith(
-                            (".a", ".so", ".dylib", ".lib", ".dll", ".o", ".obj")
-                        )
-                        or ".so." in lib_name
-                    ):
-                        framework_flags = framework_link_flags(lib_name)
-                        if framework_flags:
-                            link_flags.extend(framework_flags)
-                        elif lib_name.startswith(("-", "$")):
-                            # Flags are used verbatim, like CMake does; pkg-config
-                            # results such as "-L<dir> -lpng16" hold several.
-                            link_flags.append(lib_name)
-                        else:
-                            link_flags.append(_quote_if_spaced(lib_name))
-                    else:
-                        link_flags.append(f"-l{lib_name}")
+            link_inputs = [*objects, *lib_link_inputs]
 
             # On Windows, compile .rc files to .res and add to link inputs
             if rc_sources and platform.system() == "Windows":
