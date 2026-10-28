@@ -250,8 +250,8 @@ def test_regenerate_preserves_defines(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(
-    not _is_gnu_gxx(),
-    reason="requires GNU g++",
+    platform.system() == "Windows" or not _is_gnu_gxx(),
+    reason="requires GNU g++, which cja doesn't support on Windows",
 )
 def test_linker_unknown_argument_captured_output_gxx_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
