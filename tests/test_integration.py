@@ -15,10 +15,10 @@ EXE_EXT = ".exe" if platform.system() == "Windows" else ""
 LIB_EXT = ".lib" if platform.system() == "Windows" else ".a"
 
 
-def _is_gnu_cxx() -> bool:
+def _is_gnu_gxx() -> bool:
     try:
         result = subprocess.run(
-            ["c++", "--version"],
+            ["g++", "--version"],
             capture_output=True,
             text=True,
             check=False,
@@ -250,11 +250,15 @@ def test_regenerate_preserves_defines(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(
-    not _is_gnu_cxx(),
-    reason="requires GNU g++ as c++",
+    not _is_gnu_gxx(),
+    reason="requires GNU g++",
 )
-def test_linker_unknown_argument_captured_output_gxx_only(tmp_path: Path) -> None:
+def test_linker_unknown_argument_captured_output_gxx_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Unknown linker arg should fail and include compiler diagnostic output."""
+    # Don't pick up e.g. CXX=clang++ from the environment
+    monkeypatch.setenv("CXX", "g++")
     source_dir = tmp_path / "libmath"
     copy_unignored_tree(EXAMPLES_DIR / "libmath", source_dir)
 
