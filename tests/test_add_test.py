@@ -2,9 +2,17 @@
 
 import platform
 import re
+import sys
 from pathlib import Path
 
-from cja.generator import BuildContext, generate_ninja, process_commands
+import pytest
+
+from cja.generator import (
+    BuildContext,
+    generate_ninja,
+    process_commands,
+    run_test_include,
+)
 from cja.parser import Command
 
 EXE_EXT = ".exe" if platform.system() == "Windows" else ""
@@ -277,3 +285,66 @@ def test_add_test_quotes_arguments(tmp_path: Path) -> None:
     else:
         args = "'a b' 'x && y' '$$HOME'"
     assert _in_dir("$builddir", f"./myapp{EXE_EXT} {args}") in ninja_content
+
+
+def test_test_include_files(tmp_path: Path) -> None:
+    """TEST_INCLUDE_FILES, as written by gtest/doctest_discover_tests(), are
+    run after building everything, since that's when the tests are known."""
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    include_file = (tmp_path / "build" / "app_include.cmake").as_posix()
+    commands = [
+        Command(name="add_executable", args=["app", "main.cpp"], line=1),
+        Command(
+            name="set_property",
+            args=["DIRECTORY", "APPEND", "PROPERTY", "TEST_INCLUDE_FILES", include_file],
+            line=2,
+        ),
+    ]
+    process_commands(commands, ctx)
+
+    ninja_path = tmp_path / "build.ninja"
+    generate_ninja(ctx, ninja_path, "build")
+    ninja_content = _unwrap(ninja_path.read_text())
+
+    assert (
+        f"build test_app_include: test_run | $builddir/app{EXE_EXT}\n" in ninja_content
+    )
+    assert f"--run-test-include {include_file} $builddir\n" in ninja_content
+    assert "build test: phony test_app_include\n" in ninja_content
+    assert "build test-parallel: phony test-parallel_app_include\n" in ninja_content
+
+
+def test_run_test_include(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    """The tests of a TEST_INCLUDE_FILES script run like with CTest."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "build").mkdir()
+    working_directory = tmp_path / "wd"
+    working_directory.mkdir()
+    python = f"[==[{sys.executable}]==]"
+    include_file = tmp_path / "include.cmake"
+    include_file.write_text(
+        f"""\
+add_test(passes {python} -c [==[import os; open("cwd.txt", "w").write(os.getcwd())]==])
+set_tests_properties(passes PROPERTIES WORKING_DIRECTORY [==[{working_directory}]==] LABELS)
+add_test(fails {python} -c [==[print("oops"); raise SystemExit(1)]==])
+add_test(expected_failure {python} -c [==[raise SystemExit(1)]==])
+set_tests_properties(expected_failure PROPERTIES WILL_FAIL TRUE)
+add_test(disabled does-not-exist)
+set_tests_properties(disabled PROPERTIES DISABLED TRUE)
+"""
+    )
+
+    assert run_test_include(include_file, tmp_path / "build") == 1
+
+    output = re.sub(r"\x1b\[[0-9;]*m", "", capfd.readouterr().out)
+    assert "1/4 passes Passed" in output
+    assert "2/4 fails Failed" in output
+    assert "oops" in output
+    assert "3/4 expected_failure Passed" in output
+    assert "4/4 disabled Disabled" in output
+    assert "1 of 4 tests failed:\n    fails\n" in output
+    assert (working_directory / "cwd.txt").read_text() == str(working_directory)

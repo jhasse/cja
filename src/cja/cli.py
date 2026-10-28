@@ -12,7 +12,7 @@ from termcolor import colored
 
 from . import __version__
 from .format import decode, find_style, format_source
-from .generator import configure, run_script, verify_globs
+from .generator import configure, run_script, run_test_include, verify_globs
 
 
 def _get_version() -> str:
@@ -441,6 +441,13 @@ def main() -> int:
         help=argparse.SUPPRESS,
     )
 
+    parser.add_argument(
+        "--run-test-include",
+        nargs=2,
+        metavar=("SCRIPT", "BUILD_DIR"),
+        help=argparse.SUPPRESS,
+    )
+
     def add_configure_arguments(subparser: argparse.ArgumentParser, mode: str) -> None:
         # default=SUPPRESS so `cja --release build` keeps the parent flag
         subparser.add_argument(
@@ -574,6 +581,10 @@ def main() -> int:
         if args.verify_globs:
             manifest, stamp = args.verify_globs
             return verify_globs(Path(manifest), Path(stamp))
+
+        if args.run_test_include:
+            include_file, build_dir = args.run_test_include
+            return run_test_include(Path(include_file), Path(build_dir))
 
         if script_path is not None:
             return cmd_script(

@@ -8,6 +8,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path, PurePath
 from typing import cast
 
@@ -2499,8 +2500,18 @@ def generate_ninja(
                     default_targets.remove(exe_name)
                     default_targets.append(stamp)
 
+        # Scripts adding tests that are only known after the build, e.g. from
+        # gtest_discover_tests() and doctest_discover_tests()
+        test_include_files = [
+            include_file
+            for props in ctx.directory_properties.values()
+            for prop in ("TEST_INCLUDE_FILE", "TEST_INCLUDE_FILES")
+            for include_file in props.get(prop, "").split(";")
+            if include_file
+        ]
+
         # Generate test runner
-        if ctx.tests:
+        if ctx.tests or test_include_files:
             n.rule(
                 "test_run",
                 command="$cmd",
@@ -2666,6 +2677,33 @@ def generate_ninja(
                 )
                 test_parallel_targets.append(test_parallel_target)
 
+            run_include_cmd = " ".join(
+                _quote_ninja_cmd_part(part)
+                for part in (ctx.cja_cmd or _resolve_cja_cmd()) + ["--run-test-include"]
+            )
+            for include_file in test_include_files:
+                include_path = to_posix_path(ctx.build_dir / include_file)
+                name = Path(include_file).stem
+                include_variables: dict[str, str | list[str] | None] = {
+                    "cmd": f"{run_include_cmd} {_quote_ninja_cmd_part(include_path)} $builddir",
+                    "name": name,
+                }
+                # The tests are discovered when building, e.g. in POST_BUILD
+                # steps, so everything has to be built first.
+                for prefix, rule, targets in (
+                    ("test", "test_run", test_targets),
+                    ("test-parallel", "test_run_parallel", test_parallel_targets),
+                ):
+                    target = f"{prefix}_{name}"
+                    register_output(target, None, 0)
+                    n.build(
+                        target,
+                        rule,
+                        implicit=default_targets,
+                        variables=include_variables,
+                    )
+                    targets.append(target)
+
             n.newline()
             n.build("test", "phony", test_targets)
             n.build("test-parallel", "phony", test_parallel_targets)
@@ -2748,6 +2786,7 @@ def run_script(
     script_args: list[str] | None = None,
     trace: bool = False,
     strict: bool = False,
+    quiet: bool = False,
 ) -> BuildContext:
     """Run a CMake script file in ``cmake -P`` style script mode.
 
@@ -2758,6 +2797,7 @@ def run_script(
             They become available as ``CMAKE_ARGV<n>``.
         trace: If True, print each command as it's processed.
         strict: If True, error on unsupported commands.
+        quiet: If True, suppress warnings.
     """
     script_path = script_path.resolve()
     if not script_path.exists():
@@ -2767,6 +2807,7 @@ def run_script(
 
     cwd = Path.cwd()
     ctx = BuildContext(source_dir=cwd, build_dir=cwd)
+    ctx.quiet = quiet
     ctx.current_list_file = script_path
     ctx.record_cmake_file(script_path)
 
@@ -2812,6 +2853,72 @@ def run_script(
     if ctx.send_error:
         raise SystemExit(1)
     return ctx
+
+
+def run_test_include(include_file: Path, build_dir: Path) -> int:
+    """Run the tests that a TEST_INCLUDE_FILES script adds, like CTest does.
+
+    gtest_discover_tests() and doctest_discover_tests() only know their tests
+    once the executable is built, so they write add_test() calls into a script
+    that is included when the tests are run.
+    """
+    # Quiet, as CTest silently ignores e.g. the property without a value in
+    # set_tests_properties(... LABELS) that doctest writes when there are none
+    ctx = run_script(include_file, quiet=True)
+    build_dir = build_dir.absolute()
+    failed: list[str] = []
+    total = len(ctx.tests)
+    for i, test in enumerate(ctx.tests, 1):
+        label = f"{i:>{len(str(total))}}/{total} {test.name}"
+        if is_truthy(test.properties.get("DISABLED", "")):
+            print(f"{label} {colored('Disabled', 'yellow')}", flush=True)
+            continue
+        working_directory = (
+            test.properties.get("WORKING_DIRECTORY")
+            or test.working_directory
+            or str(build_dir)
+        )
+        env = dict(os.environ)
+        for entry in test.properties.get("ENVIRONMENT", "").split(";"):
+            name, sep, value = entry.partition("=")
+            if sep:
+                env[name] = value
+        start = time.monotonic()
+        try:
+            result = subprocess.run(
+                test.command,
+                check=False,
+                cwd=working_directory,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
+            output = result.stdout
+            passed = (result.returncode == 0) != is_truthy(
+                test.properties.get("WILL_FAIL", "")
+            )
+        except OSError as e:
+            output = f"{e}\n".encode()
+            passed = False
+        elapsed = f"{time.monotonic() - start:.2f} sec"
+        if passed:
+            print(f"{label} {colored('Passed', 'green')} {elapsed}", flush=True)
+        else:
+            failed.append(test.name)
+            print(
+                f"{label} {colored('Failed', 'red', attrs=['bold'])} {elapsed}",
+                flush=True,
+            )
+            sys.stdout.buffer.write(output)
+            sys.stdout.buffer.flush()
+    if failed:
+        print(
+            colored(f"{len(failed)} of {total} tests failed:", "red", attrs=["bold"])
+        )
+        for name in failed:
+            print(f"    {name}")
+        return 1
+    return 0
 
 
 def _generate_delegate_ninja(build_dir_path: Path, build_dir: str) -> None:
