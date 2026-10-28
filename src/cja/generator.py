@@ -3038,7 +3038,12 @@ def configure(
     ctx.variables["CMAKE_CXX_COMPILER_VERSION"] = _infer_compiler_version(
         ctx.cxx_compiler
     )
-    if host_system == "Windows" and "MSVC_VERSION" not in ctx.variables:
+    if (
+        host_system == "Windows"
+        and "MSVC_VERSION" not in ctx.variables
+        and ctx.variables["CMAKE_CXX_COMPILER_ID"] != "GNU"
+        and ctx.variables["CMAKE_C_COMPILER_ID"] != "GNU"
+    ):
         msvc_version = _infer_msvc_version(ctx.c_compiler)
         if msvc_version:
             ctx.variables["MSVC_VERSION"] = msvc_version
