@@ -1412,12 +1412,12 @@ def process_commands(
                             )
                             frame.pc += 1
                             continue
-                        elif strict and not optional_include:
-                            ctx.print_error(
-                                f"include() could not find file: {module_name}",
-                                cmd.line,
-                            )
-                            sys.exit(1)
+                        elif not optional_include:
+                            message = f"include() could not find file: {module_name}"
+                            if strict:
+                                ctx.print_error(message, cmd.line)
+                                sys.exit(1)
+                            ctx.print_warning(message, cmd.line)
                     elif module_name not in known_modules:
                         # Resolve bare module names from CMAKE_MODULE_PATH.
                         module_path = ctx.variables.get("CMAKE_MODULE_PATH", "")
@@ -1470,9 +1470,12 @@ def process_commands(
                             )
                             frame.pc += 1
                             continue
-                        elif strict and not optional_include:
-                            ctx.print_error(f"unknown module: {module_name}", cmd.line)
-                            sys.exit(1)
+                        elif not optional_include:
+                            message = f"unknown module: {module_name}"
+                            if strict:
+                                ctx.print_error(message, cmd.line)
+                                sys.exit(1)
+                            ctx.print_warning(message, cmd.line)
 
             case "include_guard":
                 scope = args[0].upper() if args else "DIRECTORY"

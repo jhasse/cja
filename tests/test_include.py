@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from cja.generator import BuildContext, configure, process_commands
 from cja.parser import Command
 
@@ -25,14 +27,41 @@ def test_include_ctest_respects_existing() -> None:
     assert ctx.variables["BUILD_TESTING"] == "OFF"
 
 
-def test_include_unknown_module() -> None:
-    """Test include with unknown module (should be ignored)."""
+def test_include_unknown_module(capsys: pytest.CaptureFixture[str]) -> None:
+    """Test include with unknown module (should be ignored with a warning)."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
     commands = [Command(name="include", args=["UnknownModule"], line=1)]
     process_commands(commands, ctx)
 
-    # Should not crash, just ignore
+    # Should not crash, just warn and ignore
     assert "BUILD_TESTING" not in ctx.variables
+    assert "unknown module: UnknownModule" in capsys.readouterr().err
+
+
+def test_include_missing_file_warns(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Test that include() of a missing file warns without --strict."""
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    commands = [Command(name="include", args=["nope/path.cmake"], line=1)]
+    process_commands(commands, ctx)
+
+    err = capsys.readouterr().err
+    assert "include() could not find file: nope/path.cmake" in err
+
+
+def test_include_missing_optional_is_silent(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Test that include(... OPTIONAL) of a missing file or module is silent."""
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    commands = [
+        Command(name="include", args=["nope/path.cmake", "OPTIONAL"], line=1),
+        Command(name="include", args=["UnknownModule", "OPTIONAL"], line=2),
+    ]
+    process_commands(commands, ctx)
+
+    assert capsys.readouterr().err == ""
 
 
 def test_include_txt_file(tmp_path: Path) -> None:
