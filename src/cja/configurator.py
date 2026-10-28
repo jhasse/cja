@@ -857,7 +857,10 @@ def process_commands(
                 # An unquoted argument that expands to nothing is dropped.
                 continue
             if ";" in expanded and not quoted:
-                expanded_args.extend(split_unquoted_list_args(expanded))
+                # Like the whole argument, empty list elements are dropped.
+                expanded_args.extend(
+                    item for item in split_unquoted_list_args(expanded) if item
+                )
             else:
                 expanded_args.append(expanded)
         args = expanded_args

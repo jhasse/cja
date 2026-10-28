@@ -212,3 +212,19 @@ def test_foreach_continue() -> None:
     ]
     process_commands(commands, ctx)
     assert ctx.variables["RESULT"] == "ac"
+
+
+def test_foreach_unquoted_list_drops_empty_elements() -> None:
+    """Like CMake, an unquoted ${list} drops empty elements, e.g. the one after
+    a trailing newline that string(REPLACE "\\n" ";") turned into a separator."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    ctx.variables["OUTPUT"] = "a;;b;"
+    commands = [
+        Command(name="set", args=["RESULT", ""], line=1),
+        Command(name="foreach", args=["item", "${OUTPUT}"], line=2),
+        Command(name="set", args=["RESULT", "${RESULT}[${item}]"], line=3),
+        Command(name="endforeach", args=[], line=4),
+    ]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["RESULT"] == "[a][b]"
