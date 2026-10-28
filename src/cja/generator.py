@@ -2472,7 +2472,12 @@ def generate_ninja(
                 for pb_cmd in exe.post_build_commands:
                     expanded_parts: list[str] = []
                     for a in pb_cmd:
-                        expanded = _expand_genex(a)
+                        # Absolute like in other custom commands, e.g. for
+                        # gtest/doctest_discover_tests() that run the executable
+                        # in another WORKING_DIRECTORY
+                        expanded = strip_generator_expressions(
+                            a, ctx.variables, target_file_dirs_abs, target_files_abs
+                        )
                         if expanded == cmake_cmd:
                             # CMAKE_COMMAND may be a multi-word command like
                             # "python3 -m cja"; expand it into separate tokens

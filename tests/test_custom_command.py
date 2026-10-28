@@ -592,6 +592,28 @@ add_custom_command(TARGET myapp POST_BUILD COMMAND echo done)
     assert "$builddir/myapp" in ninja_content
 
 
+def test_post_build_target_file_is_absolute(tmp_path: Path) -> None:
+    """Like in other custom commands, $<TARGET_FILE:...> is absolute in
+    POST_BUILD, so it stays valid when used in another working directory."""
+    from cja.generator import configure
+
+    (tmp_path / "CMakeLists.txt").write_text(
+        """\
+cmake_minimum_required(VERSION 3.10)
+project(PostBuildTargetFile)
+add_executable(myapp main.c)
+add_custom_command(TARGET myapp POST_BUILD COMMAND echo $<TARGET_FILE:myapp>)
+"""
+    )
+    (tmp_path / "main.c").write_text("int main() { return 0; }\n")
+
+    configure(tmp_path, "build")
+
+    unwrapped = re.sub(r"\$\n *", "", (tmp_path / "build.ninja").read_text())
+    exe = (tmp_path / "build" / f"myapp{EXE_EXT}").as_posix()
+    assert f"echo {exe}" in unwrapped
+
+
 def test_post_build_windows_paths_not_single_quoted(tmp_path: Path) -> None:
     """POST_BUILD must use Windows-aware quoting, not shlex single quotes.
 
