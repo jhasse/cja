@@ -111,6 +111,54 @@ def test_set_expands_nested_variable_reference() -> None:
     assert ctx.variables["OUT"] == "/tmp/box2d"
 
 
+def test_set_expands_env_with_nested_variable_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """set(${FOO} "$ENV{${FOO}}") should read the env var named by FOO."""
+    monkeypatch.setenv("CJA_TEST_NESTED_ENV", "hello world")
+    monkeypatch.delenv("CJA_TEST_NESTED_ENV_UNSET", raising=False)
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="set", args=["FOO", "CJA_TEST_NESTED_ENV"], line=1),
+        Command(name="set", args=["${FOO}", "$ENV{${FOO}}"], line=2),
+        Command(name="set", args=["BAR", "CJA_TEST_NESTED_ENV_UNSET"], line=3),
+        Command(name="set", args=["OUT", "[$ENV{${BAR}}]"], line=4),
+    ]
+    process_commands(commands, ctx)
+    assert ctx.variables["CJA_TEST_NESTED_ENV"] == "hello world"
+    assert ctx.variables["OUT"] == "[]"
+
+
+def test_set_nested_reference_does_not_reexpand_value() -> None:
+    """A value substituted by ${V_${I}} must not be expanded a second time."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    ctx.variables["X"] = "secret"
+    ctx.variables["V_1"] = "${X}"
+    ctx.variables["I"] = "1"
+    commands = [Command(name="set", args=["OUT", "${V_${I}}"], line=1)]
+    process_commands(commands, ctx)
+    assert ctx.variables["OUT"] == "${X}"
+
+
+def test_set_env_value_is_not_expanded(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An env var whose value contains ${...} stays literal."""
+    monkeypatch.setenv("CJA_TEST_ENV_REF", "${X}x")
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    ctx.variables["X"] = "secret"
+    ctx.variables["FOO"] = "CJA_TEST_ENV_REF"
+    commands = [Command(name="set", args=["OUT", "$ENV{${FOO}}"], line=1)]
+    process_commands(commands, ctx)
+    assert ctx.variables["OUT"] == "${X}x"
+
+
+def test_set_empty_variable_reference() -> None:
+    """${} expands to an empty string."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [Command(name="set", args=["OUT", "a${}b"], line=1)]
+    process_commands(commands, ctx)
+    assert ctx.variables["OUT"] == "ab"
+
+
 def test_set_cache_persists_outside_function() -> None:
     """set(... CACHE ...) inside a function should persist globally."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))

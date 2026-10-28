@@ -325,7 +325,6 @@ class BuildContext:
         allow_undefined_empty: bool = False,
     ) -> str:
         """Expand ${VAR} and $ENV{VAR} references in a string."""
-        original_value = value
         escaped_var_marker = "__CJA_ESC_VAR_OPEN__"
         escaped_env_marker = "__CJA_ESC_ENV_OPEN__"
         value = value.replace("\\$ENV{", escaped_env_marker)
@@ -339,8 +338,9 @@ class BuildContext:
             if match and match.group(1) not in self.variables:
                 return ""
 
-        def replace_normal(match: re.Match[str]) -> str:
-            var_name = match.group(1)
+        def replace_normal(var_name: str) -> str:
+            if not var_name:
+                return ""
             if var_name not in self.variables:
                 if allow_undefined_empty:
                     return ""
@@ -354,23 +354,42 @@ class BuildContext:
                 return ""
             return value
 
-        def replace_env(match: re.Match[str]) -> str:
-            var_name = match.group(1)
+        def replace_env(var_name: str) -> str:
             return os.environ.get(var_name, "")
 
-        result = value
-        # A "${" before the previous one is closed, e.g. ${A_${B}} or ${${A}${B}}
-        nested_var_ref = bool(re.search(r"\$\{[^}]*\$\{", original_value))
-        max_passes = 10 if nested_var_ref else 1
-        for _ in range(max_passes):
-            # Expand $ENV{VAR} first
-            expanded = re.sub(r"(?<!\\)\$ENV\{(\w+)\}", replace_env, result)
-            # Then ${VAR}; match innermost braces first to support nested names like
-            # ${CPM_PACKAGE_${PACKAGE}_SOURCE_DIR}.
-            expanded = re.sub(r"(?<!\\)\$\{([^{}]+)\}", replace_normal, expanded)
-            if expanded == result:
-                break
-            result = expanded
+        def scan(pos: int, in_ref: bool) -> tuple[str, int] | None:
+            """Expand references starting at pos in a single pass.
+
+            Names like ${CPM_PACKAGE_${PACKAGE}_SOURCE_DIR} or $ENV{${FOO}} are
+            expanded innermost first, and substituted values are never scanned
+            again. Inside a reference, stops at the closing "}" and returns its
+            index; returns None if that "}" is missing.
+            """
+            out: list[str] = []
+            while pos < len(value):
+                if value.startswith("${", pos) or value.startswith("$ENV{", pos):
+                    is_env = value[pos + 1] == "E"
+                    inner = scan(pos + (5 if is_env else 2), in_ref=True)
+                    if inner is None:
+                        # Unterminated reference: keep the rest literally
+                        out.append(value[pos:])
+                        pos = len(value)
+                        break
+                    name, end = inner
+                    out.append(replace_env(name) if is_env else replace_normal(name))
+                    pos = end + 1
+                elif in_ref and value[pos] == "}":
+                    return "".join(out), pos
+                else:
+                    out.append(value[pos])
+                    pos += 1
+            if in_ref:
+                return None
+            return "".join(out), pos
+
+        scanned = scan(0, in_ref=False)
+        assert scanned is not None
+        result = scanned[0]
         result = result.replace(escaped_env_marker, "$ENV{")
         result = result.replace(escaped_var_marker, "${")
         result = result.replace(LITERAL_BACKSLASH_MARKER, "\\")
