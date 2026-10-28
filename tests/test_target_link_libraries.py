@@ -313,3 +313,22 @@ def test_shared_library_links_its_libraries(tmp_path: Path) -> None:
     assert f"$builddir/libhelper{LIB_EXT}" in edge.group(1).split()
     assert "-lm" in edge.group(2)
 
+
+@pytest.mark.skipif(platform.system() != "Linux", reason="ELF soname and RPATH")
+def test_shared_library_soname_and_rpath(tmp_path: Path) -> None:
+    """Like CMake, shared libraries get a soname and their users an RPATH, so
+    that executables linking them run from any working directory."""
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    commands = [
+        Command(name="add_library", args=["core", "SHARED", "core.cpp"], line=1),
+        Command(name="add_executable", args=["app", "main.cpp"], line=2),
+        Command(name="target_link_libraries", args=["app", "PRIVATE", "core"], line=3),
+    ]
+    process_commands(commands, ctx)
+
+    ninja_file = tmp_path / "build.ninja"
+    generate_ninja(ctx, ninja_file, "build")
+    content = re.sub(r" \$\n +", " ", ninja_file.read_text())
+
+    assert "-Wl,-soname,libcore.so" in content
+    assert f"-Wl,-rpath,{(tmp_path / 'build').as_posix()}" in content

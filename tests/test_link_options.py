@@ -105,7 +105,9 @@ add_executable(app main.c)
 target_link_libraries(app PRIVATE shared)
 """,
     )
-    assert link_libs(ninja, r"libshared\.\w+") == "-Wl,--no-undefined -Wl,--as-needed"
+    assert link_libs(ninja, r"libshared\.\w+").startswith(
+        "-Wl,--no-undefined -Wl,--as-needed"
+    )
     assert link_libs(ninja, "app").startswith("-Wl,--as-needed")
 
 

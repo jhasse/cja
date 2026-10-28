@@ -1625,6 +1625,18 @@ def generate_ninja(
                             link_flags.append(_quote_if_spaced(lib_name))
                     else:
                         link_flags.append(f"-l{lib_name}")
+            if platform.system() != "Windows":
+                # Like CMake, find shared libraries of the build tree through
+                # the RPATH, so that binaries run from any working directory
+                rpath = ":".join(
+                    dict.fromkeys(
+                        to_posix_path(os.path.abspath(_target_output(linked_lib)[0]))
+                        for linked_lib in map(ctx.get_library, expanded_link_libraries)
+                        if linked_lib and linked_lib.lib_type == "SHARED"
+                    )
+                )
+                if rpath:
+                    link_flags.append(_quote_if_spaced(f"-Wl,-rpath,{rpath}"))
             return link_inputs, link_flags
 
         def _collect_directory_property_chain(
@@ -2103,6 +2115,13 @@ def generate_ninja(
             )
             if runtime_flag:
                 lib_link_flags.append(_MSVC_RUNTIME_LINK_FLAG)
+            # Like CMake, set the soname (install name on macOS) so that
+            # binaries linking the library don't record its path
+            file_name = PurePath(lib_name).name
+            if platform.system() == "Darwin":
+                lib_link_flags.append(f"-Wl,-install_name,@rpath/{file_name}")
+            elif platform.system() != "Windows":
+                lib_link_flags.append(f"-Wl,-soname,{file_name}")
             n.build(
                 lib_name,
                 link_rule,
