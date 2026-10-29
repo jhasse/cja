@@ -195,26 +195,39 @@ def _infer_msvc_version(compiler: str) -> str:
     return ""
 
 
+def _same_file(a: str | Path, b: str | Path) -> bool:
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
+
+
+def _running_cja_script() -> Path | None:
+    """The `cja` console script of the running cja, if there is one."""
+    candidates = []
+    # The one it was started with, e.g. a venv's that isn't sourced
+    started = Path(sys.argv[0]) if sys.argv and sys.argv[0] else None
+    if started is not None and started.stem == "cja":
+        candidates += [started, started.with_suffix(".exe")]
+    # Otherwise (e.g. `python -m cja`) the one installed next to the interpreter
+    bindir = Path(sys.executable).parent
+    candidates += [bindir / "cja", bindir / "cja.exe"]
+    return next((c for c in candidates if c.is_file()), None)
+
+
 def _resolve_cja_cmd() -> list[str]:
     """Resolve the command needed to invoke cja, handling venv and missing PATH."""
     cmd = ["cja"]
     absolute = shutil.which(cmd[0])
+    # Prefer the console script as a single token; `python -m cja` would be a
+    # multi-token command that breaks once it gets quoted into ninja rules.
+    script = _running_cja_script()
     if absolute is None:
-        # cja isn't on PATH (e.g. the venv isn't sourced). Prefer the `cja`
-        # console script installed next to the running interpreter so the
-        # command stays a single token; `python -m cja` would be a multi-token
-        # command that breaks once it gets quoted into ninja rules.
-        bindir = Path(sys.executable).parent
-        script = next(
-            (s for s in (bindir / "cja", bindir / "cja.exe") if s.is_file()),
-            None,
-        )
-        if script is not None:
-            cmd = [str(script)]
-        else:
-            cmd = [sys.executable, "-m", "cja"]
-    elif os.getenv("VIRTUAL_ENV") is not None:
-        cmd = [absolute]
+        cmd = [str(script)] if script is not None else [sys.executable, "-m", "cja"]
+    elif script is not None and not _same_file(absolute, script):
+        # Otherwise regenerating the build would run the cja on PATH, which is
+        # another one, maybe of another version
+        cmd = [str(script)]
     if platform.system() == "Windows":
         cmd[0] = to_posix_path(cmd[0])
     return cmd
