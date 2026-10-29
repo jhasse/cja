@@ -148,3 +148,30 @@ def test_object_depends_absolute_path(tmp_path: Path) -> None:
         "main.cpp | dep.h" in ninja_content
         or "main.cpp | $\n    dep.h" in ninja_content
     )
+
+
+def test_absolute_path_with_forward_slashes(tmp_path: Path) -> None:
+    """Absolute paths with forward slashes (e.g. from file(GLOB) on Windows) should match."""
+    source_root = tmp_path.absolute()
+    ctx = BuildContext(source_dir=source_root, build_dir=source_root / "build")
+
+    (source_root / "foo.cpp").touch()
+    commands = [
+        Command(name="add_executable", args=["myapp", "foo.cpp"], line=1),
+        Command(
+            name="set_source_files_properties",
+            args=[
+                (source_root / "foo.cpp").as_posix(),
+                "PROPERTIES",
+                "COMPILE_DEFINITIONS",
+                "NOMINMAX",
+            ],
+            line=2,
+        ),
+    ]
+    process_commands(commands, ctx)
+
+    ninja_path = source_root / "build.ninja"
+    generate_ninja(ctx, ninja_path, "build")
+
+    assert "-DNOMINMAX" in ninja_path.read_text()

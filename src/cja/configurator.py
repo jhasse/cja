@@ -100,6 +100,7 @@ from .utils import (
     ipo_flag,
     is_truthy,
     make_relative,
+    resolve_cmake_path,
     split_unquoted_list_args,
     status_marker,
     to_posix_path,
@@ -2605,10 +2606,12 @@ int main() {{
                         expanded_filename = ctx.expand_variables(
                             filename, strict, cmd.line
                         )
-                        if not Path(expanded_filename).is_absolute():
-                            expanded_filename = str(
-                                ctx.current_source_dir / expanded_filename
-                            )
+                        # Like set_property(SOURCE), so that e.g. the
+                        # forward slashes of file(GLOB) results on Windows
+                        # match the paths the generator looks up
+                        expanded_filename = resolve_cmake_path(
+                            expanded_filename, ctx.current_source_dir
+                        )
 
                         if expanded_filename not in ctx.source_file_properties:
                             ctx.source_file_properties[expanded_filename] = (
