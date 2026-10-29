@@ -164,3 +164,91 @@ def test_string_unknown_subcommand_errors_in_strict_mode(capsys) -> None:
         process_commands(commands, ctx, strict=True)
     captured = capsys.readouterr()
     assert "unknown subcommand: BOGUS" in captured.err
+
+
+def _run_json(*args: str) -> BuildContext:
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [Command(name="string", args=["JSON", *args], line=1)]
+    process_commands(commands, ctx, strict=True)
+    return ctx
+
+
+_JSON_DOC = '{"name": "cja", "version": 1.0, "flag": true, "nil": null, "deps": ["a", {"b": 2}], "opts": {"z": 1, "a": []}}'
+
+
+def test_string_json_get() -> None:
+    """string(JSON GET) should convert scalars and serialize containers like CMake."""
+    assert _run_json("R", "GET", _JSON_DOC, "name").variables["R"] == "cja"
+    assert _run_json("R", "GET", _JSON_DOC, "version").variables["R"] == "1.0"
+    assert _run_json("R", "GET", _JSON_DOC, "flag").variables["R"] == "ON"
+    assert _run_json("R", "GET", _JSON_DOC, "nil").variables["R"] == ""
+    assert _run_json("R", "GET", _JSON_DOC, "deps", "1", "b").variables["R"] == "2"
+    assert (
+        _run_json("R", "GET", _JSON_DOC, "deps").variables["R"]
+        == '[\n  "a",\n  {\n    "b" : 2\n  }\n]'
+    )
+    assert (
+        _run_json("R", "GET", _JSON_DOC, "opts").variables["R"]
+        == '{\n  "a" : [],\n  "z" : 1\n}'
+    )
+
+
+def test_string_json_get_raw_and_string_encode() -> None:
+    """GET_RAW keeps JSON syntax, STRING_ENCODE quotes a plain string."""
+    assert _run_json("R", "GET_RAW", _JSON_DOC, "name").variables["R"] == '"cja"'
+    assert _run_json("R", "GET_RAW", _JSON_DOC, "nil").variables["R"] == "null"
+    assert (
+        _run_json("R", "STRING_ENCODE", 'a"b\né').variables["R"]
+        == '"a\\"b\\n\\u00e9"'
+    )
+
+
+def test_string_json_type_member_length() -> None:
+    """TYPE, MEMBER and LENGTH should inspect elements; members are sorted."""
+    assert _run_json("R", "TYPE", _JSON_DOC, "flag").variables["R"] == "BOOLEAN"
+    assert _run_json("R", "TYPE", _JSON_DOC, "deps").variables["R"] == "ARRAY"
+    assert _run_json("R", "MEMBER", _JSON_DOC, "opts", "0").variables["R"] == "a"
+    assert _run_json("R", "LENGTH", _JSON_DOC, "deps").variables["R"] == "2"
+
+
+def test_string_json_set_remove_equal() -> None:
+    """SET, REMOVE and EQUAL should modify and compare JSON documents."""
+    assert (
+        _run_json("R", "SET", '{"a": [1]}', "a", "5", '"x"').variables["R"]
+        == '{\n  "a" : [ 1, "x" ]\n}'
+    )
+    assert _run_json("R", "REMOVE", '{"a": 1, "b": 2}', "a").variables["R"] == (
+        '{\n  "b" : 2\n}'
+    )
+    assert _run_json("R", "EQUAL", '{"a":1,"b":2}', '{"b":2, "a":1}').variables[
+        "R"
+    ] == "ON"
+    assert _run_json("R", "EQUAL", "1", "1.0").variables["R"] == "OFF"
+
+
+def test_string_json_allows_comments() -> None:
+    """jsoncpp accepts comments, so CMake projects may rely on them."""
+    doc = '{"a": "// not a comment", // comment\n "b": /* x */ 2}'
+    assert _run_json("R", "GET", doc, "a").variables["R"] == "// not a comment"
+    assert _run_json("R", "GET", doc, "b").variables["R"] == "2"
+
+
+def test_string_json_error_variable() -> None:
+    """Errors go to ERROR_VARIABLE and <out-var> gets the path up to the failure."""
+    ctx = _run_json("R", "ERROR_VARIABLE", "E", "GET", _JSON_DOC, "name")
+    assert ctx.variables["E"] == "NOTFOUND"
+    ctx = _run_json("R", "ERROR_VARIABLE", "E", "GET", _JSON_DOC, "deps", "5")
+    assert ctx.variables["R"] == "deps-5-NOTFOUND"
+    assert ctx.variables["E"] == "expected an index less than 2 got '5'"
+    ctx = _run_json("R", "ERROR_VARIABLE", "E", "GET", "{bad")
+    assert ctx.variables["R"] == "NOTFOUND"
+    assert ctx.variables["E"].startswith("failed parsing json string:")
+
+
+def test_string_json_error_is_fatal_without_error_variable(capsys) -> None:
+    """Without ERROR_VARIABLE a JSON error should stop configuration."""
+    import pytest
+
+    with pytest.raises(SystemExit):
+        _run_json("R", "GET", _JSON_DOC, "missing")
+    assert "string sub-command JSON member 'missing' not found." in capsys.readouterr().err

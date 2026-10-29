@@ -1,5 +1,6 @@
 import glob as py_glob
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -2578,6 +2579,9 @@ def handle_string(
 
             ctx.variables[out_var] = _cmake_timestamp_format(now, fmt, use_utc)
 
+    elif subcommand == "JSON":
+        _handle_string_json(ctx, cmd, args[1:])
+
     else:
         if strict:
             ctx.print_error(f"string() unknown subcommand: {subcommand}", cmd.line)
@@ -2586,6 +2590,329 @@ def handle_string(
             ctx.print_warning(
                 f"string() unknown subcommand: {subcommand}", cmd.line
             )
+
+
+class _JsonError(Exception):
+    """A string(JSON) failure; ``context`` is the path that led to it."""
+
+    def __init__(self, message: str, context: "list[str] | None" = None) -> None:
+        super().__init__(message)
+        self.context = context
+
+
+_JSON_MODES = (
+    "GET",
+    "GET_RAW",
+    "TYPE",
+    "MEMBER",
+    "LENGTH",
+    "REMOVE",
+    "SET",
+    "EQUAL",
+    "STRING_ENCODE",
+)
+
+
+def _handle_string_json(ctx: BuildContext, cmd: Command, args: list[str]) -> None:
+    """Handle string(JSON <out-var> [ERROR_VARIABLE <var>] <mode> ...)."""
+    rest = list(args)
+    out_var: str | None = None
+    error_var: str | None = None
+    try:
+        out_var = _json_pop_front(rest, "missing out-var argument")
+        if rest and rest[0] == "ERROR_VARIABLE":
+            rest.pop(0)
+            error_var = _json_pop_front(rest, "missing error-var argument")
+            ctx.variables[error_var] = "NOTFOUND"
+        mode = _json_pop_front(rest, "missing mode argument")
+        if mode not in _JSON_MODES:
+            # Same message as CMake, including its double space.
+            raise _JsonError(
+                f"got an invalid mode '{mode}', expected one of GET, GET_RAW, "
+                "TYPE, MEMBER, LENGTH, REMOVE, SET,  EQUAL, STRING_ENCODE"
+            )
+        json_str = _json_pop_front(rest, "missing json string argument")
+        if mode == "STRING_ENCODE":
+            ctx.variables[out_var] = _json_scalar(json_str)
+        else:
+            ctx.variables[out_var] = _json_run_mode(mode, _json_parse(json_str), rest)
+    except _JsonError as e:
+        if out_var is not None:
+            ctx.variables[out_var] = (
+                "NOTFOUND" if e.context is None else "-".join(e.context) + "-NOTFOUND"
+            )
+        if error_var is not None:
+            ctx.variables[error_var] = str(e)
+        else:
+            ctx.print_error(f"string sub-command JSON {e}.", cmd.line)
+            sys.exit(1)
+
+
+def _json_run_mode(mode: str, root: object, args: list[str]) -> str:
+    """Run one string(JSON) mode and return the value of <out-var>."""
+    if mode == "GET":
+        value = _json_resolve(root, args)
+        if isinstance(value, (dict, list)):
+            return _json_write(value)
+        if isinstance(value, bool):
+            return "ON" if value else "OFF"
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value
+        return _json_scalar(value)
+
+    if mode == "GET_RAW":
+        return _json_write(_json_resolve(root, args))
+
+    if mode == "TYPE":
+        return _json_type_name(_json_resolve(root, args))
+
+    if mode == "MEMBER":
+        index_str = _json_pop_back(args, "missing member index")
+        value = _json_resolve(root, args)
+        if not isinstance(value, dict):
+            raise _JsonError(
+                "MEMBER needs to be called with an element of type OBJECT, got "
+                + _json_type_name(value),
+                args,
+            )
+        index = _json_parse_index(index_str, [*args, index_str], len(value))
+        return sorted(value)[index]
+
+    if mode == "LENGTH":
+        value = _json_resolve(root, args)
+        if not isinstance(value, (dict, list)):
+            raise _JsonError(
+                "LENGTH needs to be called with an element of type ARRAY or OBJECT, got "
+                + _json_type_name(value),
+                args,
+            )
+        return str(len(value))
+
+    if mode == "REMOVE":
+        to_remove = _json_pop_back(args, "missing member or index to remove")
+        value = _json_resolve(root, args)
+        if isinstance(value, list):
+            del value[_json_parse_index(to_remove, [*args, to_remove], len(value))]
+        elif isinstance(value, dict):
+            value.pop(to_remove, None)
+        else:
+            raise _JsonError(
+                "REMOVE needs to be called with an element of type ARRAY or OBJECT, got "
+                + _json_type_name(value),
+                args,
+            )
+        return _json_write(root)
+
+    if mode == "SET":
+        new_value_str = _json_pop_back(args, "missing new value remove")
+        to_add = _json_pop_back(args, "missing member name to add")
+        value = _json_resolve(root, args)
+        new_value = _json_parse(new_value_str)
+        if isinstance(value, dict):
+            value[to_add] = new_value
+        elif isinstance(value, list):
+            index = _json_parse_index(to_add, [*args, to_add])
+            if index < len(value):
+                value[index] = new_value
+            else:
+                value.append(new_value)
+        else:
+            raise _JsonError(
+                "SET needs to be called with an element of type OBJECT or ARRAY, got "
+                + _json_type_name(value)
+            )
+        return _json_write(root)
+
+    # EQUAL
+    other = _json_parse(_json_pop_front(args, "missing second json string argument"))
+    return "ON" if _json_equal(root, other) else "OFF"
+
+
+def _json_pop_front(args: list[str], error: str) -> str:
+    if not args:
+        raise _JsonError(error)
+    return args.pop(0)
+
+
+def _json_pop_back(args: list[str], error: str) -> str:
+    if not args:
+        raise _JsonError(error)
+    return args.pop()
+
+
+def _json_parse(text: str) -> object:
+    """Parse JSON leniently like CMake's jsoncpp reader.
+
+    Comments are allowed and anything after the first value is ignored.
+    """
+
+    def reject_constant(name: str) -> object:
+        raise ValueError(name)
+
+    def parse_int(digits: str) -> object:
+        # jsoncpp stores integers outside of 64 bits as doubles.
+        value = int(digits)
+        return value if -(2**63) <= value < 2**64 else float(value)
+
+    decoder = json.JSONDecoder(parse_constant=reject_constant, parse_int=parse_int)
+    stripped = _json_strip_comments(text.removeprefix("\ufeff"))
+    start = len(stripped) - len(stripped.lstrip(" \t\r\n"))
+    try:
+        return decoder.raw_decode(stripped, start)[0]
+    except json.JSONDecodeError as e:
+        detail = f"* Line {e.lineno}, Column {e.colno}\n  {e.msg}"
+    except ValueError:
+        detail = "  Syntax error: value, object or array expected."
+    raise _JsonError(f"failed parsing json string:\n{text}\n{detail}\n")
+
+
+def _json_strip_comments(text: str) -> str:
+    """Replace // and /* */ comments outside of JSON strings with spaces."""
+    if "/" not in text:
+        return text
+    out: list[str] = []
+    i = 0
+    in_string = False
+    while i < len(text):
+        ch = text[i]
+        if in_string:
+            if ch == "\\":
+                out.append(text[i : i + 2])
+                i += 2
+                continue
+            in_string = ch != '"'
+        elif ch == '"':
+            in_string = True
+        elif text.startswith("//", i):
+            end = text.find("\n", i)
+            i = len(text) if end == -1 else end
+            out.append(" ")
+            continue
+        elif text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            if end == -1:
+                raise _JsonError(
+                    f"failed parsing json string:\n{text}\n  Unterminated comment\n"
+                )
+            i = end + 2
+            out.append(" ")
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _json_resolve(root: object, path: list[str]) -> object:
+    """Walk <member|index> arguments down from the root element."""
+    search = root
+    for i, field in enumerate(path):
+        progress = path[: i + 1]
+        if isinstance(search, dict):
+            if field not in search:
+                raise _JsonError(f"member '{field}' not found", progress)
+            search = search[field]
+        elif isinstance(search, list):
+            search = search[_json_parse_index(field, progress, len(search))]
+        else:
+            raise _JsonError(
+                f"invalid path '{' '.join(progress)}', need element of OBJECT or "
+                f"ARRAY type to lookup '{field}' got {_json_type_name(search)}",
+                progress,
+            )
+    return search
+
+
+def _json_parse_index(
+    text: str, context: "list[str] | None", size: "int | None" = None
+) -> int:
+    stripped = text.lstrip()
+    if not re.fullmatch(r"\+?[0-9]+", stripped):
+        raise _JsonError(f"expected an array index, got: '{text}'", context)
+    index = int(stripped)
+    if size is not None and index >= size:
+        raise _JsonError(f"expected an index less than {size} got '{text}'", context)
+    return index
+
+
+def _json_type_name(value: object) -> str:
+    if value is None:
+        return "NULL"
+    if isinstance(value, bool):
+        return "BOOLEAN"
+    if isinstance(value, (int, float)):
+        return "NUMBER"
+    if isinstance(value, str):
+        return "STRING"
+    if isinstance(value, list):
+        return "ARRAY"
+    return "OBJECT"
+
+
+def _json_equal(a: object, b: object) -> bool:
+    """Compare like jsoncpp: integers, unsigned integers and reals never match."""
+
+    def kind(value: object) -> str:
+        if isinstance(value, bool):
+            return "bool"
+        if isinstance(value, int):
+            return "int" if value < 2**63 else "uint"
+        return type(value).__name__
+
+    if kind(a) != kind(b):
+        return False
+    if isinstance(a, list) and isinstance(b, list):
+        return len(a) == len(b) and all(map(_json_equal, a, b))
+    if isinstance(a, dict) and isinstance(b, dict):
+        return a.keys() == b.keys() and all(_json_equal(a[k], b[k]) for k in a)
+    return a == b
+
+
+def _json_scalar(value: object) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, float):
+        text = f"{value:.17g}"
+        return text if "." in text or "e" in text else text + ".0"
+    if isinstance(value, int):
+        return str(value)
+    return json.dumps(value)
+
+
+def _json_write(value: object, level: int = 0, at_line_start: bool = True) -> str:
+    """Serialize like jsoncpp's StreamWriter with an indentation of two spaces."""
+    pad = "  " * level
+    inner = "  " * (level + 1)
+    head_pad = "" if at_line_start else f"\n{pad}"
+    if isinstance(value, dict) and value:
+        members = [
+            f"\n{inner}{json.dumps(key)} : {_json_write(value[key], level + 1, False)}"
+            for key in sorted(value)
+        ]
+        return f"{head_pad}{{" + ",".join(members) + f"\n{pad}}}"
+    if isinstance(value, list) and value:
+        # Short arrays of scalars stay on one line, like jsoncpp's 74 column margin.
+        children: list[str] | None = None
+        multiline = len(value) * 3 >= 74 or any(
+            isinstance(child, (dict, list)) and child for child in value
+        )
+        if not multiline:
+            children = [_json_write(child) for child in value]
+            line_length = 4 + (len(value) - 1) * 2 + sum(map(len, children))
+            if line_length < 74:
+                return "[ " + ", ".join(children) + " ]"
+        if children is None:
+            children = [_json_write(child, level + 1) for child in value]
+        items = [f"\n{inner}{child}" for child in children]
+        return f"{head_pad}[" + ",".join(items) + f"\n{pad}]"
+    if isinstance(value, dict):
+        return "{}"
+    if isinstance(value, list):
+        return "[]"
+    return _json_scalar(value)
 
 
 def _cmake_timestamp_format(
