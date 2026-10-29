@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from ..format import UNQUOTED
+from ..format_specs import CmdSpec
 from .document import (
     BUILTIN_COMMANDS,
     KNOWN_COMMANDS,
@@ -131,6 +132,13 @@ class Workspace:
             for d in parsed.definitions
             if d.kind in ("function", "macro")
         }
+
+    def command_specs(self) -> dict[str, CmdSpec]:
+        """Formatter specs of the user commands that use cmake_parse_arguments."""
+        specs: dict[str, CmdSpec] = {}
+        for parsed in self.files.values():
+            specs.update(parsed.command_specs)
+        return specs
 
     def targets(self) -> set[str]:
         return {

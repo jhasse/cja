@@ -426,7 +426,12 @@ class Server:
         if text is None:
             return None
         try:
-            formatted = format_source(text, find_style(path.parent), str(path))
+            formatted = format_source(
+                text,
+                find_style(path.parent),
+                str(path),
+                commands=self.workspace.command_specs(),
+            )
         except SyntaxError:
             return None
         if formatted == text:
@@ -448,7 +453,11 @@ class Server:
             last -= 1
         try:
             formatted = format_source(
-                text, find_style(path.parent), str(path), [(first + 1, last + 1)]
+                text,
+                find_style(path.parent),
+                str(path),
+                [(first + 1, last + 1)],
+                self.workspace.command_specs(),
             )
         except SyntaxError:
             return None

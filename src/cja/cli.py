@@ -11,7 +11,8 @@ from pathlib import Path
 from termcolor import colored
 
 from . import __version__
-from .format import decode, find_style, format_source
+from .format import decode, find_style, format_source, source_command_specs
+from .format_specs import CmdSpec
 from .generator import configure, run_script, run_test_include, verify_globs
 
 
@@ -255,6 +256,16 @@ def cmd_format(args: argparse.Namespace) -> int:
         print(f"{error_label} --lines can only be used with one file", file=sys.stderr)
         return 1
 
+    # Calls may use functions defined in any of the given files.
+    commands: dict[str, CmdSpec] = {}
+    for name in files:
+        if name != "-":
+            try:
+                source, _ = decode(Path(name).read_bytes())
+                commands.update(source_command_specs(source, name))
+            except (OSError, SyntaxError):
+                pass  # Reported below
+
     status = 0
     for name in files:
         if name == "-":
@@ -272,7 +283,7 @@ def cmd_format(args: argparse.Namespace) -> int:
 
         try:
             formatted = format_source(
-                source, find_style(path.parent), name, args.lines
+                source, find_style(path.parent), name, args.lines, commands
             )
         except SyntaxError as e:
             print(f"{e.filename}:{e.lineno}: {error_label} {e.msg}", file=sys.stderr)

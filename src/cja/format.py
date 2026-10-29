@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import re
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, cast
@@ -1960,14 +1960,125 @@ def _guessed_spec(atoms: list[Atom]) -> CmdSpec:
     return spec("*", kwargs=dict.fromkeys(keywords, "*"))
 
 
-def build_statement(stmt: Statement, style: Style) -> StatementNode:
+_VARIABLE_REF = re.compile(r"\$\{([^${}]*)\}")
+
+
+def _token_value(token: Token) -> str:
+    """The text of an argument without quotes or brackets."""
+    if token.kind == QUOTED:
+        return token.text[1:-1]
+    if token.kind == BRACKET:
+        equals = token.text.index("[", 1) - 1
+        return token.text[equals + 2 : len(token.text) - equals - 2].removeprefix("\n")
+    return token.text
+
+
+def _expand_list(value: str, variables: dict[str, list[str]]) -> list[str] | None:
+    """Expand ${var} references to known variables and split the list.
+
+    Returns None if the value refers to a variable that isn't known.
+    """
+    while True:
+        m = _VARIABLE_REF.search(value)
+        if m is None:
+            return [item for item in value.split(";") if item]
+        if m.group(1) not in variables:
+            return None
+        value = value[: m.start()] + ";".join(variables[m.group(1)]) + value[m.end() :]
+
+
+def parsed_argument_specs(
+    statements: Iterable[tuple[Token, list[Token]]],
+) -> dict[str, CmdSpec]:
+    """Derive specs of user commands from their cmake_parse_arguments() calls.
+
+    ``statements`` are (command name, argument tokens) pairs in source order.
+    The keyword lists may be given literally or via variables that are set with
+    literal values before. Returns lowercase command names -> specs.
+    """
+    variables: dict[str, list[str]] = {}
+    definitions: list[str] = []  # Lowercase names of the enclosing definitions
+    # Options, one-value and multi-value keywords, None if they can't be resolved
+    keywords: dict[str, list[list[str]] | None] = {}
+    for name, tokens in statements:
+        lower = name.text.lower()
+        values = [
+            _token_value(t) for t in tokens if t.kind in (QUOTED, UNQUOTED, BRACKET)
+        ]
+        if lower in ("function", "macro"):
+            definitions.append(values[0].lower() if values else "")
+        elif lower in ("endfunction", "endmacro"):
+            if definitions:
+                definitions.pop()
+        elif lower == "set" and values:
+            items: list[str] = []
+            for value in values[1:]:
+                if value in ("CACHE", "PARENT_SCOPE"):
+                    break
+                expanded = _expand_list(value, variables)
+                if expanded is None:
+                    variables.pop(values[0], None)
+                    break
+                items.extend(expanded)
+            else:
+                variables[values[0]] = items
+        elif lower == "list" and len(values) >= 2 and values[0] == "APPEND":
+            if values[1] in variables:
+                for value in values[2:]:
+                    expanded = _expand_list(value, variables)
+                    if expanded is None:
+                        variables.pop(values[1])
+                        break
+                    variables[values[1]].extend(expanded)
+        elif lower == "cmake_parse_arguments" and definitions:
+            command = definitions[-1]
+            # (PARSE_ARGV <N> <prefix> | <prefix>) <options> <one> <multi> ...
+            first = 3 if values and values[0] == "PARSE_ARGV" else 1
+            lists = [_expand_list(v, variables) for v in values[first : first + 3]]
+            if len(lists) < 3 or any(items is None for items in lists):
+                keywords[command] = None  # Can't tell, so keep guessing
+            elif (found := keywords.setdefault(command, [[], [], []])) is not None:
+                for old, new in zip(found, lists):
+                    old.extend(new or [])
+
+    specs: dict[str, CmdSpec] = {}
+    for command, found in keywords.items():
+        if found is None:
+            continue
+        options, one_value, multi_value = found
+        kwargs: dict[str, Any] = dict.fromkeys((k.upper() for k in multi_value), "*")
+        kwargs.update(dict.fromkeys((k.upper() for k in one_value), 1))
+        flags = sorted({k.upper() for k in options})
+        specs[command] = spec("*", flags=flags, kwargs=kwargs)
+    return specs
+
+
+def source_command_specs(source: str, filename: str = "<stdin>") -> dict[str, CmdSpec]:
+    """Specs of the user commands defined in CMake source, see parsed_argument_specs."""
+    text = source.removeprefix("\ufeff").replace("\r\n", "\n")
+    items = parse_body(lex(text, filename), text, filename)
+    return parsed_argument_specs(
+        (item.name, item.args) for item in items if isinstance(item, Statement)
+    )
+
+
+def build_statement(
+    stmt: Statement, style: Style, commands: dict[str, CmdSpec] | None = None
+) -> StatementNode:
+    """Build the layout tree of a statement.
+
+    ``commands`` maps lowercase names of user commands to their specs.
+    """
     lower = stmt.name.text.lower()
     ts = Stream(make_atoms(stmt.args))
     cmd_spec = SPECS_LOWER.get(lower)
+    user_spec = commands.get(lower) if commands else None
     if lower in CUSTOM_PARSERS:
         args = CUSTOM_PARSERS[lower](ts, [])
     elif cmd_spec is not None:
         args = parse_standard(ts, cmd_spec, [])
+    elif user_spec is not None:
+        args = parse_standard(ts, user_spec, [])
     elif style.guess_keywords:
         args = parse_standard(ts, _guessed_spec(ts.atoms), [])
     else:
@@ -2023,8 +2134,13 @@ def _indent_lines(
     return result
 
 
-def format_statement(stmt: Statement, indent: int, style: Style) -> list[str]:
-    node = build_statement(stmt, style)
+def format_statement(
+    stmt: Statement,
+    indent: int,
+    style: Style,
+    commands: dict[str, CmdSpec] | None = None,
+) -> list[str]:
+    node = build_statement(stmt, style, commands)
     # Like clang-format, keep a call on one line if it fits. cmake-format would
     # still break it up when it has many argument groups or arguments.
     if style.one_line_if_fits:
@@ -2094,12 +2210,18 @@ def format_source(
     style: Style | None = None,
     filename: str = "<stdin>",
     lines: list[tuple[int, int]] | None = None,
+    commands: dict[str, CmdSpec] | None = None,
 ) -> str:
     """Format CMake source code and return the result.
 
     ``lines`` restricts formatting to statements that touch the given 1-based,
     inclusive line ranges, like clang-format's ``--lines``. Everything else is
     left byte-for-byte unchanged.
+
+    Calls to functions and macros that use cmake_parse_arguments() are formatted
+    with their keywords. ``commands`` adds the specs of commands defined in other
+    files (see ``parsed_argument_specs``); definitions in this file take
+    precedence.
     """
     if style is None:
         style = Style()
@@ -2121,6 +2243,12 @@ def format_source(
             eol = "\r\n" if crlf > lf else "\n"
 
     items = parse_body(lex(text, filename, style.tab_width), text, filename)
+    commands = {
+        **(commands or {}),
+        **parsed_argument_specs(
+            (item.name, item.args) for item in items if isinstance(item, Statement)
+        ),
+    }
 
     formatted: list[list[str]] = []
     depth = 0
@@ -2142,7 +2270,7 @@ def format_source(
             formatted.append([])
         else:
             formatted.append(
-                format_statement(item, depth * style.indent_width, style)
+                format_statement(item, depth * style.indent_width, style, commands)
             )
         if lower in _BLOCK_OPENERS or lower in _BLOCK_MIDDLE:
             depth += 1

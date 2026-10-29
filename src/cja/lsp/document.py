@@ -9,6 +9,7 @@ from __future__ import annotations
 import bisect
 import re
 from dataclasses import dataclass, field
+from functools import cached_property
 from typing import Any
 
 from ..format import (
@@ -25,6 +26,7 @@ from ..format import (
     UNQUOTED,
     Token,
     lex,
+    parsed_argument_specs,
 )
 from ..format_specs import SPECS, SPECS_LOWER, CmdSpec, Shell
 
@@ -426,6 +428,13 @@ class ParsedFile:
     outputs: set[tuple[int, int]] = field(default_factory=set[tuple[int, int]])
     # Arguments that name variables that are read, like in if()
     variable_args: set[tuple[int, int]] = field(default_factory=set[tuple[int, int]])
+
+    @cached_property
+    def command_specs(self) -> dict[str, CmdSpec]:
+        """Formatter specs of the functions and macros using cmake_parse_arguments."""
+        return parsed_argument_specs(
+            (stmt.name, [arg.token for arg in stmt.args]) for stmt in self.statements
+        )
 
     def statement_at(self, offset: int) -> Statement | None:
         """Return the statement whose text contains the offset."""

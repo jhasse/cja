@@ -167,6 +167,83 @@ my_add_test(
     )
 
 
+_LONG_CALL = (
+    "my_func(FOO BAR_WITH_A_REALLY_LONG_NAME_THAT_IS_LONG BAZ_ANOTHER_LONG_VALUE "
+    "SOURCES a.cpp)\n"
+)
+_LONG_CALL_FORMATTED = """\
+my_func(
+  FOO BAR_WITH_A_REALLY_LONG_NAME_THAT_IS_LONG
+  BAZ_ANOTHER_LONG_VALUE
+  SOURCES a.cpp)
+"""
+
+
+def test_cmake_parse_arguments_keywords() -> None:
+    """Calls to functions using cmake_parse_arguments() only break at their keywords."""
+    definition = """\
+function(my_func)
+  cmake_parse_arguments(ARG "" "FOO" "SOURCES" ${ARGN})
+endfunction()
+"""
+    assert fmt(definition + "my_func(FOO BAR)\n").endswith("\nmy_func(FOO BAR)\n")
+    assert fmt(definition + _LONG_CALL).endswith("\n" + _LONG_CALL_FORMATTED)
+
+
+def test_cmake_parse_arguments_keyword_variables() -> None:
+    """Keyword lists can come from variables, like in CMake's documentation."""
+    source = """\
+macro(my_install)
+  set(options OPTIONAL FAST)
+  set(oneValueArgs DESTINATION RENAME)
+  set(multiValueArgs TARGETS)
+  list(APPEND multiValueArgs CONFIGURATIONS)
+  cmake_parse_arguments(PARSE_ARGV 0 arg "${options}" "${oneValueArgs}" "${multiValueArgs}")
+endmacro()
+my_install(TARGETS some_long_target_name another_target FAST DESTINATION BIN CONFIGURATIONS RELEASE)
+"""
+    assert fmt(source).endswith(
+        """
+my_install(
+  TARGETS some_long_target_name another_target
+  FAST
+  DESTINATION BIN
+  CONFIGURATIONS RELEASE)
+"""
+    )
+
+
+def test_cmake_parse_arguments_unknown_keywords_are_guessed() -> None:
+    """If the keyword lists can't be resolved, UPPERCASE words are guessed."""
+    source = """\
+function(my_func)
+  cmake_parse_arguments(ARG "" "${unknown}" "" ${ARGN})
+endfunction()
+"""
+    assert fmt(source + _LONG_CALL).endswith(
+        """
+my_func(
+  FOO
+  BAR_WITH_A_REALLY_LONG_NAME_THAT_IS_LONG
+  BAZ_ANOTHER_LONG_VALUE
+  SOURCES a.cpp)
+"""
+    )
+
+
+def test_cmake_parse_arguments_in_other_file(tmp_path: Path) -> None:
+    """Functions defined in another file passed to cja format are used, too."""
+    (tmp_path / "helpers.cmake").write_text(
+        "function(my_func)\n"
+        '  cmake_parse_arguments(ARG "" "FOO" "SOURCES" ${ARGN})\n'
+        "endfunction()\n"
+    )
+    (tmp_path / "CMakeLists.txt").write_text(_LONG_CALL)
+    result = run_cja("format", "CMakeLists.txt", "helpers.cmake", cwd=tmp_path)
+    assert result.returncode == 0
+    assert result.stdout.startswith(_LONG_CALL_FORMATTED)
+
+
 def test_comments_are_kept_verbatim() -> None:
     source = """\
 # A header comment that is longer than eighty characters is not reflowed by cja format

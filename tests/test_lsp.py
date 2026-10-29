@@ -408,3 +408,19 @@ def test_server_session(tmp_path: Path) -> None:
     assert client.request("shutdown") is None
     client.notify("exit")
     assert client.process.wait(timeout=10) == 0
+
+
+def test_workspace_command_specs(tmp_path: Path) -> None:
+    """Formatting uses cmake_parse_arguments() of functions in any workspace file."""
+    workspace = Workspace()
+    workspace.update(
+        tmp_path / "helpers.cmake",
+        "function(my_func)\n"
+        '  set(multi SOURCES "LIBS;DEPS")\n'
+        '  cmake_parse_arguments(ARG "QUIET" "NAME" "${multi}" ${ARGN})\n'
+        "endfunction()\n",
+    )
+    workspace.update(tmp_path / "CMakeLists.txt", "my_func(NAME foo)\n")
+    spec = workspace.command_specs()["my_func"]
+    assert spec.pargs[0].flags == ("QUIET",)
+    assert spec.kwargs == {"NAME": 1, "SOURCES": "*", "LIBS": "*", "DEPS": "*"}
