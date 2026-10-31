@@ -49,3 +49,14 @@ def test_cmake_host_win32(tmp_path: Path) -> None:
         assert ctx.variables["CMAKE_HOST_WIN32"] == "TRUE"
     else:
         assert ctx.variables["CMAKE_HOST_WIN32"] == "FALSE"
+
+
+def test_cmake_sizeof_void_p(tmp_path: Path) -> None:
+    """Test that CMAKE_SIZEOF_VOID_P is set for 64-bit targets."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    (source_dir / "CMakeLists.txt").write_text("project(test_sizeof_void_p)")
+
+    ctx = configure(source_dir, "build")
+
+    assert ctx.variables["CMAKE_SIZEOF_VOID_P"] == "8"

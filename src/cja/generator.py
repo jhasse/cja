@@ -3022,6 +3022,9 @@ def configure(
         ctx.variables["CMAKE_SYSTEM_NAME"] = "Linux"
         ctx.variables["UNIX"] = "TRUE"
 
+    # cja only builds for 64-bit targets.
+    ctx.variables["CMAKE_SIZEOF_VOID_P"] = "8"
+
     # Platform library conventions used by Find modules (e.g. FindOpenSSL).
     if host_system == "Windows":
         ctx.variables.setdefault("CMAKE_STATIC_LIBRARY_SUFFIX", ".lib")
