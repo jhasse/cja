@@ -2095,18 +2095,24 @@ def handle_builtin_find_package(
         if not found:
             vulkan_sdk = os.environ.get("VULKAN_SDK")
             if vulkan_sdk:
-                sdk_inc = Path(vulkan_sdk) / "include"
-                sdk_lib_dirs = _unique_existing_dirs(
-                    [
-                        Path(vulkan_sdk) / "lib",
-                        Path(vulkan_sdk) / "lib64",
-                    ]
-                )
+                if platform.system() == "Windows":
+                    sdk_inc = Path(vulkan_sdk) / "Include"
+                    sdk_lib_dirs = _unique_existing_dirs([Path(vulkan_sdk) / "Lib"])
+                else:
+                    sdk_inc = Path(vulkan_sdk) / "include"
+                    sdk_lib_dirs = _unique_existing_dirs(
+                        [
+                            Path(vulkan_sdk) / "lib",
+                            Path(vulkan_sdk) / "lib64",
+                        ]
+                    )
                 if (sdk_inc / "vulkan" / "vulkan.h").exists():
                     found = True
                     vulkan_cflags = f"-I{sdk_inc}"
                     include_dirs = [str(sdk_inc)]
-                    if platform.system() == "Darwin":
+                    if platform.system() == "Windows":
+                        lib_names = ["vulkan-1.lib"]
+                    elif platform.system() == "Darwin":
                         lib_names = ["libvulkan.dylib", "libvulkan.a"]
                     else:
                         lib_names = ["libvulkan.so", "libvulkan.a"]

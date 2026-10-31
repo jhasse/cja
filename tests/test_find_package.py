@@ -1162,6 +1162,39 @@ def test_find_package_vulkan_found_via_vulkan_sdk(
     assert "Vulkan::Vulkan" in ctx.imported_targets
 
 
+def test_find_package_vulkan_found_via_windows_vulkan_sdk(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Test find_package(Vulkan) with the layout of the Windows Vulkan SDK."""
+    sdk = tmp_path / "vulkan_sdk"
+    inc = sdk / "Include" / "vulkan"
+    inc.mkdir(parents=True)
+    (inc / "vulkan.h").write_text("")
+    # 32-bit libraries, which cja doesn't support, are in Lib32.
+    for name in ("Lib", "Lib32"):
+        (sdk / name).mkdir()
+        (sdk / name / "vulkan-1.lib").write_text("")
+
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+
+    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        return subprocess.CompletedProcess(cmd, 1)
+
+    monkeypatch.setattr("cja.generator.subprocess.run", fake_run)
+    monkeypatch.setattr("cja.find_package.platform.system", lambda: "Windows")
+    monkeypatch.setenv("VULKAN_SDK", str(sdk))
+
+    commands = [Command(name="find_package", args=["Vulkan", "REQUIRED"], line=1)]
+    process_commands(commands, ctx)
+
+    library = str(sdk / "Lib" / "vulkan-1.lib")
+    assert ctx.variables["Vulkan_FOUND"] == "TRUE"
+    assert ctx.variables["Vulkan_INCLUDE_DIR"] == str(sdk / "Include")
+    assert ctx.variables["Vulkan_LIBRARY"] == library
+    assert ctx.imported_targets["Vulkan::Vulkan"].libs == library
+
+
 def _fake_glfw_pkg_config(version: str | None):  # type: ignore[no-untyped-def]
     def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
         if version is None:
