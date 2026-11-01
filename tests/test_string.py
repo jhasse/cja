@@ -252,3 +252,49 @@ def test_string_json_error_is_fatal_without_error_variable(capsys) -> None:
     with pytest.raises(SystemExit):
         _run_json("R", "GET", _JSON_DOC, "missing")
     assert "string sub-command JSON member 'missing' not found." in capsys.readouterr().err
+
+
+def _run_random(*args: str) -> BuildContext:
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [Command(name="string", args=["RANDOM", *args], line=1)]
+    process_commands(commands, ctx, strict=True)
+    return ctx
+
+
+def test_string_random_defaults() -> None:
+    """string(RANDOM) should produce 5 alphanumeric characters by default."""
+    assert re.fullmatch(r"[a-zA-Z0-9]{5}", _run_random("R").variables["R"])
+
+
+def test_string_random_length_and_alphabet() -> None:
+    """LENGTH and ALPHABET should control the result; an empty ALPHABET is the default."""
+    assert re.fullmatch(
+        r"[ab]{12}", _run_random("LENGTH", "12", "ALPHABET", "ab", "R").variables["R"]
+    )
+    assert _run_random("ALPHABET", "x", "LENGTH", "3", "R").variables["R"] == "xxx"
+    assert re.fullmatch(
+        r"[a-zA-Z0-9]{2}",
+        _run_random("ALPHABET", "", "LENGTH", "2", "R").variables["R"],
+    )
+
+
+def test_string_random_seed_is_reproducible() -> None:
+    """The same RANDOM_SEED should always give the same string."""
+    first = _run_random("LENGTH", "20", "RANDOM_SEED", "42", "R").variables["R"]
+    _run_random("R")
+    assert _run_random("LENGTH", "20", "RANDOM_SEED", "42", "R").variables["R"] == first
+    assert _run_random("LENGTH", "20", "RANDOM_SEED", "43", "R").variables["R"] != first
+
+
+def test_string_random_errors(capsys) -> None:
+    """Bad argument counts and lengths should stop configuration like in CMake."""
+    import pytest
+
+    with pytest.raises(SystemExit):
+        _run_random("LENGTH", "R")
+    assert (
+        "sub-command RANDOM requires at least one argument." in capsys.readouterr().err
+    )
+    with pytest.raises(SystemExit):
+        _run_random("LENGTH", "0", "R")
+    assert "sub-command RANDOM: Invoked with bad length." in capsys.readouterr().err

@@ -2,6 +2,7 @@ import glob as py_glob
 import hashlib
 import json
 import os
+import random
 import re
 import shutil
 import sys
@@ -2582,6 +2583,9 @@ def handle_string(
     elif subcommand == "JSON":
         _handle_string_json(ctx, cmd, args[1:])
 
+    elif subcommand == "RANDOM":
+        _handle_string_random(ctx, cmd, args[1:])
+
     else:
         if strict:
             ctx.print_error(f"string() unknown subcommand: {subcommand}", cmd.line)
@@ -2590,6 +2594,54 @@ def handle_string(
             ctx.print_warning(
                 f"string() unknown subcommand: {subcommand}", cmd.line
             )
+
+
+_RANDOM_DEFAULT_ALPHABET = (
+    "qwertyuiopasdfghjklzxcvbnmQWERTYUIOPASDFGHJKLZXCVBNM0123456789"
+)
+# Shared by all string(RANDOM) calls, like the srand() state in CMake.
+_string_random = random.Random()
+
+
+def _atoi(value: str) -> int:
+    """Parse a leading integer like C's atoi(), returning 0 if there is none."""
+    match = re.match(r"\s*([+-]?\d+)", value)
+    return int(match.group(1)) if match else 0
+
+
+def _handle_string_random(ctx: BuildContext, cmd: Command, args: list[str]) -> None:
+    """Handle string(RANDOM [LENGTH <n>] [ALPHABET <a>] [RANDOM_SEED <s>] <out-var>)."""
+    # Same argument count check as CMake.
+    if not args or len(args) in (2, 4):
+        ctx.print_error(
+            "string sub-command RANDOM requires at least one argument.", cmd.line
+        )
+        sys.exit(1)
+    length = 5
+    alphabet = ""
+    seed: int | None = None
+    # CMake only looks for keywords before the last two arguments and silently
+    # skips anything it doesn't recognize.
+    i = 0
+    while i < len(args) - 2:
+        if args[i] == "LENGTH":
+            i += 1
+            length = _atoi(args[i])
+        elif args[i] == "ALPHABET":
+            i += 1
+            alphabet = args[i]
+        elif args[i] == "RANDOM_SEED":
+            i += 1
+            seed = _atoi(args[i]) % 2**32  # CMake casts to unsigned int
+        i += 1
+    if length < 1:
+        ctx.print_error("string sub-command RANDOM: Invoked with bad length.", cmd.line)
+        sys.exit(1)
+    if seed is not None:
+        _string_random.seed(seed)
+    ctx.variables[args[-1]] = "".join(
+        _string_random.choices(alphabet or _RANDOM_DEFAULT_ALPHABET, k=length)
+    )
 
 
 class _JsonError(Exception):
