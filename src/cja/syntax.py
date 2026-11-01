@@ -159,6 +159,7 @@ def evaluate_condition(
             "VERSION_EQUAL",
             "VERSION_LESS",
             "VERSION_GREATER",
+            "IN_LIST",
         ):
             op = args[i]
             i += 1
@@ -175,6 +176,12 @@ def evaluate_condition(
                     return left_val < right_val
                 if op == "STRGREATER":
                     return left_val > right_val
+                if op == "IN_LIST":
+                    # The right side always names a list variable.
+                    items = variables.get(right)
+                    if items is None or items == UNDEFINED_VAR_SENTINEL:
+                        return False
+                    return left_val in items.split(";")
                 if op == "MATCHES":
                     match = re.search(cmake_regex_to_python(right_val), left_val)
                     if match:

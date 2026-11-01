@@ -111,6 +111,17 @@ class TestEvaluateCondition:
         )
         assert variables["CMAKE_MATCH_1"] == "libogg-1.3.5"
 
+    def test_in_list(self) -> None:
+        variables = {"L": "a;c_std_99;;b", "ITEM": "b"}
+        assert evaluate_condition(["c_std_99", "IN_LIST", "L"], variables) is True
+        assert evaluate_condition(["ITEM", "IN_LIST", "L"], variables) is True
+        assert evaluate_condition(["", "IN_LIST", "L"], variables) is True
+        assert evaluate_condition(["c", "IN_LIST", "L"], variables) is False
+        assert evaluate_condition(["NOT", "c", "IN_LIST", "L"], variables) is True
+
+    def test_in_list_undefined_list(self) -> None:
+        assert evaluate_condition(["a", "IN_LIST", "L"], {}) is False
+
 
 class TestIfCommand:
     """Tests for if/elseif/else/endif processing."""
