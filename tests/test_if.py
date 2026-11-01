@@ -1,5 +1,7 @@
 """Tests for if/elseif/else/endif commands."""
 
+import os
+import platform
 from pathlib import Path
 
 import pytest
@@ -389,3 +391,58 @@ class TestExistenceOperators:
         )
         assert ctx.variables["HAS_MY_TEST"] == "yes"
         assert "HAS_OTHER" not in ctx.variables
+
+
+class TestPathOperators:
+    """Tests for the file and path operators of if()."""
+
+    def test_file_tests(self, tmp_path: Path) -> None:
+        (tmp_path / "dir").mkdir()
+        (tmp_path / "file").write_text("")
+        d, f = str(tmp_path / "dir"), str(tmp_path / "file")
+        assert evaluate_condition(["IS_DIRECTORY", d], {}) is True
+        assert evaluate_condition(["IS_DIRECTORY", f], {}) is False
+        assert evaluate_condition(["IS_SYMLINK", f], {}) is False
+        assert evaluate_condition(["IS_READABLE", f], {}) is True
+        assert evaluate_condition(["IS_WRITABLE", f], {}) is True
+        assert evaluate_condition(["IS_EXECUTABLE", d], {}) is True
+        for op in ("EXISTS", "IS_DIRECTORY", "IS_READABLE"):
+            assert evaluate_condition([op, ""], {}) is False
+
+    @pytest.mark.skipif(platform.system() == "Windows", reason="needs symlinks")
+    def test_is_symlink(self, tmp_path: Path) -> None:
+        (tmp_path / "file").write_text("")
+        (tmp_path / "link").symlink_to(tmp_path / "file")
+        link = str(tmp_path / "link")
+        assert evaluate_condition(["IS_SYMLINK", link], {}) is True
+        assert evaluate_condition(["EXISTS", link], {}) is True
+
+    def test_is_newer_than(self, tmp_path: Path) -> None:
+        old, new = tmp_path / "old", tmp_path / "new"
+        old.write_text("")
+        new.write_text("")
+        os.utime(old, ns=(1_000_000_000, 1_000_000_000))
+        missing = str(tmp_path / "missing")
+        assert evaluate_condition([str(new), "IS_NEWER_THAN", str(old)], {}) is True
+        assert evaluate_condition([str(old), "IS_NEWER_THAN", str(new)], {}) is False
+        assert evaluate_condition([str(old), "IS_NEWER_THAN", str(old)], {}) is True
+        assert evaluate_condition([str(old), "IS_NEWER_THAN", missing], {}) is True
+
+    @pytest.mark.skipif(platform.system() == "Windows", reason="POSIX path rules")
+    @pytest.mark.parametrize(
+        ("condition", "expected"),
+        [
+            ("IS_ABSOLUTE /x", True),
+            ("IS_ABSOLUTE ~/x", True),
+            ("IS_ABSOLUTE x", False),
+            ("IS_ABSOLUTE C:/x", False),
+            ("/a//b/c PATH_EQUAL /a/b/c", True),
+            ("/a/b/ PATH_EQUAL /a/b", False),
+            ("/a/b// PATH_EQUAL /a/b/", True),
+            ("a PATH_EQUAL ./a", False),
+            ("/ PATH_EQUAL //", True),
+            ("a\\b PATH_EQUAL a/b", False),
+        ],
+    )
+    def test_paths(self, condition: str, expected: bool) -> None:
+        assert evaluate_condition(condition.split(), {}) is expected

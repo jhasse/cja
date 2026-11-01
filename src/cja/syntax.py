@@ -1,5 +1,6 @@
 import operator
 import os
+import platform
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -120,10 +121,56 @@ _COMPARISONS: dict[str, Callable[[Any, Any], bool]] = {
 _BINARY_OPERATORS = {
     "MATCHES",
     "IN_LIST",
+    "IS_NEWER_THAN",
+    "PATH_EQUAL",
     *_COMPARISONS,
     *(f"STR{op}" for op in _COMPARISONS),
     *(f"VERSION_{op}" for op in _COMPARISONS),
 }
+
+# Like in CMake, an empty path is no file.
+_FILE_TESTS: dict[str, Callable[[str], bool]] = {
+    "EXISTS": os.path.exists,
+    "IS_DIRECTORY": os.path.isdir,
+    "IS_SYMLINK": os.path.islink,
+    "IS_READABLE": lambda path: os.access(path, os.R_OK),
+    "IS_WRITABLE": lambda path: os.access(path, os.W_OK),
+    "IS_EXECUTABLE": lambda path: os.access(path, os.X_OK),
+}
+_UNARY_OPERATORS = {
+    "DEFINED",
+    "COMMAND",
+    "TARGET",
+    "TEST",
+    "POLICY",
+    "IS_ABSOLUTE",
+    *_FILE_TESTS,
+}
+
+
+def _is_absolute(path: str) -> bool:
+    """Like CMake's IS_ABSOLUTE, which follows the rules of the host."""
+    if platform.system() == "Windows":
+        return len(path) >= 2 and (path[1] == ":" or path[0] in "/\\")
+    return path.startswith(("/", "~"))
+
+
+def _is_newer_than(file1: str, file2: str) -> bool:
+    """Like CMake, also true for equal times or if a file doesn't exist."""
+    try:
+        return os.stat(file1).st_mtime_ns >= os.stat(file2).st_mtime_ns
+    except OSError:
+        return True
+
+
+def _path_components(path: str) -> list[str]:
+    """Split a path for PATH_EQUAL, where repeated separators count as one."""
+    if platform.system() == "Windows":
+        path = path.replace("\\", "/")
+    parts = [part for part in path.split("/") if part]
+    if path.endswith("/") and parts:
+        parts.append("")  # A trailing separator ends in an empty component
+    return ["/" if path.startswith("/") else "", *parts]
 
 # The longest prefixes sscanf("%lg") reads as a number.
 _SPECIAL_NUMBER_RE = re.compile(
@@ -231,7 +278,7 @@ def evaluate_condition(
             return res
 
         # Handle other unary operators
-        if args[i] in ("DEFINED", "EXISTS", "COMMAND", "TARGET", "TEST", "POLICY"):
+        if args[i] in _UNARY_OPERATORS:
             op = args[i]
             i += 1
             if i < len(args):
@@ -239,8 +286,10 @@ def evaluate_condition(
                 i += 1
                 if op == "DEFINED":
                     return is_defined(val)
-                if op == "EXISTS":
-                    return Path(val).exists()
+                if op in _FILE_TESTS:
+                    return _FILE_TESTS[op](val)
+                if op == "IS_ABSOLUTE":
+                    return _is_absolute(val)
                 if op == "COMMAND":
                     return val.lower() in BUILTIN_COMMANDS or (
                         command_exists is not None and command_exists(val.lower())
@@ -278,6 +327,10 @@ def evaluate_condition(
                 if op.startswith("VERSION_"):
                     compare = _COMPARISONS[op[8:]]
                     return compare(compare_versions(left_val, right_val), 0)
+                if op == "IS_NEWER_THAN":
+                    return _is_newer_than(left, right)
+                if op == "PATH_EQUAL":
+                    return _path_components(left_val) == _path_components(right_val)
                 if op == "IN_LIST":
                     # The right side always names a list variable.
                     items = variables.get(right)
