@@ -446,3 +446,34 @@ class TestPathOperators:
     )
     def test_paths(self, condition: str, expected: bool) -> None:
         assert evaluate_condition(condition.split(), {}) is expected
+
+
+class TestConditionArguments:
+    """Tests for how if() expands its arguments."""
+
+    def test_unquoted_list_is_split(self) -> None:
+        ctx = _run(
+            'set(cond "a;;STREQUAL;a")\n'
+            "if(${cond})\n  set(IF_SPLIT yes)\nendif()\n"
+            "if(0)\nelseif(${cond})\n  set(ELSEIF_SPLIT yes)\nendif()\n"
+            'if("${cond}")\n  set(QUOTED_SPLIT yes)\nendif()\n'
+        )
+        assert ctx.variables["IF_SPLIT"] == "yes"
+        assert ctx.variables["ELSEIF_SPLIT"] == "yes"
+        assert "QUOTED_SPLIT" not in ctx.variables
+
+    def test_function_forwarding_its_arguments(self) -> None:
+        ctx = _run(
+            "function(check out)\n"
+            "  if(${ARGN})\n    set(${out} yes PARENT_SCOPE)\n  endif()\n"
+            "endfunction()\n"
+            "check(RESULT 5 GREATER_EQUAL 3)\n"
+        )
+        assert ctx.variables["RESULT"] == "yes"
+
+    def test_bracket_argument_is_literal(self) -> None:
+        ctx = _run(
+            'set(L "x;y")\n'
+            'if([[${L}]] STREQUAL "\\${L}")\n  set(LITERAL yes)\nendif()\n'
+        )
+        assert ctx.variables["LITERAL"] == "yes"

@@ -7,6 +7,7 @@ from .build_context import (
 )
 from .parser import Command
 from .syntax import evaluate_condition, find_else_or_elseif
+from .utils import split_unquoted_list_args
 
 
 def select_if_block(
@@ -40,9 +41,6 @@ def select_if_block(
             test_exists=lambda name: any(test.name == name for test in ctx.tests),
         )
 
-    def _is_empty_string_token(token: str) -> bool:
-        return token == "" or token in ('""', "''")
-
     def _is_exact_var_token(token: str) -> bool:
         return (
             (token.startswith("${") and token.endswith("}"))
@@ -50,52 +48,40 @@ def select_if_block(
             or (token.startswith("'${") and token.endswith("}'"))
         )
 
-    # Check the if condition
-    if_args = []
-    for i, arg in enumerate(cmd.args):
-        allow_undefined = (
-            i + 2 < len(cmd.args)
-            and cmd.args[i + 1] == "STREQUAL"
-            and _is_empty_string_token(cmd.args[i + 2])
-            and _is_exact_var_token(arg)
-        )
-        # Match CMake condition behavior: undefined ${VAR} in if()/elseif()
-        # evaluates as empty, rather than producing a strict warning.
-        allow_undefined = allow_undefined or _is_exact_var_token(arg)
-        if_args.append(
-            ctx.expand_variables(
+    def condition_args(command: Command) -> list[str]:
+        """Expand the arguments of an if() or elseif(), splitting unquoted lists."""
+        expanded: list[str] = []
+        for i, arg in enumerate(command.args):
+            if i < len(command.is_bracket) and command.is_bracket[i]:
+                expanded.append(arg)
+                continue
+            # Match CMake condition behavior: undefined ${VAR} in if()/elseif()
+            # evaluates as empty, rather than producing a strict warning.
+            value = ctx.expand_variables(
                 arg,
                 strict,
-                cmd.line,
-                allow_undefined_empty=allow_undefined,
+                command.line,
+                allow_undefined_empty=_is_exact_var_token(arg),
             )
-        )
-    if holds(if_args):
+            quoted = i < len(command.is_quoted) and command.is_quoted[i]
+            if ";" in value and not quoted:
+                expanded.extend(
+                    item for item in split_unquoted_list_args(value) if item
+                )
+            else:
+                expanded.append(value)
+        return expanded
+
+    # Check the if condition
+    if holds(condition_args(cmd)):
         # Execute commands from if to first elseif/else or endif
         block_end = blocks[0][1] if blocks else endif_idx
         return endif_idx, (block_start, block_end)
 
     # Check elseif/else blocks
-    for j, (block_type, block_idx, block_args) in enumerate(blocks):
+    for j, (block_type, block_idx, _) in enumerate(blocks):
         if block_type == "elseif":
-            elseif_args = []
-            for i, arg in enumerate(block_args):
-                allow_undefined = (
-                    i + 2 < len(block_args)
-                    and block_args[i + 1] == "STREQUAL"
-                    and _is_empty_string_token(block_args[i + 2])
-                    and _is_exact_var_token(arg)
-                )
-                allow_undefined = allow_undefined or _is_exact_var_token(arg)
-                elseif_args.append(
-                    ctx.expand_variables(
-                        arg,
-                        strict,
-                        commands[block_idx].line,
-                        allow_undefined_empty=allow_undefined,
-                    )
-                )
-            if holds(elseif_args):
+            if holds(condition_args(commands[block_idx])):
                 block_start = block_idx + 1
                 block_end = blocks[j + 1][1] if j + 1 < len(blocks) else endif_idx
                 return endif_idx, (block_start, block_end)
