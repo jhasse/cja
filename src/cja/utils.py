@@ -329,6 +329,29 @@ def is_constant_truthy(value: str) -> bool:
     return False
 
 
+_VERSION_COMPONENT_RE = re.compile(r"([0-9]*)\.?")
+
+
+def compare_versions(left: str, right: str) -> int:
+    """Compare versions like CMake's VERSION_* operators, returning -1, 0 or 1.
+
+    Like CMake, components are compared as integers for as long as either side
+    continues with a digit, so "1.0" equals "1" and "1.2-rc1" equals "1.2".
+    """
+    i = j = 0
+    while True:
+        left_match = _VERSION_COMPONENT_RE.match(left, i)
+        right_match = _VERSION_COMPONENT_RE.match(right, j)
+        assert left_match and right_match  # The pattern also matches nothing
+        if not left_match.group(1) and not right_match.group(1):
+            return 0
+        left_num = int(left_match.group(1) or 0)
+        right_num = int(right_match.group(1) or 0)
+        if left_num != right_num:
+            return -1 if left_num < right_num else 1
+        i, j = left_match.end(), right_match.end()
+
+
 def strip_generator_expressions(
     value: str,
     variables: dict[str, str] | None = None,

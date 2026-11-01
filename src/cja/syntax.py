@@ -1,13 +1,16 @@
+import operator
 import os
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from .parser import Command
 from .utils import (
     UNDEFINED_VAR_SENTINEL,
     cmake_regex_to_python,
+    compare_versions,
     is_constant_truthy,
     is_truthy,
 )
@@ -60,6 +63,57 @@ class Test:
     command: list[str]
     working_directory: str | None = None
     properties: dict[str, str] = field(default_factory=dict)
+
+
+# EQUAL, LESS, ... compare numbers, STREQUAL, STRLESS, ... strings and
+# VERSION_EQUAL, VERSION_LESS, ... versions.
+_COMPARISONS: dict[str, Callable[[Any, Any], bool]] = {
+    "EQUAL": operator.eq,
+    "LESS": operator.lt,
+    "LESS_EQUAL": operator.le,
+    "GREATER": operator.gt,
+    "GREATER_EQUAL": operator.ge,
+}
+_BINARY_OPERATORS = {
+    "MATCHES",
+    "IN_LIST",
+    *_COMPARISONS,
+    *(f"STR{op}" for op in _COMPARISONS),
+    *(f"VERSION_{op}" for op in _COMPARISONS),
+}
+
+# The longest prefixes sscanf("%lg") reads as a number.
+_SPECIAL_NUMBER_RE = re.compile(
+    r"[+-]?(?:inf(?:i(?:n(?:i(?:ty?)?)?)?)?|nan)", re.IGNORECASE
+)
+_HEX_NUMBER_RE = re.compile(
+    r"[+-]?0[xX](?P<mantissa>[0-9a-fA-F]*\.?[0-9a-fA-F]*)(?:[pP](?P<exp>[+-]?[0-9]*))?"
+)
+_DECIMAL_NUMBER_RE = re.compile(
+    r"[+-]?(?P<mantissa>[0-9]*\.?[0-9]*)(?:[eE](?P<exp>[+-]?[0-9]*))?"
+)
+
+
+def _parse_number(value: str) -> float | None:
+    """Parse a number like sscanf("%lg"), which CMake uses.
+
+    It reads as much as could still become a number and ignores the rest, so
+    "3abc" is 3, but fails if what it read isn't a number, like "1e" or "0x".
+    """
+    text = value.lstrip(" \t\n\v\f\r")
+    special = _SPECIAL_NUMBER_RE.match(text)
+    if special:
+        word = special.group().lstrip("+-").lower()
+        return float(special.group()) if word in ("inf", "infinity", "nan") else None
+    hex_number = _HEX_NUMBER_RE.match(text)
+    match = hex_number or _DECIMAL_NUMBER_RE.match(text)
+    assert match  # The decimal pattern also matches nothing
+    exponent = match.group("exp")
+    if not match.group("mantissa").strip(".") or (
+        exponent is not None and not exponent.lstrip("+-")
+    ):
+        return None
+    return float.fromhex(match.group()) if hex_number else float(match.group())
 
 
 def evaluate_condition(
@@ -148,19 +202,7 @@ def evaluate_condition(
         # Handle binary operators/comparisons
         left = args[i]
         i += 1
-        if i < len(args) and args[i] in (
-            "STREQUAL",
-            "STRLESS",
-            "STRGREATER",
-            "EQUAL",
-            "LESS",
-            "GREATER",
-            "MATCHES",
-            "VERSION_EQUAL",
-            "VERSION_LESS",
-            "VERSION_GREATER",
-            "IN_LIST",
-        ):
+        if i < len(args) and args[i] in _BINARY_OPERATORS:
             op = args[i]
             i += 1
             if i < len(args):
@@ -170,12 +212,17 @@ def evaluate_condition(
                 left_val = resolve(left)
                 right_val = resolve(right)
 
-                if op == "STREQUAL":
-                    return left_val == right_val
-                if op == "STRLESS":
-                    return left_val < right_val
-                if op == "STRGREATER":
-                    return left_val > right_val
+                if op in _COMPARISONS:
+                    left_num = _parse_number(left_val)
+                    right_num = _parse_number(right_val)
+                    if left_num is None or right_num is None:
+                        return False
+                    return _COMPARISONS[op](left_num, right_num)
+                if op.startswith("STR"):
+                    return _COMPARISONS[op[3:]](left_val, right_val)
+                if op.startswith("VERSION_"):
+                    compare = _COMPARISONS[op[8:]]
+                    return compare(compare_versions(left_val, right_val), 0)
                 if op == "IN_LIST":
                     # The right side always names a list variable.
                     items = variables.get(right)
@@ -190,34 +237,6 @@ def evaluate_condition(
                             variables[f"CMAKE_MATCH_{idx}"] = group
                         return True
                     return False
-                if op in ("EQUAL", "LESS", "GREATER"):
-                    try:
-                        l_num = int(left_val)
-                        r_num = int(right_val)
-                        if op == "EQUAL":
-                            return l_num == r_num
-                        if op == "LESS":
-                            return l_num < r_num
-                        if op == "GREATER":
-                            return l_num > r_num
-                    except ValueError:
-                        return False
-                if op.startswith("VERSION_"):
-                    # Simple version comparison by splitting on dots
-                    def ver_to_tuple(v: str) -> tuple[int, ...]:
-                        try:
-                            return tuple(int(x) for x in re.split(r"[^0-9]", v) if x)
-                        except ValueError:
-                            return (0,)
-
-                    l_ver = ver_to_tuple(left_val)
-                    r_ver = ver_to_tuple(right_val)
-                    if op == "VERSION_EQUAL":
-                        return l_ver == r_ver
-                    if op == "VERSION_LESS":
-                        return l_ver < r_ver
-                    if op == "VERSION_GREATER":
-                        return l_ver > r_ver
             return False
 
         # Single value

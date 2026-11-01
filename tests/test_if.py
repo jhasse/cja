@@ -122,6 +122,55 @@ class TestEvaluateCondition:
     def test_in_list_undefined_list(self) -> None:
         assert evaluate_condition(["a", "IN_LIST", "L"], {}) is False
 
+    @pytest.mark.parametrize(
+        ("condition", "expected"),
+        [
+            ("5 GREATER_EQUAL 3", True),
+            ("3 GREATER_EQUAL 3", True),
+            ("4 LESS_EQUAL 3", False),
+            ("5 GREATER_EQUAL 3 AND 2 LESS_EQUAL 1", False),
+            ("abc STRLESS_EQUAL abc", True),
+            ("abc STRGREATER_EQUAL abd", False),
+            ("3.28 VERSION_LESS_EQUAL 3.28.0", True),
+            ("2.0 VERSION_GREATER_EQUAL 1.0", True),
+            ("1.2 VERSION_GREATER_EQUAL 1.10", False),
+        ],
+    )
+    def test_equal_variants(self, condition: str, expected: bool) -> None:
+        assert evaluate_condition(condition.split(), {}) is expected
+
+    @pytest.mark.parametrize(
+        ("condition", "expected"),
+        [
+            ("1.5 LESS 2", True),
+            ("3 EQUAL 3.0", True),
+            ("3abc EQUAL 3", True),
+            ("1e2 EQUAL 100", True),
+            ("0x10 EQUAL 16", True),
+            ("1e EQUAL 1", False),
+            ("0x EQUAL 0", False),
+            ("x EQUAL 0", False),
+            ("nan EQUAL nan", False),
+        ],
+    )
+    def test_numbers_parse_like_sscanf(self, condition: str, expected: bool) -> None:
+        assert evaluate_condition(condition.split(), {}) is expected
+
+    @pytest.mark.parametrize(
+        ("condition", "expected"),
+        [
+            ("1.0 VERSION_EQUAL 1", True),
+            ("1.2.3-rc1 VERSION_EQUAL 1.2.3", True),
+            ("1.02 VERSION_EQUAL 1.2", True),
+            ("1.10 VERSION_GREATER 1.9", True),
+            ("v1.2 VERSION_EQUAL 0", True),
+            ("1..2 VERSION_EQUAL 1.0.2", True),
+            ("1.2 VERSION_LESS 1.2.1", True),
+        ],
+    )
+    def test_versions_compare_like_cmake(self, condition: str, expected: bool) -> None:
+        assert evaluate_condition(condition.split(), {}) is expected
+
 
 class TestIfCommand:
     """Tests for if/elseif/else/endif processing."""

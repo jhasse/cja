@@ -16,6 +16,7 @@ from .parser import Command
 from .targets import ImportedTarget
 from .utils import (
     UNDEFINED_VAR_SENTINEL,
+    compare_versions,
     is_truthy,
     split_unquoted_list_args,
     status_marker,
@@ -485,16 +486,6 @@ def unsupported_find_package_args(args: list[str]) -> list[str]:
     return unsupported
 
 
-def _compare_versions(left: str, right: str) -> int:
-    """Compare two dotted version strings like CMake's ``VERSION_*`` operators."""
-    a = list(_version_tuple(left))
-    b = list(_version_tuple(right))
-    width = max(len(a), len(b))
-    a += [0] * (width - len(a))
-    b += [0] * (width - len(b))
-    return (a > b) - (a < b)
-
-
 _PACKAGE_VERSION_RE = re.compile(r'set\(\s*PACKAGE_VERSION\s+"?(\d[^")\s]*)"?\s*\)')
 
 
@@ -555,7 +546,7 @@ def _config_version_compatible(
                 found = match.group(1)
                 if not requested:
                     return True, found
-                cmp = _compare_versions(found, requested)
+                cmp = compare_versions(found, requested)
                 return (cmp == 0 if exact else cmp >= 0), found
     return True, ""
 
@@ -711,8 +702,8 @@ def _fphsa_version_failure(
     if handle_range and range_text and range_text != UNDEFINED_VAR_SENTINEL:
         maximum = ctx.variables.get(f"{prefix}VERSION_MAX", "")
         exclusive = ctx.variables.get(f"{prefix}VERSION_RANGE_MAX") == "EXCLUDE"
-        too_new = _compare_versions(found, maximum) >= (0 if exclusive else 1)
-        if _compare_versions(found, requested) < 0 or too_new:
+        too_new = compare_versions(found, maximum) >= (0 if exclusive else 1)
+        if compare_versions(found, requested) < 0 or too_new:
             return (
                 f'Found unsuitable version "{found}", '
                 f"but required is in range [{range_text}]"
@@ -722,14 +713,14 @@ def _fphsa_version_failure(
     if ctx.variables.get(f"{prefix}VERSION_EXACT") == "TRUE":
         count = len(requested.split("."))
         head = ".".join(found.split(".")[:count])
-        if _compare_versions(head, requested) != 0:
+        if compare_versions(head, requested) != 0:
             return (
                 f'Found unsuitable version "{found}", '
                 f'but required is exact version "{requested}"'
             )
         return ""
 
-    if _compare_versions(found, requested) < 0:
+    if compare_versions(found, requested) < 0:
         return (
             f'Found unsuitable version "{found}", '
             f'but required is at least "{requested}"'
