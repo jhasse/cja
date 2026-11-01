@@ -125,3 +125,25 @@ def test_compiler_id_variables(tmp_path: Path) -> None:
     assert ctx.variables["CMAKE_CXX_COMPILER"] == "clang++"
     assert ctx.variables["CMAKE_C_COMPILER_ID"] == "GNU"
     assert ctx.variables["CMAKE_CXX_COMPILER_ID"] == "Clang"
+
+
+def test_compile_features_variables(tmp_path: Path) -> None:
+    """Projects like SDL check CMAKE_<LANG>_COMPILE_FEATURES before using them."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    (source_dir / "CMakeLists.txt").write_text(
+        "project(test_compile_features C CXX)\n"
+        'if("c_std_99" IN_LIST CMAKE_C_COMPILE_FEATURES)\n'
+        "  set(HAS_C99 yes)\n"
+        "endif()\n"
+    )
+
+    ctx = configure(source_dir, "build")
+
+    c_features = ctx.variables["CMAKE_C_COMPILE_FEATURES"].split(";")
+    cxx_features = ctx.variables["CMAKE_CXX_COMPILE_FEATURES"].split(";")
+    assert c_features[0] == "c_std_90"
+    assert "c_static_assert" in c_features
+    assert "cxx_constexpr" in cxx_features
+    assert cxx_features[-1] == "cxx_std_26"
+    assert ctx.variables["HAS_C99"] == "yes"
