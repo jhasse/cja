@@ -31,6 +31,15 @@ def select_if_block(
             or name in ctx.imported_targets
         )
 
+    def holds(condition: list[str]) -> bool:
+        return evaluate_condition(
+            condition,
+            ctx.variables,
+            target_exists=target_exists,
+            command_exists=lambda name: name in ctx.functions or name in ctx.macros,
+            test_exists=lambda name: any(test.name == name for test in ctx.tests),
+        )
+
     def _is_empty_string_token(token: str) -> bool:
         return token == "" or token in ('""', "''")
 
@@ -61,7 +70,7 @@ def select_if_block(
                 allow_undefined_empty=allow_undefined,
             )
         )
-    if evaluate_condition(if_args, ctx.variables, target_exists=target_exists):
+    if holds(if_args):
         # Execute commands from if to first elseif/else or endif
         block_end = blocks[0][1] if blocks else endif_idx
         return endif_idx, (block_start, block_end)
@@ -86,9 +95,7 @@ def select_if_block(
                         allow_undefined_empty=allow_undefined,
                     )
                 )
-            if evaluate_condition(
-                elseif_args, ctx.variables, target_exists=target_exists
-            ):
+            if holds(elseif_args):
                 block_start = block_idx + 1
                 block_end = blocks[j + 1][1] if j + 1 < len(blocks) else endif_idx
                 return endif_idx, (block_start, block_end)

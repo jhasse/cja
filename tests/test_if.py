@@ -6,7 +6,7 @@ import pytest
 
 from cja.build_context import BuildContext
 from cja.generator import configure, process_commands
-from cja.parser import Command
+from cja.parser import Command, parse
 from cja.syntax import evaluate_condition
 
 
@@ -350,3 +350,42 @@ class TestEnvVariable:
         )
         ctx = configure(source_dir, "build", quiet=True)
         assert ctx.variables["RESULT"] == "no"
+
+
+def _run(content: str) -> BuildContext:
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    process_commands(parse(content), ctx)
+    return ctx
+
+
+class TestExistenceOperators:
+    """Tests for if(COMMAND), if(POLICY) and if(TEST)."""
+
+    def test_command(self) -> None:
+        ctx = _run(
+            "function(my_func)\nendfunction()\n"
+            "macro(my_macro)\nendmacro()\n"
+            "foreach(name message TARGET_SOURCES My_Func my_macro check_ipo_supported nope)\n"
+            "  if(COMMAND ${name})\n"
+            "    list(APPEND FOUND ${name})\n"
+            "  endif()\n"
+            "endforeach()\n"
+        )
+        assert ctx.variables["FOUND"] == "message;TARGET_SOURCES;My_Func;my_macro"
+
+    def test_policy(self) -> None:
+        variables: dict[str, str] = {}
+        assert evaluate_condition(["POLICY", "CMP0000"], variables) is True
+        assert evaluate_condition(["POLICY", "CMP0155"], variables) is True
+        assert evaluate_condition(["POLICY", "CMP0156"], variables) is False
+        assert evaluate_condition(["POLICY", "CMP155"], variables) is False
+        assert evaluate_condition(["POLICY", "cmp0001"], variables) is False
+
+    def test_test(self) -> None:
+        ctx = _run(
+            "add_test(NAME my_test COMMAND true)\n"
+            "if(TEST my_test)\n  set(HAS_MY_TEST yes)\nendif()\n"
+            "if(TEST other)\n  set(HAS_OTHER yes)\nendif()\n"
+        )
+        assert ctx.variables["HAS_MY_TEST"] == "yes"
+        assert "HAS_OTHER" not in ctx.variables

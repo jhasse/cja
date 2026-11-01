@@ -15,6 +15,46 @@ from .utils import (
     is_truthy,
 )
 
+# Commands built into CMake (cmake --help-command-list), documented at
+# https://cmake.org/cmake/help/latest/command/<name>.html
+BUILTIN_COMMANDS = frozenset(
+    {
+        "add_compile_definitions", "add_compile_options", "add_custom_command",
+        "add_custom_target", "add_definitions", "add_dependencies", "add_executable",
+        "add_library", "add_link_options", "add_subdirectory", "add_test",
+        "aux_source_directory", "block", "break", "build_command", "build_name",
+        "cmake_file_api", "cmake_host_system_information", "cmake_instrumentation",
+        "cmake_language", "cmake_minimum_required", "cmake_parse_arguments",
+        "cmake_path", "cmake_pkg_config", "cmake_policy", "configure_file", "continue",
+        "create_test_sourcelist", "ctest_build", "ctest_configure", "ctest_coverage",
+        "ctest_empty_binary_directory", "ctest_memcheck", "ctest_read_custom_files",
+        "ctest_run_script", "ctest_sleep", "ctest_start", "ctest_submit", "ctest_test",
+        "ctest_update", "ctest_upload", "define_property", "else", "elseif",
+        "enable_language", "enable_testing", "endblock", "endforeach", "endfunction",
+        "endif", "endmacro", "endwhile", "exec_program", "execute_process", "export",
+        "export_library_dependencies", "file", "find_file", "find_library",
+        "find_package", "find_path", "find_program", "fltk_wrap_ui", "foreach",
+        "function", "get_cmake_property", "get_directory_property",
+        "get_filename_component", "get_property", "get_source_file_property",
+        "get_target_property", "get_test_property", "if", "include",
+        "include_directories", "include_external_msproject", "include_guard",
+        "include_regular_expression", "install", "install_files", "install_programs",
+        "install_targets", "link_directories", "link_libraries", "list", "load_cache",
+        "load_command", "macro", "make_directory", "mark_as_advanced", "math",
+        "message", "option", "output_required_files", "project", "qt_wrap_cpp",
+        "qt_wrap_ui", "remove", "remove_definitions", "return", "separate_arguments",
+        "set", "set_directory_properties", "set_property",
+        "set_source_files_properties", "set_target_properties", "set_tests_properties",
+        "site_name", "source_group", "string", "subdir_depends", "subdirs",
+        "target_compile_definitions", "target_compile_features",
+        "target_compile_options", "target_include_directories",
+        "target_link_directories", "target_link_libraries", "target_link_options",
+        "target_precompile_headers", "target_sources", "try_compile", "try_run",
+        "unset", "use_mangled_mesa", "utility_source", "variable_requires",
+        "variable_watch", "while", "write_file",
+    }
+)
+
 
 @dataclass
 class FetchContentInfo:
@@ -64,6 +104,9 @@ class Test:
     working_directory: str | None = None
     properties: dict[str, str] = field(default_factory=dict)
 
+
+# The newest policy of CMake 3.28, which cja reports as CMAKE_VERSION.
+_NEWEST_POLICY = 155
 
 # EQUAL, LESS, ... compare numbers, STREQUAL, STRLESS, ... strings and
 # VERSION_EQUAL, VERSION_LESS, ... versions.
@@ -120,8 +163,14 @@ def evaluate_condition(
     args: list[str],
     variables: dict[str, str],
     target_exists: Callable[[str], bool] | None = None,
+    command_exists: Callable[[str], bool] | None = None,
+    test_exists: Callable[[str], bool] | None = None,
 ) -> bool:
-    """Evaluate a CMake if() condition."""
+    """Evaluate a CMake if() condition.
+
+    ``command_exists`` is asked about lowercase names of commands that aren't
+    built into CMake, i.e. functions and macros.
+    """
     if not args:
         return False
 
@@ -182,7 +231,7 @@ def evaluate_condition(
             return res
 
         # Handle other unary operators
-        if args[i] in ("DEFINED", "EXISTS", "COMMAND", "TARGET"):
+        if args[i] in ("DEFINED", "EXISTS", "COMMAND", "TARGET", "TEST", "POLICY"):
             op = args[i]
             i += 1
             if i < len(args):
@@ -193,10 +242,16 @@ def evaluate_condition(
                 if op == "EXISTS":
                     return Path(val).exists()
                 if op == "COMMAND":
-                    # For now, just return False as we don't track all commands yet
-                    return False
+                    return val.lower() in BUILTIN_COMMANDS or (
+                        command_exists is not None and command_exists(val.lower())
+                    )
                 if op == "TARGET":
                     return target_exists(val) if target_exists else False
+                if op == "TEST":
+                    return test_exists(val) if test_exists else False
+                if op == "POLICY":
+                    match = re.fullmatch(r"CMP([0-9]{4})", val)
+                    return match is not None and int(match.group(1)) <= _NEWEST_POLICY
             return False
 
         # Handle binary operators/comparisons
