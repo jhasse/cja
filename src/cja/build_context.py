@@ -174,6 +174,8 @@ class BuildContext:
         default_factory=dict
     )  # User-defined macros
     tests: list[Test] = field(default_factory=list)  # Test definitions
+    # Messages of message(CHECK_START) still waiting for CHECK_PASS/CHECK_FAIL
+    check_messages: list[str] = field(default_factory=list)
     install_targets: list[InstallTarget] = field(
         default_factory=list
     )  # Installation targets

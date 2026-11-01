@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from cja.generator import BuildContext, configure, process_commands
-from cja.parser import Command
+from cja.parser import Command, parse
 
 
 def test_message_status(capsys: pytest.CaptureFixture[str]) -> None:
@@ -94,3 +94,30 @@ def test_message_send_error(
     assert "first" in err
     assert "second" in err
     assert not (tmp_path / "build.ninja").exists()
+
+
+def test_message_checks(capsys: pytest.CaptureFixture[str]) -> None:
+    """CHECK_PASS and CHECK_FAIL complete the message of the latest CHECK_START."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    process_commands(
+        parse(
+            'message(CHECK_START "Looking for foo")\n'
+            'message(CHECK_START "Looking for bar")\n'
+            'message(CHECK_FAIL "not found")\n'
+            'message(CHECK_PASS "found")\n'
+            "set(CMAKE_MESSAGE_LOG_LEVEL NOTICE)\n"
+            'message(CHECK_START "hidden")\n'
+            'message(CHECK_PASS "hidden")\n'
+            "unset(CMAKE_MESSAGE_LOG_LEVEL)\n"
+            'message(CHECK_PASS "orphan")\n'
+        ),
+        ctx,
+    )
+    captured = capsys.readouterr()
+    assert captured.out == (
+        "Looking for foo\n"
+        "Looking for bar\n"
+        "Looking for bar - not found\n"
+        "Looking for foo - found\n"
+    )
+    assert "Ignored CHECK_PASS without CHECK_START" in captured.err

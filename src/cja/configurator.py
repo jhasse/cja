@@ -3479,6 +3479,9 @@ int main() {{
                         "SEND_ERROR",
                         "FATAL_ERROR",
                         "DEPRECATION",
+                        "CHECK_START",
+                        "CHECK_PASS",
+                        "CHECK_FAIL",
                     )
                     # Check for mode keyword
                     mode = ""
@@ -3493,7 +3496,21 @@ int main() {{
                     if log_level not in log_levels:
                         log_level = "STATUS"
                     message_level = mode or "NOTICE"
-                    if message_level in log_levels and log_levels.index(
+                    # Checks are STATUS messages, and CHECK_PASS/CHECK_FAIL
+                    # complete the message of the latest CHECK_START.
+                    if mode.startswith("CHECK_"):
+                        message_level = "STATUS"
+                    is_result = mode in ("CHECK_PASS", "CHECK_FAIL")
+                    orphaned_result = is_result and not ctx.check_messages
+                    if mode == "CHECK_START":
+                        ctx.check_messages.append(message)
+                    elif is_result and not orphaned_result:
+                        message = f"{ctx.check_messages.pop()} - {message}"
+                    if orphaned_result:
+                        ctx.print_warning(
+                            f"Ignored {mode} without CHECK_START", cmd.line
+                        )
+                    elif message_level in log_levels and log_levels.index(
                         message_level
                     ) > log_levels.index(log_level):
                         pass  # Hidden at the current log level
