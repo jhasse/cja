@@ -38,6 +38,39 @@ def test_compile_feature_to_flag_unknown() -> None:
     assert compile_feature_to_flag("unknown_feature") is None
 
 
+def test_compile_feature_doesnt_lower_default_standard() -> None:
+    """Like in CMake, a feature below the compiler's default standard keeps it."""
+    variables = {"CMAKE_C_STANDARD_DEFAULT": "17", "CMAKE_CXX_STANDARD_DEFAULT": "20"}
+    assert compile_feature_to_flag("c_std_99", {}, variables) == "-std=gnu17"
+    assert compile_feature_to_flag("c_std_23", {}, variables) == "-std=gnu23"
+    assert compile_feature_to_flag("cxx_std_11", {}, variables) == "-std=c++20"
+    assert compile_feature_to_flag("cxx_std_23", {}, variables) == "-std=c++23"
+    # A <LANG>_STANDARD replaces the default as the starting point.
+    assert (
+        compile_feature_to_flag("c_std_11", {"C_STANDARD": "99"}, variables)
+        == "-std=gnu11"
+    )
+
+
+def test_compile_feature_at_default_standard_adds_no_flag(tmp_path: Path) -> None:
+    """Like in CMake, no -std flag is passed for the compiler's default standard."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    (source_dir / "main.c").write_text("int main(void) { return 0; }\n")
+    (source_dir / "CMakeLists.txt").write_text(
+        "project(cstd LANGUAGES C)\n"
+        "add_executable(app main.c)\n"
+        "target_compile_features(app PRIVATE c_std_99)\n"
+    )
+
+    from cja.generator import configure
+
+    ctx = configure(source_dir, "build")
+    assert ctx.variables["CMAKE_C_STANDARD_DEFAULT"] in ("11", "17", "23")
+    main_block = _c_compile_line((source_dir / "build.ninja").read_text(), "main.c")
+    assert "-std=" not in main_block
+
+
 def test_target_compile_features_executable() -> None:
     """Test target_compile_features on executable."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
@@ -198,7 +231,7 @@ def test_c_standard_target_property(tmp_path: Path) -> None:
     (source_dir / "CMakeLists.txt").write_text(
         "project(cstd LANGUAGES C)\n"
         "add_library(mylib STATIC lib.c)\n"
-        "set_property(TARGET mylib PROPERTY C_STANDARD 17)\n"
+        "set_property(TARGET mylib PROPERTY C_STANDARD 11)\n"
         "add_executable(app main.c)\n"
         "set_target_properties(app PROPERTIES C_STANDARD 99)\n"
         "target_link_libraries(app PRIVATE mylib)\n"
@@ -210,9 +243,9 @@ def test_c_standard_target_property(tmp_path: Path) -> None:
     content = (source_dir / "build.ninja").read_text()
     main_block = _c_compile_line(content, "main.c")
     assert "-std=gnu99" in main_block
-    assert "-std=gnu17" not in main_block
+    assert "-std=gnu11" not in main_block
     lib_block = _c_compile_line(content, "lib.c")
-    assert "-std=gnu17" in lib_block
+    assert "-std=gnu11" in lib_block
     assert "-std=gnu99" not in lib_block
 
 

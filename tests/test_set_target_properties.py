@@ -307,7 +307,7 @@ def test_visibility_extensions_and_linker_language(tmp_path: Path) -> None:
         "set(CMAKE_CXX_VISIBILITY_PRESET hidden)\n"
         "add_library(foo SHARED foo.c bar.cpp)\n"
         "set_target_properties(foo PROPERTIES C_VISIBILITY_PRESET protected"
-        " VISIBILITY_INLINES_HIDDEN ON CXX_STANDARD 17 CXX_EXTENSIONS ON)\n"
+        " VISIBILITY_INLINES_HIDDEN ON CXX_STANDARD 14 CXX_EXTENSIONS ON)\n"
         "add_executable(app main.c)\n"
         "set_target_properties(app PROPERTIES LINKER_LANGUAGE CXX)\n"
     )
@@ -319,7 +319,7 @@ def test_visibility_extensions_and_linker_language(tmp_path: Path) -> None:
     lines = (tmp_path / "build.ninja").read_text().splitlines()
     c_flags = lines[next(i for i, l in enumerate(lines) if "foo.c" in l) + 1]
     cxx_flags = lines[next(i for i, l in enumerate(lines) if "bar.cpp" in l) + 1]
-    assert "-std=gnu++17" in cxx_flags
+    assert "-std=gnu++14" in cxx_flags
     if platform.system() != "Windows":
         assert "-fvisibility=protected" in c_flags
         assert "-fvisibility-inlines-hidden" not in c_flags

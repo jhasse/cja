@@ -166,6 +166,49 @@ def _infer_compiler_version(compiler: str) -> str:
     return f"{major}.{minor}.{patch}"
 
 
+def _infer_standard_default(compiler: str, lang: str, flags: str) -> str:
+    """The standard a compiler uses by default, like CMAKE_<LANG>_STANDARD_DEFAULT.
+
+    It's derived from __STDC_VERSION__ or __cplusplus like in CMake's compiler
+    identification sources. ``flags`` are CMAKE_<LANG>_FLAGS, which CMake also
+    compiles them with.
+    """
+    parts = shlex.split(compiler) if compiler else []
+    if parts and Path(parts[0]).name.lower() in ("ccache", "sccache"):
+        parts = parts[1:]
+    if not parts:
+        return ""
+    source_lang = "c" if lang == "C" else "c++"
+    try:
+        out = subprocess.run(
+            [*parts, *split_flags(flags), "-x", source_lang, "-dM", "-E", "-"],
+            input="",
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    except (subprocess.CalledProcessError, OSError):
+        return ""
+    macro = "__STDC_VERSION__" if lang == "C" else "__cplusplus"
+    match = re.search(rf"^#define {macro} (\d+)L?$", out, re.MULTILINE)
+    if lang == "C":
+        value = int(match.group(1)) if match else 0
+        thresholds = ((201711, "23"), (201710, "17"), (201000, "11"), (199901, "99"))
+        return next((std for minimum, std in thresholds if value >= minimum), "90")
+    if not match:
+        return ""
+    value = int(match.group(1))
+    thresholds = (
+        (202303, "26"),
+        (202003, "23"),
+        (201704, "20"),
+        (201703, "17"),
+        (201402, "14"),
+        (201103, "11"),
+    )
+    return next((std for minimum, std in thresholds if value >= minimum), "98")
+
+
 def _infer_msvc_version(compiler: str) -> str:
     """Infer an MSVC-style version number (e.g. 1930, 1944)."""
     vc_tools_version = os.environ.get("VCToolsVersion", "").strip()
@@ -454,24 +497,44 @@ _CXX_COMPILE_FEATURES = (
 
 
 def compile_feature_to_flag(
-    feature: str, properties: dict[str, str] | None = None
+    feature: str,
+    properties: dict[str, str] | None = None,
+    variables: dict[str, str] | None = None,
 ) -> str | None:
     """Translate a CMake compile feature to a compiler flag.
 
     ``properties`` are those of the target being compiled; they decide whether
     GNU extensions are enabled (C_EXTENSIONS defaults to ON, like in CMake).
+    Like in CMake, a feature doesn't lower the compiler's default standard,
+    CMAKE_<LANG>_STANDARD_DEFAULT in ``variables``, unless the target has a
+    <LANG>_STANDARD.
     """
+    properties = properties or {}
     # Map cxx_std_XX features to -std=c++XX or -std=gnu++XX flags
     if feature.startswith("cxx_std_"):
         std_version = feature[8:]  # Extract "11", "14", "17", "20", "23", etc.
+        default = (variables or {}).get("CMAKE_CXX_STANDARD_DEFAULT", "")
+        if (
+            default
+            and not properties.get("CXX_STANDARD")
+            and _std_level("cxx", default) > _std_level("cxx", std_version)
+        ):
+            std_version = default
         # Unlike CMake, GNU extensions are only enabled with CXX_EXTENSIONS ON.
-        extensions = (properties or {}).get("CXX_EXTENSIONS", "").strip()
+        extensions = properties.get("CXX_EXTENSIONS", "").strip()
         prefix = "gnu++" if extensions and is_truthy(extensions) else "c++"
         return f"-std={prefix}{std_version}"
     # Map c_std_XX features to -std=gnuXX or -std=cXX flags
     if feature.startswith("c_std_"):
         std_version = feature[6:]
-        extensions = (properties or {}).get("C_EXTENSIONS", "").strip()
+        default = (variables or {}).get("CMAKE_C_STANDARD_DEFAULT", "")
+        if (
+            default
+            and not properties.get("C_STANDARD")
+            and _std_level("c", default) > _std_level("c", std_version)
+        ):
+            std_version = default
+        extensions = properties.get("C_EXTENSIONS", "").strip()
         prefix = "gnu" if not extensions or is_truthy(extensions) else "c"
         return f"-std={prefix}{std_version}"
     # Other features could be added here
@@ -1778,6 +1841,7 @@ def generate_ninja(
         ) -> list[str]:
             """Target compile flags for sources of the given language."""
             flags = list(base_flags)
+            own_options: set[str] = set()
             for option in raw_options:
                 opt = strip_generator_expressions(
                     option,
@@ -1786,17 +1850,28 @@ def generate_ninja(
                 )
                 for sub_opt in opt.split(";"):
                     sub_opt = sub_opt.strip()
+                    own_options.add(sub_opt)
                     if sub_opt and sub_opt not in flags:
                         flags.append(sub_opt)
             if language in ("C", "ASM"):
                 flags = [flag for flag in flags if not _CXX_STD_FLAG_RE.match(flag)]
-                return _keep_highest_std_flag(flags, "c")
-            flags = [flag for flag in flags if not _C_STD_FLAG_RE.match(flag)]
-            flags = [
-                _normalize_windows_clang_cxx_std(flag, windows_clangxx)
-                for flag in flags
-            ]
-            return _keep_highest_std_flag(flags, "cxx")
+                flags = _keep_highest_std_flag(flags, "c")
+                default = ctx.variables.get("CMAKE_C_STANDARD_DEFAULT")
+                default_flag = f"-std=gnu{default}"
+            else:
+                flags = [flag for flag in flags if not _C_STD_FLAG_RE.match(flag)]
+                flags = [
+                    _normalize_windows_clang_cxx_std(flag, windows_clangxx)
+                    for flag in flags
+                ]
+                flags = _keep_highest_std_flag(flags, "cxx")
+                default = ctx.variables.get("CMAKE_CXX_STANDARD_DEFAULT")
+                default_flag = f"-std=gnu++{default}"
+            # Like CMake, don't pass the standard the compiler uses anyway,
+            # unless the target's own compile options ask for it.
+            if default and default_flag not in own_options:
+                flags = [flag for flag in flags if flag != default_flag]
+            return flags
 
         def _target_pch_headers(
             target: Library | Executable, seen: frozenset[str] = frozenset()
@@ -1953,7 +2028,7 @@ def generate_ninja(
                     lib_compile_flags.append(opt)
             lib_compile_flags.extend(split_flags(lib.properties.get("COMPILE_FLAGS", "")))
             for feature in lib.compile_features:
-                flag = compile_feature_to_flag(feature, lib.properties)
+                flag = compile_feature_to_flag(feature, lib.properties, ctx.variables)
                 if flag:
                     lib_compile_flags.append(flag)
             lib_compile_flags.extend(target_std_flags(lib.properties))
@@ -1968,7 +2043,9 @@ def generate_ninja(
                 dep_lib = ctx.get_library(dep_name)
                 if dep_lib:
                     for feature in dep_lib.public_compile_features:
-                        flag = compile_feature_to_flag(feature, lib.properties)
+                        flag = compile_feature_to_flag(
+                            feature, lib.properties, ctx.variables
+                        )
                         if flag and flag not in lib_compile_flags:
                             lib_compile_flags.append(flag)
                     for inc_dir in dep_lib.public_include_directories:
@@ -1991,7 +2068,9 @@ def generate_ninja(
                     if imported_cflags and imported_cflags not in lib_compile_flags:
                         lib_compile_flags.append(imported_cflags)
                     for feature in imported.compile_features:
-                        flag = compile_feature_to_flag(feature, lib.properties)
+                        flag = compile_feature_to_flag(
+                            feature, lib.properties, ctx.variables
+                        )
                         if flag and flag not in lib_compile_flags:
                             lib_compile_flags.append(flag)
 
@@ -2240,7 +2319,7 @@ def generate_ninja(
                     compile_flags.append(opt)
             compile_flags.extend(split_flags(exe.properties.get("COMPILE_FLAGS", "")))
             for feature in exe.compile_features:
-                flag = compile_feature_to_flag(feature, exe.properties)
+                flag = compile_feature_to_flag(feature, exe.properties, ctx.variables)
                 if flag:
                     compile_flags.append(flag)
             compile_flags.extend(target_std_flags(exe.properties))
@@ -2254,7 +2333,9 @@ def generate_ninja(
 
                 if linked_lib:
                     for feature in linked_lib.public_compile_features:
-                        flag = compile_feature_to_flag(feature, exe.properties)
+                        flag = compile_feature_to_flag(
+                            feature, exe.properties, ctx.variables
+                        )
                         if flag and flag not in compile_flags:
                             compile_flags.append(flag)
                     # Check for public include directories from linked libraries
@@ -2277,7 +2358,9 @@ def generate_ninja(
                 if lib_name in ctx.imported_targets:
                     imported = ctx.imported_targets[lib_name]
                     for feature in imported.compile_features:
-                        flag = compile_feature_to_flag(feature, exe.properties)
+                        flag = compile_feature_to_flag(
+                            feature, exe.properties, ctx.variables
+                        )
                         if flag and flag not in compile_flags:
                             compile_flags.append(flag)
                     if imported.cflags:
@@ -3095,6 +3178,11 @@ def configure(
     )
     ctx.variables["CMAKE_C_COMPILE_FEATURES"] = _C_COMPILE_FEATURES
     ctx.variables["CMAKE_CXX_COMPILE_FEATURES"] = _CXX_COMPILE_FEATURES
+    for lang, compiler in (("C", ctx.c_compiler), ("CXX", ctx.cxx_compiler)):
+        flags = ctx.variables.get(f"CMAKE_{lang}_FLAGS", "")
+        default = _infer_standard_default(compiler, lang, flags)
+        if default:
+            ctx.variables[f"CMAKE_{lang}_STANDARD_DEFAULT"] = default
     if host_system == "Windows" and "MSVC_VERSION" not in ctx.variables:
         msvc_version = _infer_msvc_version(ctx.c_compiler)
         if msvc_version:
