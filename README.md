@@ -120,6 +120,7 @@ If there's a `.cmake-format.json`, the nearest one overrides them. These options
 * `max_subgroups_hwrap`, `max_pargs_hwrap`, `max_rows_cmdline`, `min_prefix_chars`, `max_prefix_chars` and
   `max_lines_hwrap`
 * `line_ending`, `command_case` and `disable`
+* `separate_ctrl_name_with_space` and `separate_fn_name_with_space`
 
 The `parse` section isn't needed: the keywords of custom commands are inferred from their arguments.
 

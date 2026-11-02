@@ -146,6 +146,51 @@ def test_command_case() -> None:
     )
 
 
+def test_separate_name_with_space() -> None:
+    """Like cmake-format, flow control and other commands are configured apart."""
+    source = (
+        "function(f)\n"
+        "  if(a)\n"
+        "    foo(b)\n"
+        "  elseif(c)\n"
+        "  else()\n"
+        "  endif()\n"
+        "  block()\n"
+        "  endblock()\n"
+        "endfunction()\n"
+    )
+    assert fmt(source, separate_ctrl_name_with_space=True) == (
+        "function (f)\n"
+        "  if (a)\n"
+        "    foo(b)\n"
+        "  elseif (c)\n"
+        "  else ()\n"
+        "  endif ()\n"
+        "  block()\n"
+        "  endblock()\n"
+        "endfunction ()\n"
+    )
+    assert fmt(source, separate_fn_name_with_space=True) == (
+        "function(f)\n"
+        "  if(a)\n"
+        "    foo (b)\n"
+        "  elseif(c)\n"
+        "  else()\n"
+        "  endif()\n"
+        "  block ()\n"
+        "  endblock ()\n"
+        "endfunction()\n"
+    )
+
+
+def test_separate_name_with_space_wraps_after_the_space() -> None:
+    source = "my_fun(aaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbb cccccccccccccccccccc dddddddd)\n"
+    assert fmt(source, line_width=60, separate_fn_name_with_space=True) == (
+        "my_fun (aaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbb\n"
+        "        cccccccccccccccccccc dddddddd)\n"
+    )
+
+
 def test_unknown_command_keywords_are_guessed() -> None:
     source = (
         "CPMAddPackage(NAME cereal URL https://github.com/USCiLab/cereal/archive/refs/tags/v1.3.2.tar.gz "
@@ -574,7 +619,8 @@ def test_cmake_format_json(tmp_path: Path) -> None:
     (tmp_path / ".cmake-format.json").write_text(
         '{"parse": {"additional_commands": {}},'
         ' "format": {"tab_size": 3, "use_tabchars": true, "line_ending": "windows",'
-        ' "command_case": "upper", "max_pargs_hwrap": 2}}'
+        ' "command_case": "upper", "max_pargs_hwrap": 2,'
+        ' "separate_ctrl_name_with_space": true, "separate_fn_name_with_space": false}}'
     )
     style = find_style(tmp_path / "sub")
     assert style.line_width == 100
@@ -584,9 +630,11 @@ def test_cmake_format_json(tmp_path: Path) -> None:
     assert style.line_ending == "CRLF"
     assert style.command_case == "upper"
     assert not style.one_line_if_fits
+    assert style.separate_ctrl_name_with_space
+    assert not style.separate_fn_name_with_space
     assert (
         format_source("if(a)\nset(b c d e)\nendif()\n", style)
-        == "IF(a)\r\n\tSET(b\r\n\t\t c\r\n\t\t d\r\n\t\t e)\r\nENDIF()\r\n"
+        == "IF (a)\r\n\tSET(b\r\n\t\t c\r\n\t\t d\r\n\t\t e)\r\nENDIF ()\r\n"
     )
 
     # Options of cmake-format < 0.6 aren't grouped into sections.

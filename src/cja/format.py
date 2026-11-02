@@ -46,6 +46,10 @@ class Style:
     # "canonical" lowercases the names of known commands, "lower", "upper" and
     # "unchanged" apply to all commands.
     command_case: str = "canonical"
+    # A space before the "(" of flow control commands like if(), and of all
+    # other commands
+    separate_ctrl_name_with_space: bool = False
+    separate_fn_name_with_space: bool = False
 
     # Keep a call on one line if it fits, ignoring max_subgroups_hwrap and
     # max_pargs_hwrap. Off when .cmake-format.json sets either of them.
@@ -216,6 +220,9 @@ def _apply_cmake_format(style: Style, config: dict[str, Any]) -> None:
         style.command_case = command_case
     if isinstance(disable := options.get("disable"), bool):
         style.disable = disable
+    for key in ("separate_ctrl_name_with_space", "separate_fn_name_with_space"):
+        if isinstance(value := options.get(key), bool):
+            setattr(style, key, value)
 
 
 def find_style(directory: Path) -> Style:
@@ -1034,9 +1041,17 @@ class StatementNode(Node):
 
     passes = ((0, False), (1, True), (2, True), (3, True), (4, True), (5, True))
 
-    def __init__(self, name: str, args: ArgGroup, trailing: list[str] | None) -> None:
+    def __init__(
+        self,
+        name: str,
+        args: ArgGroup,
+        trailing: list[str] | None,
+        paren_space: bool = False,
+    ) -> None:
         super().__init__()
         self.name = name
+        # What comes before the arguments
+        self.prefix = f"{name} (" if paren_space else f"{name}("
         self.args = args
         self.trailing = Comment(trailing) if trailing else None
         self.rparen_pos: Cursor = (0, 0)
@@ -1050,16 +1065,16 @@ class StatementNode(Node):
         return not (
             not self.wrap
             and end[0] - start[0] > 1
-            and len(self.name) + 1 > style.max_prefix_chars
+            and len(self.prefix) > style.max_prefix_chars
         )
 
     def _reflow(self, style: Style, cursor: Cursor, passno: int) -> Cursor:
         start = cursor
-        if len(self.name) + 1 <= style.min_prefix_chars:
+        if len(self.prefix) <= style.min_prefix_chars:
             self.wrap = False
         if starts_with_standalone_comment(self.args):
             self.wrap = True
-        cursor = (cursor[0], cursor[1] + len(self.name) + 1)
+        cursor = (cursor[0], cursor[1] + len(self.prefix))
         self.colextent = cursor[1]
 
         if self.wrap:
@@ -1087,7 +1102,7 @@ class StatementNode(Node):
         return cursor
 
     def write(self, canvas: Canvas) -> None:
-        canvas.put(self.pos, self.name + "(")
+        canvas.put(self.pos, self.prefix)
         self.args.write(canvas)
         canvas.put(self.rparen_pos, ")")
         if self.trailing is not None:
@@ -2062,6 +2077,15 @@ def source_command_specs(source: str, filename: str = "<stdin>") -> dict[str, Cm
     )
 
 
+# Commands that separate_ctrl_name_with_space applies to, like in cmake-format
+_FLOW_CONTROL_COMMANDS = frozenset(
+    {
+        *("if", "elseif", "else", "endif", "foreach", "endforeach"),
+        *("while", "endwhile", "function", "endfunction", "macro", "endmacro"),
+    }
+)
+
+
 def build_statement(
     stmt: Statement, style: Style, commands: dict[str, CmdSpec] | None = None
 ) -> StatementNode:
@@ -2094,7 +2118,11 @@ def build_statement(
             name = cmd_spec.spelling
         elif cmd_spec is not None or lower in CUSTOM_PARSERS or lower in OTHER_BUILTINS:
             name = lower
-    return StatementNode(name, args, stmt.trailing)
+    if lower in _FLOW_CONTROL_COMMANDS:
+        paren_space = style.separate_ctrl_name_with_space
+    else:
+        paren_space = style.separate_fn_name_with_space
+    return StatementNode(name, args, stmt.trailing, paren_space)
 
 
 # ---------------------------------------------------------------------------
