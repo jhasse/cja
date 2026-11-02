@@ -547,6 +547,37 @@ def strip_generator_expressions(
     return result
 
 
+def link_option_args(options: list[str], variables: dict[str, str]) -> list[str]:
+    """Turn LINK_OPTIONS entries into link command arguments, like CMake.
+
+    Lists are split, ``SHELL:`` groups are split shell-like, ``LINKER:`` items
+    are passed to the linker with ``-Wl,`` and repeated options are dropped
+    (except within ``SHELL:`` groups).
+    """
+    args: list[str] = []
+    seen: set[str] = set()
+    for option in options:
+        for item in strip_generator_expressions(option, variables).split(";"):
+            linker = item.startswith("LINKER:")
+            if linker:
+                item = item.removeprefix("LINKER:")
+            shell = item.startswith("SHELL:")
+            if shell:
+                parts = split_flags(item.removeprefix("SHELL:"))
+            elif linker:
+                parts = item.split(",")
+            else:
+                parts = [item]
+            parts = [part for part in parts if part]
+            if linker and parts:
+                parts = ["-Wl," + ",".join(parts)]
+            for part in parts:
+                if shell or part not in seen:
+                    seen.add(part)
+                    args.append(part)
+    return args
+
+
 def split_unquoted_list_args(value: str) -> list[str]:
     """Split list arguments on semicolons outside generator expressions."""
     if ";" not in value:

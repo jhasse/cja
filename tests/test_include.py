@@ -38,6 +38,26 @@ def test_include_unknown_module(capsys: pytest.CaptureFixture[str]) -> None:
     assert "unknown module: UnknownModule" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize(
+    "module",
+    [
+        "CheckCSourceCompiles",
+        "CheckCXXSourceCompiles",
+        "CheckCSourceRuns",
+        "CheckCXXSourceRuns",
+        "CheckLinkerFlag",
+        "CheckStructHasMember",
+        "CMakePushCheckState",
+    ],
+)
+def test_include_check_module(module: str, capsys: pytest.CaptureFixture[str]) -> None:
+    """Modules whose commands are built into cja are known."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    process_commands([Command(name="include", args=[module], line=1)], ctx)
+
+    assert "unknown module" not in capsys.readouterr().err
+
+
 def test_include_missing_file_warns(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

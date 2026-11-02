@@ -27,6 +27,7 @@ from .utils import (
     ipo_flag,
     is_truthy,
     is_verbatim_include,
+    link_option_args,
     make_relative,
     resolve_cmake_path,
     split_flags,
@@ -769,37 +770,6 @@ def _quote_if_spaced(part: str) -> str:
     return _quote_ninja_cmd_part(part) if re.search(r"\s", part) else part
 
 
-def _link_option_flags(options: list[str], variables: dict[str, str]) -> list[str]:
-    """Turn LINK_OPTIONS entries into link command arguments, like CMake.
-
-    Lists are split, ``SHELL:`` groups are split shell-like, ``LINKER:`` items
-    are passed to the linker with ``-Wl,`` and repeated options are dropped
-    (except within ``SHELL:`` groups).
-    """
-    flags: list[str] = []
-    seen: set[str] = set()
-    for option in options:
-        for item in strip_generator_expressions(option, variables).split(";"):
-            linker = item.startswith("LINKER:")
-            if linker:
-                item = item.removeprefix("LINKER:")
-            shell = item.startswith("SHELL:")
-            if shell:
-                parts = split_flags(item.removeprefix("SHELL:"))
-            elif linker:
-                parts = item.split(",")
-            else:
-                parts = [item]
-            parts = [part for part in parts if part]
-            if linker and parts:
-                parts = ["-Wl," + ",".join(parts)]
-            for part in parts:
-                if shell or part not in seen:
-                    seen.add(part)
-                    flags.append(_quote_if_spaced(part))
-    return flags
-
-
 def _dependency_link_options(
     ctx: BuildContext, own_options: list[str], dependencies: list[str]
 ) -> list[str]:
@@ -812,7 +782,9 @@ def _dependency_link_options(
         if lib and id(lib.public_link_options) not in seen:
             seen.add(id(lib.public_link_options))
             options.extend(lib.public_link_options)
-    return _link_option_flags(options, ctx.variables)
+    return [
+        _quote_if_spaced(part) for part in link_option_args(options, ctx.variables)
+    ]
 
 
 def _include_flag(path: str, source_dir: Path) -> str:

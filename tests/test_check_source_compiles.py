@@ -117,3 +117,49 @@ def test_check_c_source_compiles_translates_dot_lib_for_gnu_on_windows(
     )
     assert calls
     assert "-lws2_32" in calls[0]
+
+
+def test_check_source_runs() -> None:
+    content = (
+        "check_c_source_runs([==[\n"
+        "int main(void) { return 0; }\n"
+        "]==] C_RUNS)\n"
+        "check_c_source_runs([==[\n"
+        "int main(void) { return 1; }\n"
+        "]==] C_FAILS)\n"
+        "check_c_source_runs([==[\n"
+        "this is not valid C code;\n"
+        "]==] C_BAD)\n"
+        "check_cxx_source_runs([==[\n"
+        "#include <vector>\n"
+        "int main() { return std::vector<int>(3).size() == 3 ? 0 : 1; }\n"
+        "]==] CXX_RUNS)\n"
+    )
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    process_commands(parse(content), ctx)
+
+    assert ctx.variables["C_RUNS"] == "1"
+    assert ctx.variables["C_FAILS"] == ""
+    assert ctx.variables["C_BAD"] == ""
+    assert ctx.variables["CXX_RUNS"] == "1"
+
+
+def test_check_source_compiles_required_link_options(monkeypatch) -> None:
+    """CMAKE_REQUIRED_LINK_OPTIONS are link options with LINKER: and SHELL:."""
+    calls: list[list[str]] = []
+
+    def fake_run(
+        cmd: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(configurator.subprocess, "run", fake_run)
+
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    ctx.variables["CMAKE_REQUIRED_LINK_OPTIONS"] = "LINKER:-z,now;SHELL:-a  b;-c d"
+
+    assert configurator._check_source_compiles(
+        ctx, "int main(void) { return 0; }", "C", []
+    )
+    assert calls[0][-4:] == ["-Wl,-z,now", "-a", "b", "-c d"]

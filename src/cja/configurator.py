@@ -101,6 +101,7 @@ from .utils import (
     flatten_single_extracted_subdir,
     ipo_flag,
     is_truthy,
+    link_option_args,
     make_relative,
     resolve_cmake_path,
     split_unquoted_list_args,
@@ -123,9 +124,11 @@ def _check_source_compiles(
     code: str,
     language: str,
     fail_regexes: list[str],
+    run: bool = False,
 ) -> bool:
     """Compile (and, unless CMAKE_TRY_COMPILE_TARGET_TYPE is STATIC_LIBRARY,
     link) a snippet of source code, honoring the CMAKE_REQUIRED_* variables.
+    With ``run``, the program is also run and has to exit with 0.
 
     Mirrors the bits of CheckCSourceCompiles/CheckCXXSourceCompiles that real
     projects rely on (flags, defs, includes, libraries, link options and
@@ -156,7 +159,9 @@ def _check_source_compiles(
     required_flags = _as_list("CMAKE_REQUIRED_FLAGS")
     required_defs = _as_list("CMAKE_REQUIRED_DEFINITIONS")
     required_includes = _as_list("CMAKE_REQUIRED_INCLUDES", split_words=False)
-    required_link_options = _as_list("CMAKE_REQUIRED_LINK_OPTIONS")
+    required_link_options = link_option_args(
+        [ctx.variables.get("CMAKE_REQUIRED_LINK_OPTIONS", "")], ctx.variables
+    )
     required_libraries = _as_list("CMAKE_REQUIRED_LIBRARIES")
     # The compiler takes libraries as -lfoo or as file paths.
     # CMAKE_REQUIRED_LIBRARIES entries may be bare names ("dl", "m"), ".lib"
@@ -176,14 +181,15 @@ def _check_source_compiles(
 
     # STATIC_LIBRARY means "compile only" (no linking), matching CMake's
     # CMAKE_TRY_COMPILE_TARGET_TYPE handling.
-    compile_only = (
+    compile_only = not run and (
         ctx.variables.get("CMAKE_TRY_COMPILE_TARGET_TYPE", "") == "STATIC_LIBRARY"
     )
 
     tmpdir = Path(tempfile.mkdtemp())
     src_path = tmpdir / f"src{suffix}"
     src_path.write_text(code, encoding="utf-8")
-    out_path = tmpdir / ("out.o" if compile_only else "out")
+    # .exe so that Windows can run it
+    out_path = tmpdir / ("out.o" if compile_only else "out.exe")
 
     cmd: list[str] = [compiler]
     cmd.extend(required_flags)
@@ -204,7 +210,6 @@ def _check_source_compiles(
         return False
 
     output = (result.stdout or "") + (result.stderr or "")
-    shutil.rmtree(tmpdir, ignore_errors=True)
 
     success = result.returncode == 0
     if success and fail_regexes:
@@ -215,7 +220,81 @@ def _check_source_compiles(
                     break
             except re.error:
                 continue
+    if success and run:
+        try:
+            ran = subprocess.run([out_path], capture_output=True, check=False)
+            success = ran.returncode == 0
+        except OSError:
+            success = False
+    shutil.rmtree(tmpdir, ignore_errors=True)
     return success
+
+
+# Output of compilers that ignored a flag (CMakeCheckCompilerFlagCommonPatterns)
+_CHECK_FLAG_FAIL_REGEXES = (
+    r"[Uu]nrecogni[sz]ed [^\n]*option",
+    r"switch [^\n]* is no longer supported",
+    r"unknown [^\n]*option",
+    r"optimization flag [^\n]* not supported",
+    r"unknown argument ignored",
+    r"ignoring unknown option",
+    r"warning D9002",
+    r"option[^\n]*not supported",
+    r"invalid argument [^\n]*option",
+    r"ignoring option [^\n]*argument required",
+    r"ignoring option [^\n]*argument is of wrong type",
+    r"[Uu]nknown option",
+    r"[Ww]arning: [Oo]ption",
+    r"command option [^\n]* is not recognized",
+    r"command option [^\n]* contains an incorrect subargument",
+    r"Option [^\n]* is not recognized.  Option will be ignored.",
+    r"not supported in this configuration. ignored",
+    r"File with unknown suffix passed to linker",
+    r"[Uu]nknown switch",
+    r"WARNING: unknown flag:",
+    r"Incorrect command line option:",
+    r"Warning: illegal option",
+    r"[Ww]arning: Invalid suboption",
+    r"An invalid option [^\n]* appears on the command line",
+    r"WARNING: invalid compiler option",
+)
+
+
+def _check_linker_flag(ctx: "BuildContext", language: str, flag: str) -> bool:
+    """Link a program with ``flag``, like check_linker_flag() of CMake."""
+    if language == "CXX":
+        code = "int main() { return 0; }"
+        language_regex = r"C\+\+"
+    else:
+        code = "int main(void) { return 0; }"
+        language_regex = "C"
+    fail_regexes = [
+        "command[ -]line option [^\n]* is valid for [^\n]* but not for "
+        + language_regex,
+        rf"-Werror=[^\n]* argument [^\n]* is not valid for {language_regex}",
+        *_CHECK_FLAG_FAIL_REGEXES,
+    ]
+    for item in flag.split(";"):
+        fail_regexes.append(rf"warning: [^\n]*{re.escape(item)}[^\n]* ignored")
+    # The flag replaces the link options, and messages are in English to match.
+    saved_options = ctx.variables.get("CMAKE_REQUIRED_LINK_OPTIONS")
+    ctx.variables["CMAKE_REQUIRED_LINK_OPTIONS"] = flag
+    saved_locale = {
+        name: os.environ.get(name) for name in ("LC_ALL", "LC_MESSAGES", "LANG")
+    }
+    os.environ.update(dict.fromkeys(saved_locale, "C"))
+    try:
+        return _check_source_compiles(ctx, code, language, fail_regexes)
+    finally:
+        if saved_options is None:
+            ctx.variables.pop("CMAKE_REQUIRED_LINK_OPTIONS", None)
+        else:
+            ctx.variables["CMAKE_REQUIRED_LINK_OPTIONS"] = saved_options
+        for name, value in saved_locale.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
 
 def _parse_source_check_args(args: list[str]) -> tuple[str, str, list[str]]:
@@ -1337,6 +1416,13 @@ def process_commands(
                         "CheckIPOSupported",
                         "CheckCXXCompilerFlag",
                         "CheckCCompilerFlag",
+                        "CheckCSourceCompiles",
+                        "CheckCXXSourceCompiles",
+                        "CheckCSourceRuns",
+                        "CheckCXXSourceRuns",
+                        "CheckLinkerFlag",
+                        "CheckStructHasMember",
+                        "CMakePushCheckState",
                         "CheckCXXSymbolExists",
                         "CheckSymbolExists",
                         "CheckIncludeFile",
@@ -1708,19 +1794,68 @@ def process_commands(
                 for name in check_state_vars:
                     ctx.variables[name] = ""
 
-            case "check_c_source_compiles" | "check_cxx_source_compiles":
-                # check_(c|cxx)_source_compiles(<code> <var> [FAIL_REGEX <re>...])
+            case (
+                "check_c_source_compiles"
+                | "check_cxx_source_compiles"
+                | "check_c_source_runs"
+                | "check_cxx_source_runs"
+            ):
+                # check_(c|cxx)_source_(compiles|runs)(<code> <var>
+                #                                      [FAIL_REGEX <re>...])
                 if len(args) >= 2:
                     if "SRC_EXT" in args[2:]:
                         ctx.check_unsupported_args(cmd, ["SRC_EXT"], strict)
                     code, result_var, fail_regexes = _parse_source_check_args(args)
-                    language = (
-                        "CXX" if cmd.name == "check_cxx_source_compiles" else "C"
-                    )
+                    language = "CXX" if cmd.name.startswith("check_cxx_") else "C"
+                    run = cmd.name.endswith("_runs")
                     success = _check_source_compiles(
-                        ctx, code, language, fail_regexes
+                        ctx, code, language, fail_regexes, run=run
                     )
                     ctx.set_cache(result_var, "1" if success else "")
+
+            case "check_struct_has_member":
+                # check_struct_has_member(<struct> <member> <headers> <var>
+                #                         [LANGUAGE <lang>])
+                if len(args) >= 4:
+                    struct, member, headers, result_var = args[:4]
+                    language = "C"
+                    if len(args) == 6 and args[4] == "LANGUAGE":
+                        language = args[5]
+                    elif len(args) > 4:
+                        unknown = ";".join(args[4:])
+                        ctx.print_error(
+                            f"check_struct_has_member() got unknown arguments: {unknown}",
+                            cmd.line,
+                        )
+                        raise SystemExit(1)
+                    if language not in ("C", "CXX"):
+                        ctx.print_error(
+                            f"check_struct_has_member() doesn't support {language}, "
+                            "only C and CXX",
+                            cmd.line,
+                        )
+                        raise SystemExit(1)
+                    includes = "".join(
+                        f"#include <{header}>\n"
+                        for header in headers.split(";")
+                        if header
+                    )
+                    test_code = f"""
+{includes}
+int main(void)
+{{
+  (void)sizeof((({struct} *)0)->{member});
+  return 0;
+}}
+"""
+                    found = _check_source_compiles(ctx, test_code, language, [])
+                    ctx.set_cache(result_var, "1" if found else "")
+
+            case "check_linker_flag":
+                # check_linker_flag(<lang> <flag> <var>)
+                if len(args) >= 3:
+                    supported = _check_linker_flag(ctx, args[0], args[1])
+                    ctx.set_cache(args[2], "1" if supported else "")
 
             case "check_c_compiler_flag":
                 # check_c_compiler_flag(<flag> <var>)
