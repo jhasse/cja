@@ -1,5 +1,5 @@
 Name:           cja
-Version:        0.10.1
+Version:        0.10.2
 Release:        %autorelease
 Summary:        CMake-compatible build system that generates Ninja build files
 
