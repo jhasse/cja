@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from cja.generator import (
     BuildContext,
     compile_feature_to_flag,
@@ -62,6 +64,7 @@ def test_extensions_off_without_standard() -> None:
     assert target_std_flags({"C_EXTENSIONS": "ON"}, variables) == []
     assert target_std_flags({}, variables) == []
 
+@pytest.mark.compiler_standard_default
 def test_compile_feature_at_default_standard_adds_no_flag(tmp_path: Path) -> None:
     """Like in CMake, no -std flag is passed for the compiler's default standard."""
     source_dir = tmp_path / "src"
