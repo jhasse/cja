@@ -434,6 +434,24 @@ def find_matching_endforeach(
     return -1  # unreachable
 
 
+def find_matching_endwhile(
+    commands: list[Command], start: int, ctx: BuildContext
+) -> int:
+    """Find the index of the endwhile() matching the while() at start."""
+    depth = 1
+    i = start + 1
+    while i < len(commands):
+        if commands[i].name == "while":
+            depth += 1
+        elif commands[i].name == "endwhile":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    ctx.raise_syntax_error("No matching endwhile() for while()", commands[start].line)
+    return -1  # unreachable
+
+
 def find_matching_endfunction(
     commands: list[Command], start: int, ctx: BuildContext
 ) -> int:

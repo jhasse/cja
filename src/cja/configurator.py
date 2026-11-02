@@ -29,6 +29,7 @@ from .build_context import (
     CustomCommand,
     CustomTarget,
     TrackedDict,
+    find_matching_endwhile,
 )
 from .commands import (
     check_target_exists,
@@ -69,6 +70,7 @@ from .config_utils import (
     _render_basic_package_version_file,
     _render_package_init_block,
     build_foreach_info,
+    condition_holds,
     select_if_block,
 )
 from .find_commands import (
@@ -523,6 +525,13 @@ def process_commands(
             frame.foreach_index += 1
             stack.append(Frame(commands=frame.foreach_body, pc=0, kind="commands"))
             continue
+        if frame.kind == "while":
+            assert frame.while_command is not None
+            if not condition_holds(ctx, frame.while_command, strict):
+                stack.pop()
+                continue
+            stack.append(Frame(commands=frame.while_body, pc=0, kind="commands"))
+            continue
         if frame.kind == "fetchcontent":
             if frame.fetchcontent_index >= len(frame.fetchcontent_names):
                 if frame.on_exit:
@@ -832,7 +841,7 @@ def process_commands(
                 or (arg.startswith('"${') and arg.endswith('}"'))
                 or (arg.startswith("'${") and arg.endswith("}'"))
             )
-            if cmd.name in ("if", "elseif"):
+            if cmd.name in ("if", "elseif", "while"):
                 allow_undefined = (
                     idx + 2 < len(cmd.args)
                     and cmd.args[idx + 1] == "STREQUAL"
@@ -906,6 +915,22 @@ def process_commands(
             case "endforeach":
                 ctx.raise_syntax_error("Unexpected endforeach()", cmd.line)
 
+            case "while":
+                endwhile_idx = find_matching_endwhile(current_commands, frame.pc, ctx)
+                stack.append(
+                    Frame(
+                        commands=None,
+                        kind="while",
+                        while_command=cmd,
+                        while_body=current_commands[frame.pc + 1 : endwhile_idx],
+                    )
+                )
+                frame.pc = endwhile_idx + 1
+                continue
+
+            case "endwhile":
+                ctx.raise_syntax_error("Unexpected endwhile()", cmd.line)
+
             case "function":
                 frame.pc = handle_function(ctx, current_commands, frame.pc, args)
                 continue
@@ -957,12 +982,12 @@ def process_commands(
                 continue
 
             case "break":
-                # Pop frames until the innermost foreach frame is removed.
+                # Pop frames until the innermost loop frame is removed.
                 loop_index = next(
                     (
                         i
                         for i in range(len(stack) - 1, -1, -1)
-                        if stack[i].kind == "foreach"
+                        if stack[i].kind in ("foreach", "while")
                     ),
                     None,
                 )
@@ -974,13 +999,13 @@ def process_commands(
                 continue
 
             case "continue":
-                # Pop frames until (but not including) the innermost foreach frame,
-                # then let the foreach frame advance to its next iteration naturally.
+                # Pop frames until (but not including) the innermost loop frame,
+                # then let the loop frame advance to its next iteration naturally.
                 loop_index = next(
                     (
                         i
                         for i in range(len(stack) - 1, -1, -1)
-                        if stack[i].kind == "foreach"
+                        if stack[i].kind in ("foreach", "while")
                     ),
                     None,
                 )

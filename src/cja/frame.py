@@ -14,6 +14,8 @@ class Frame:
     foreach_index: int = 0
     foreach_loop_var: str = ""
     foreach_body: list[Command] | None = None
+    while_command: Command | None = None
+    while_body: list[Command] = field(default_factory=list)
     fetchcontent_names: list[str] = field(default_factory=list)
     fetchcontent_index: int = 0
     fetchcontent_cmd: Command | None = None

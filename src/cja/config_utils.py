@@ -10,6 +10,56 @@ from .syntax import evaluate_condition, find_else_or_elseif
 from .utils import split_unquoted_list_args
 
 
+def _is_exact_var_token(token: str) -> bool:
+    return (
+        (token.startswith("${") and token.endswith("}"))
+        or (token.startswith('"${') and token.endswith('}"'))
+        or (token.startswith("'${") and token.endswith("}'"))
+    )
+
+
+def _condition_args(ctx: BuildContext, command: Command, strict: bool) -> list[str]:
+    """Expand the arguments of a condition, splitting unquoted lists."""
+    expanded: list[str] = []
+    for i, arg in enumerate(command.args):
+        if i < len(command.is_bracket) and command.is_bracket[i]:
+            expanded.append(arg)
+            continue
+        # Match CMake condition behavior: undefined ${VAR} in a condition
+        # evaluates as empty, rather than producing a strict warning.
+        value = ctx.expand_variables(
+            arg,
+            strict,
+            command.line,
+            allow_undefined_empty=_is_exact_var_token(arg),
+        )
+        quoted = i < len(command.is_quoted) and command.is_quoted[i]
+        if ";" in value and not quoted:
+            expanded.extend(item for item in split_unquoted_list_args(value) if item)
+        else:
+            expanded.append(value)
+    return expanded
+
+
+def condition_holds(ctx: BuildContext, command: Command, strict: bool) -> bool:
+    """Evaluate the condition of an if(), elseif() or while() command."""
+
+    def target_exists(name: str) -> bool:
+        return (
+            ctx.get_library(name) is not None
+            or ctx.get_executable(name) is not None
+            or name in ctx.imported_targets
+        )
+
+    return evaluate_condition(
+        _condition_args(ctx, command, strict),
+        ctx.variables,
+        target_exists=target_exists,
+        command_exists=lambda name: name in ctx.functions or name in ctx.macros,
+        test_exists=lambda name: any(test.name == name for test in ctx.tests),
+    )
+
+
 def select_if_block(
     ctx: BuildContext,
     commands: list[Command],
@@ -25,55 +75,8 @@ def select_if_block(
 
     block_start = pc + 1
 
-    def target_exists(name: str) -> bool:
-        return (
-            ctx.get_library(name) is not None
-            or ctx.get_executable(name) is not None
-            or name in ctx.imported_targets
-        )
-
-    def holds(condition: list[str]) -> bool:
-        return evaluate_condition(
-            condition,
-            ctx.variables,
-            target_exists=target_exists,
-            command_exists=lambda name: name in ctx.functions or name in ctx.macros,
-            test_exists=lambda name: any(test.name == name for test in ctx.tests),
-        )
-
-    def _is_exact_var_token(token: str) -> bool:
-        return (
-            (token.startswith("${") and token.endswith("}"))
-            or (token.startswith('"${') and token.endswith('}"'))
-            or (token.startswith("'${") and token.endswith("}'"))
-        )
-
-    def condition_args(command: Command) -> list[str]:
-        """Expand the arguments of an if() or elseif(), splitting unquoted lists."""
-        expanded: list[str] = []
-        for i, arg in enumerate(command.args):
-            if i < len(command.is_bracket) and command.is_bracket[i]:
-                expanded.append(arg)
-                continue
-            # Match CMake condition behavior: undefined ${VAR} in if()/elseif()
-            # evaluates as empty, rather than producing a strict warning.
-            value = ctx.expand_variables(
-                arg,
-                strict,
-                command.line,
-                allow_undefined_empty=_is_exact_var_token(arg),
-            )
-            quoted = i < len(command.is_quoted) and command.is_quoted[i]
-            if ";" in value and not quoted:
-                expanded.extend(
-                    item for item in split_unquoted_list_args(value) if item
-                )
-            else:
-                expanded.append(value)
-        return expanded
-
     # Check the if condition
-    if holds(condition_args(cmd)):
+    if condition_holds(ctx, cmd, strict):
         # Execute commands from if to first elseif/else or endif
         block_end = blocks[0][1] if blocks else endif_idx
         return endif_idx, (block_start, block_end)
@@ -81,7 +84,7 @@ def select_if_block(
     # Check elseif/else blocks
     for j, (block_type, block_idx, _) in enumerate(blocks):
         if block_type == "elseif":
-            if holds(condition_args(commands[block_idx])):
+            if condition_holds(ctx, commands[block_idx], strict):
                 block_start = block_idx + 1
                 block_end = blocks[j + 1][1] if j + 1 < len(blocks) else endif_idx
                 return endif_idx, (block_start, block_end)
