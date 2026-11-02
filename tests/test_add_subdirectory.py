@@ -305,3 +305,40 @@ def test_subdirectory_compile_options_do_not_leak_to_parent(tmp_path: Path) -> N
     )
     assert "-Werror" not in app_compile_line
     assert "-Wshadow" not in app_compile_line
+
+
+def test_compile_options_of_targets_created_by_helpers(tmp_path: Path) -> None:
+    """Targets belong to the directory calling the helper that creates them."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    (source_dir / "cmake").mkdir()
+    (source_dir / "cmake" / "helpers.cmake").write_text(
+        "function(make_lib_function name)\n"
+        "  add_library(${name} STATIC sub.cpp)\n"
+        "endfunction()\n"
+        "macro(make_lib_macro name)\n"
+        "  add_library(${name} STATIC sub.cpp)\n"
+        "endmacro()\n"
+    )
+    (source_dir / "CMakeLists.txt").write_text(
+        "include(cmake/helpers.cmake)\nadd_subdirectory(subdir)\n"
+    )
+    sub_dir = source_dir / "subdir"
+    sub_dir.mkdir()
+    (sub_dir / "sub.cpp").write_text("int sub() { return 0; }\n")
+    (sub_dir / "CMakeLists.txt").write_text(
+        "add_compile_options(-Wshadow)\n"
+        "make_lib_function(function_lib)\n"
+        "make_lib_macro(macro_lib)\n"
+    )
+
+    from cja.generator import configure
+
+    configure(source_dir, "build")
+    lines = (source_dir / "build.ninja").read_text().splitlines()
+
+    for name in ("function_lib", "macro_lib"):
+        index = next(
+            i for i, line in enumerate(lines) if f"/{name}_sub.o: cxx" in line
+        )
+        assert "-Wshadow" in lines[index + 1]

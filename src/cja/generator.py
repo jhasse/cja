@@ -1964,11 +1964,7 @@ def generate_ninja(
             uses_cxx = False
 
             # Collect compile flags from global options, compile definitions, compile features, include dirs, and linked libraries
-            target_dir = (
-                lib.defined_file.parent
-                if lib.defined_file is not None
-                else ctx.source_dir
-            )
+            target_dir = lib.source_dir or ctx.source_dir
             dir_compile_options = _collect_directory_property_chain(
                 target_dir, "COMPILE_OPTIONS"
             )
@@ -2265,11 +2261,7 @@ def generate_ninja(
             expanded_link_libraries = order_link_libraries(exe.link_libraries)
 
             # Collect cflags from global options, compile definitions, compile features, include dirs, linked libraries, and imported targets
-            target_dir = (
-                exe.defined_file.parent
-                if exe.defined_file is not None
-                else ctx.source_dir
-            )
+            target_dir = exe.source_dir or ctx.source_dir
             dir_compile_options = _collect_directory_property_chain(
                 target_dir, "COMPILE_OPTIONS"
             )

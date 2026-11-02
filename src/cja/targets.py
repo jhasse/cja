@@ -13,6 +13,8 @@ class Library:
     interface_sources: list[str] = field(default_factory=list)
     defined_file: Path | None = None
     defined_line: int = 0
+    # The directory the target was created in (its CMAKE_CURRENT_SOURCE_DIR)
+    source_dir: Path | None = None
     binary_dir: str = ""
     compile_features: list[str] = field(default_factory=list)  # PRIVATE features
     public_compile_features: list[str] = field(default_factory=list)  # PUBLIC features
@@ -53,6 +55,8 @@ class Executable:
     sources: list[str]
     defined_file: Path | None = None
     defined_line: int = 0
+    # The directory the target was created in (its CMAKE_CURRENT_SOURCE_DIR)
+    source_dir: Path | None = None
     binary_dir: str = ""
     link_libraries: list[str] = field(default_factory=list)
     compile_features: list[str] = field(default_factory=list)

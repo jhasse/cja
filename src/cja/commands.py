@@ -243,12 +243,12 @@ def handle_include_directories(
     # directory, including ones created before this call (matching CMake's
     # generate-time directory property behavior).
     for lib in ctx.libraries:
-        if lib.defined_file is not None and lib.defined_file.parent == ctx.current_source_dir:
+        if lib.source_dir == ctx.current_source_dir:
             for d in dirs:
                 if d not in lib.include_directories:
                     lib.include_directories.append(d)
     for exe in ctx.executables:
-        if exe.defined_file is not None and exe.defined_file.parent == ctx.current_source_dir:
+        if exe.source_dir == ctx.current_source_dir:
             for d in dirs:
                 if d not in exe.include_directories:
                     exe.include_directories.append(d)
@@ -1424,6 +1424,7 @@ def handle_add_library(
                         alias_for=target_name,
                         defined_file=ctx.current_list_file,
                         defined_line=cmd.line,
+                        source_dir=lib.source_dir,
                         binary_dir=lib.binary_dir,
                     )
                 )
@@ -1488,6 +1489,7 @@ def handle_add_library(
                 properties=default_properties,
                 defined_file=ctx.current_list_file,
                 defined_line=cmd.line,
+                source_dir=ctx.current_source_dir,
                 binary_dir=ctx.variables.get(
                     "CMAKE_CURRENT_BINARY_DIR", to_posix_path(ctx.build_dir)
                 ),
@@ -1537,6 +1539,7 @@ def handle_add_executable(
                 properties=default_properties,
                 defined_file=ctx.current_list_file,
                 defined_line=cmd.line,
+                source_dir=ctx.current_source_dir,
                 binary_dir=ctx.variables.get(
                     "CMAKE_CURRENT_BINARY_DIR", to_posix_path(ctx.build_dir)
                 ),
