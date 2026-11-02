@@ -87,7 +87,7 @@ from .find_package import (
     unsupported_find_package_args,
 )
 from .frame import Frame
-from .parser import Command
+from .parser import Command, unescape_quoted_argument
 from .syntax import (
     FetchContentInfo,
     SourceFileProperties,
@@ -1806,6 +1806,11 @@ def process_commands(
                     if "SRC_EXT" in args[2:]:
                         ctx.check_unsupported_args(cmd, ["SRC_EXT"], strict)
                     code, result_var, fail_regexes = _parse_source_check_args(args)
+                    # These are macros in CMake, which pass the code on as
+                    # "${SOURCE}", so its escapes and variables are evaluated again.
+                    code = ctx.expand_variables(
+                        unescape_quoted_argument(code), strict, cmd.line
+                    )
                     language = "CXX" if cmd.name.startswith("check_cxx_") else "C"
                     run = cmd.name.endswith("_runs")
                     success = _check_source_compiles(

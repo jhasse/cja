@@ -163,3 +163,26 @@ def test_check_source_compiles_required_link_options(monkeypatch) -> None:
         ctx, "int main(void) { return 0; }", "C", []
     )
     assert calls[0][-4:] == ["-Wl,-z,now", "-a", "b", "-c d"]
+
+
+def test_check_source_code_is_evaluated_twice() -> None:
+    """In CMake these checks are macros, which evaluate escape sequences and
+    variable references in the code again."""
+    content = (
+        'set(RET "return 0;")\n'
+        "check_c_source_runs([==[\n"
+        'int main(void) { return sizeof("\\\\\\\\") == 2 ? 0 : 1; }\n'
+        "]==] ESCAPES)\n"
+        "check_c_source_compiles([==[\n"
+        "int main(void) { ${RET} }\n"
+        "]==] VARIABLE)\n"
+        "check_cxx_source_compiles([==[\n"
+        "int main() { \\${RET} }\n"
+        "]==] ESCAPED_VARIABLE)\n"
+    )
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    process_commands(parse(content), ctx)
+
+    assert ctx.variables["ESCAPES"] == "1"
+    assert ctx.variables["VARIABLE"] == "1"
+    assert ctx.variables["ESCAPED_VARIABLE"] == ""

@@ -20,6 +20,36 @@ class Command:
     is_bracket: list[bool] = field(default_factory=list)
 
 
+def unescape_quoted_argument(text: str) -> str:
+    """Evaluate the escape sequences of a quoted argument's text."""
+    val = ""
+    j = 0
+    while j < len(text):
+        if text[j] == "\\" and j + 1 < len(text):
+            if text[j + 1] == "n":
+                val += "\n"
+            elif text[j + 1] == "t":
+                val += "\t"
+            elif text[j + 1] == "r":
+                val += "\r"
+            elif text[j + 1] == "$":
+                # Preserve escaped variable markers (\${...}) so they
+                # can remain literal during variable expansion.
+                val += "\\$"
+            elif text[j + 1] == "\n":
+                pass  # Line continuation
+            elif text[j + 1] == "\\" and text[j + 2 : j + 3] == "$":
+                # "\\${VAR}" is a backslash followed by VAR's value
+                val += LITERAL_BACKSLASH_MARKER
+            else:
+                val += text[j + 1]
+            j += 2
+        else:
+            val += text[j]
+            j += 1
+    return val
+
+
 def tokenize(content: str) -> list[tuple[str, int, bool]]:
     """Tokenize CMake content into (text, line, is_bracket) tuples.
 
@@ -105,32 +135,7 @@ def tokenize(content: str) -> list[tuple[str, int, bool]]:
                     i += 1
             i += 1  # Skip closing quote
             raw_val = content[start:i]
-            # Unescape
-            val = ""
-            j = 1
-            while j < len(raw_val) - 1:
-                if raw_val[j] == "\\":
-                    if raw_val[j + 1] == "n":
-                        val += "\n"
-                    elif raw_val[j + 1] == "t":
-                        val += "\t"
-                    elif raw_val[j + 1] == "r":
-                        val += "\r"
-                    elif raw_val[j + 1] == "$":
-                        # Preserve escaped variable markers (\${...}) so they
-                        # can remain literal during variable expansion.
-                        val += "\\$"
-                    elif raw_val[j + 1] == "\n":
-                        pass  # Line continuation
-                    elif raw_val[j + 1] == "\\" and raw_val[j + 2 : j + 3] == "$":
-                        # "\\${VAR}" is a backslash followed by VAR's value
-                        val += LITERAL_BACKSLASH_MARKER
-                    else:
-                        val += raw_val[j + 1]
-                    j += 2
-                else:
-                    val += raw_val[j]
-                    j += 1
+            val = unescape_quoted_argument(raw_val[1:-1])
             tokens.append(('"' + val + '"', line, False))
             continue
 
