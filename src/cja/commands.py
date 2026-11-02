@@ -2337,6 +2337,7 @@ def handle_macro(
         name=macro_name,
         params=macro_params,
         body=body,
+        defining_file=ctx.current_list_file,
     )
 
     # Skip to after endmacro

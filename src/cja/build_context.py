@@ -2,6 +2,7 @@ import os
 import platform
 import re
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -17,7 +18,12 @@ from .targets import (
     InstallTarget,
     Library,
 )
-from .utils import UNDEFINED_VAR_SENTINEL, make_relative, resolve_cmake_path
+from .utils import (
+    UNDEFINED_VAR_SENTINEL,
+    make_relative,
+    resolve_cmake_path,
+    to_posix_path,
+)
 
 
 class TrackedDict(dict[str, str]):
@@ -231,6 +237,32 @@ class BuildContext:
         except OSError:
             resolved = path
         self.configure_depends.add(resolved)
+
+    def enter_list_file(self, path: Path) -> Callable[[], None]:
+        """Start processing another list file, like include() does.
+
+        Returns the function that goes back to the previous list file, even
+        when this was called inside a function or macro, whose commands come
+        from another file than CMAKE_CURRENT_LIST_FILE.
+        """
+        saved_file = self.current_list_file
+        saved_values = {
+            name: self.variables.get(name)
+            for name in ("CMAKE_CURRENT_LIST_FILE", "CMAKE_CURRENT_LIST_DIR")
+        }
+        self.current_list_file = path
+        self.variables["CMAKE_CURRENT_LIST_FILE"] = to_posix_path(path)
+        self.variables["CMAKE_CURRENT_LIST_DIR"] = to_posix_path(path.parent)
+
+        def leave() -> None:
+            self.current_list_file = saved_file
+            for name, value in saved_values.items():
+                if value is None:
+                    self.variables.pop(name, None)
+                else:
+                    self.variables[name] = value
+
+        return leave
 
     def set_cache(self, name: str, value: str) -> None:
         """Set a cache entry; a normal binding of the same name keeps hiding it."""

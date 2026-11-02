@@ -910,10 +910,6 @@ def handle_add_subdirectory(
                 ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = to_posix_path(
                     saved_current_source_dir
                 )
-                ctx.variables["CMAKE_CURRENT_LIST_FILE"] = to_posix_path(saved_current_list_file)
-                ctx.variables["CMAKE_CURRENT_LIST_DIR"] = to_posix_path(
-                    saved_current_list_file.parent
-                )
                 ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = saved_binary_dir
         elif strict:
             ctx.print_error(

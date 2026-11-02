@@ -11,6 +11,7 @@ import sys
 import tempfile
 import typing
 import urllib.request
+from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
 
@@ -884,12 +885,6 @@ def process_commands(
                             ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = to_posix_path(
                                 saved_current_source_dir
                             )
-                            ctx.variables["CMAKE_CURRENT_LIST_FILE"] = to_posix_path(
-                                saved_current_list_file
-                            )
-                            ctx.variables["CMAKE_CURRENT_LIST_DIR"] = to_posix_path(
-                                saved_current_list_file.parent
-                            )
                             ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = saved_binary_dir
 
                         stack.append(
@@ -1306,12 +1301,6 @@ def process_commands(
                             ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = to_posix_path(
                                 saved_current_source_dir
                             )
-                            ctx.variables["CMAKE_CURRENT_LIST_FILE"] = to_posix_path(
-                                saved_current_list_file
-                            )
-                            ctx.variables["CMAKE_CURRENT_LIST_DIR"] = to_posix_path(
-                                saved_current_list_file.parent
-                            )
                             ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = saved_binary_dir
 
                         stack.append(
@@ -1500,28 +1489,10 @@ def process_commands(
 
                             ctx.record_cmake_file(inc_file)
                             inc_commands = parse_file(inc_file)
-                            saved_list_file = ctx.current_list_file
-                            ctx.current_list_file = inc_file
-                            ctx.variables["CMAKE_CURRENT_LIST_FILE"] = to_posix_path(inc_file)
-                            ctx.variables["CMAKE_CURRENT_LIST_DIR"] = to_posix_path(
-                                inc_file.parent
-                            )
-
-                            def on_exit_include(
-                                saved_list_file: Path = saved_list_file,
-                            ) -> None:
-                                ctx.current_list_file = saved_list_file
-                                ctx.variables["CMAKE_CURRENT_LIST_FILE"] = to_posix_path(
-                                    saved_list_file
-                                )
-                                ctx.variables["CMAKE_CURRENT_LIST_DIR"] = to_posix_path(
-                                    saved_list_file.parent
-                                )
-
                             stack.append(
                                 Frame(
                                     commands=inc_commands,
-                                    on_exit=on_exit_include,
+                                    on_exit=ctx.enter_list_file(inc_file),
                                     kind="include",
                                 )
                             )
@@ -1558,28 +1529,10 @@ def process_commands(
 
                             ctx.record_cmake_file(found_file)
                             inc_commands = parse_file(found_file)
-                            saved_list_file = ctx.current_list_file
-                            ctx.current_list_file = found_file
-                            ctx.variables["CMAKE_CURRENT_LIST_FILE"] = to_posix_path(found_file)
-                            ctx.variables["CMAKE_CURRENT_LIST_DIR"] = to_posix_path(
-                                found_file.parent
-                            )
-
-                            def on_exit_include(
-                                saved_list_file: Path = saved_list_file,
-                            ) -> None:
-                                ctx.current_list_file = saved_list_file
-                                ctx.variables["CMAKE_CURRENT_LIST_FILE"] = to_posix_path(
-                                    saved_list_file
-                                )
-                                ctx.variables["CMAKE_CURRENT_LIST_DIR"] = to_posix_path(
-                                    saved_list_file.parent
-                                )
-
                             stack.append(
                                 Frame(
                                     commands=inc_commands,
-                                    on_exit=on_exit_include,
+                                    on_exit=ctx.enter_list_file(found_file),
                                     kind="include",
                                 )
                             )
@@ -3016,28 +2969,10 @@ int main() {{
                             ctx.record_cmake_file(found_file)
                             find_commands = parse_file(found_file)
 
-                            saved_list_file = ctx.current_list_file
-                            saved_list_dir = str(saved_list_file.parent)
-                            ctx.current_list_file = found_file
-                            ctx.variables["CMAKE_CURRENT_LIST_FILE"] = to_posix_path(found_file)
-                            ctx.variables["CMAKE_CURRENT_LIST_DIR"] = to_posix_path(
-                                found_file.parent
-                            )
-
-                            def on_exit_find_package(
-                                saved_list_file: Path = saved_list_file,
-                                saved_list_dir: str = saved_list_dir,
-                            ) -> None:
-                                ctx.current_list_file = saved_list_file
-                                ctx.variables["CMAKE_CURRENT_LIST_FILE"] = to_posix_path(
-                                    saved_list_file
-                                )
-                                ctx.variables["CMAKE_CURRENT_LIST_DIR"] = saved_list_dir
-
                             stack.append(
                                 Frame(
                                     commands=find_commands,
-                                    on_exit=on_exit_find_package,
+                                    on_exit=ctx.enter_list_file(found_file),
                                     kind="include",
                                 )
                             )
@@ -3067,15 +3002,10 @@ int main() {{
                             )
                             ctx.variables["CMAKE_FIND_PACKAGE_NAME"] = package_name
 
-                            saved_list_file = ctx.current_list_file
-                            ctx.current_list_file = config_file
-                            ctx.variables["CMAKE_CURRENT_LIST_FILE"] = to_posix_path(config_file)
-                            ctx.variables["CMAKE_CURRENT_LIST_DIR"] = to_posix_path(
-                                config_file.parent
-                            )
+                            leave_config_file = ctx.enter_list_file(config_file)
 
                             def on_exit_config(
-                                saved_list_file: Path = saved_list_file,
+                                leave_config_file: Callable[[], None] = leave_config_file,
                                 saved_find_package_name: str
                                 | None = saved_find_package_name,
                                 package_name: str = package_name,
@@ -3083,13 +3013,7 @@ int main() {{
                                 quiet: bool = quiet,
                                 line: int = cmd.line,
                             ) -> None:
-                                ctx.current_list_file = saved_list_file
-                                ctx.variables["CMAKE_CURRENT_LIST_FILE"] = to_posix_path(
-                                    saved_list_file
-                                )
-                                ctx.variables["CMAKE_CURRENT_LIST_DIR"] = to_posix_path(
-                                    saved_list_file.parent
-                                )
+                                leave_config_file()
                                 if saved_find_package_name is None:
                                     ctx.variables.pop("CMAKE_FIND_PACKAGE_NAME", None)
                                 else:
@@ -3887,14 +3811,9 @@ int main() {{
 
                     # In CMake, CMAKE_CURRENT_LIST_* inside a function reflects
                     # the caller's currently processed list file, not the file
-                    # where the function was originally defined.
+                    # where the function was originally defined. Diagnostics
+                    # point into the latter, though.
                     ctx.current_list_file = func_def.defining_file
-                    ctx.variables["CMAKE_CURRENT_LIST_FILE"] = to_posix_path(
-                        saved_current_list_file
-                    )
-                    ctx.variables["CMAKE_CURRENT_LIST_DIR"] = to_posix_path(
-                        saved_current_list_file.parent
-                    )
 
                     def on_exit_function(
                         saved_vars: TrackedDict = saved_vars,
@@ -3920,12 +3839,6 @@ int main() {{
                         ctx.apply_cache_updates(cache_updates)
                         ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = to_posix_path(
                             saved_current_source_dir
-                        )
-                        ctx.variables["CMAKE_CURRENT_LIST_FILE"] = to_posix_path(
-                            saved_current_list_file
-                        )
-                        ctx.variables["CMAKE_CURRENT_LIST_DIR"] = to_posix_path(
-                            saved_current_list_file.parent
                         )
                         ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = saved_binary_dir
 
@@ -4032,14 +3945,11 @@ int main() {{
                         ctx.variables["CMAKE_CURRENT_SOURCE_DIR"] = to_posix_path(
                             saved_current_source_dir
                         )
-                        ctx.variables["CMAKE_CURRENT_LIST_FILE"] = to_posix_path(
-                            saved_current_list_file
-                        )
-                        ctx.variables["CMAKE_CURRENT_LIST_DIR"] = to_posix_path(
-                            saved_current_list_file.parent
-                        )
                         ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = saved_binary_dir
 
+                    # Like in functions, CMAKE_CURRENT_LIST_* stay the caller's,
+                    # but diagnostics point into the file defining the macro.
+                    ctx.current_list_file = macro_def.defining_file
                     frame.pc += 1
                     stack.append(Frame(commands=macro_def.body, on_exit=on_exit))
                     continue

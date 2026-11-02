@@ -58,6 +58,8 @@ def test_fetchcontent_url(tmp_path: Path) -> None:
     url = f"file://{tar_path.resolve()}"
 
     ctx = BuildContext(source_dir=source_dir, build_dir=tmp_path / "build")
+    # Like configure()
+    ctx.variables["CMAKE_CURRENT_LIST_FILE"] = (source_dir / "CMakeLists.txt").as_posix()
     commands = [
         Command(name="include", args=["FetchContent"], line=1),
         Command(name="fetchcontent_declare", args=["mylib", "URL", url], line=2),
