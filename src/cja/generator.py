@@ -541,11 +541,20 @@ def compile_feature_to_flag(
     return None
 
 
-def target_std_flags(properties: dict[str, str]) -> list[str]:
-    """Translate C_STANDARD/CXX_STANDARD target properties to compiler flags."""
+def target_std_flags(
+    properties: dict[str, str], variables: dict[str, str] | None = None
+) -> list[str]:
+    """Translate C_STANDARD/CXX_STANDARD target properties to compiler flags.
+
+    Like in CMake, <LANG>_EXTENSIONS OFF without a <LANG>_STANDARD selects the
+    compiler's default standard, CMAKE_<LANG>_STANDARD_DEFAULT in ``variables``.
+    """
     flags: list[str] = []
-    for prop, prefix in (("C_STANDARD", "c_std_"), ("CXX_STANDARD", "cxx_std_")):
-        std = properties.get(prop, "").strip()
+    for lang, prefix in (("C", "c_std_"), ("CXX", "cxx_std_")):
+        std = properties.get(f"{lang}_STANDARD", "").strip()
+        extensions = properties.get(f"{lang}_EXTENSIONS", "").strip()
+        if not std and extensions and not is_truthy(extensions):
+            std = (variables or {}).get(f"CMAKE_{lang}_STANDARD_DEFAULT", "")
         if std.isdigit():
             flag = compile_feature_to_flag(f"{prefix}{std}", properties)
             if flag:
@@ -2031,7 +2040,7 @@ def generate_ninja(
                 flag = compile_feature_to_flag(feature, lib.properties, ctx.variables)
                 if flag:
                     lib_compile_flags.append(flag)
-            lib_compile_flags.extend(target_std_flags(lib.properties))
+            lib_compile_flags.extend(target_std_flags(lib.properties, ctx.variables))
             for inc_dir in lib.include_directories:
                 inc = strip_generator_expressions(inc_dir)
                 lib_compile_flags.append(_include_flag(inc, ctx.source_dir))
@@ -2322,7 +2331,7 @@ def generate_ninja(
                 flag = compile_feature_to_flag(feature, exe.properties, ctx.variables)
                 if flag:
                     compile_flags.append(flag)
-            compile_flags.extend(target_std_flags(exe.properties))
+            compile_flags.extend(target_std_flags(exe.properties, ctx.variables))
             for inc_dir in exe.include_directories:
                 inc = strip_generator_expressions(inc_dir)
                 compile_flags.append(_include_flag(inc, ctx.source_dir))

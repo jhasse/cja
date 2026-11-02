@@ -7,6 +7,7 @@ from cja.generator import (
     compile_feature_to_flag,
     generate_ninja,
     process_commands,
+    target_std_flags,
 )
 from cja.parser import Command
 
@@ -51,6 +52,15 @@ def test_compile_feature_doesnt_lower_default_standard() -> None:
         == "-std=gnu11"
     )
 
+
+
+def test_extensions_off_without_standard() -> None:
+    """Like in CMake, <LANG>_EXTENSIONS OFF alone selects the default standard."""
+    variables = {"CMAKE_C_STANDARD_DEFAULT": "17", "CMAKE_CXX_STANDARD_DEFAULT": "20"}
+    assert target_std_flags({"C_EXTENSIONS": "OFF"}, variables) == ["-std=c17"]
+    assert target_std_flags({"CXX_EXTENSIONS": "OFF"}, variables) == ["-std=c++20"]
+    assert target_std_flags({"C_EXTENSIONS": "ON"}, variables) == []
+    assert target_std_flags({}, variables) == []
 
 def test_compile_feature_at_default_standard_adds_no_flag(tmp_path: Path) -> None:
     """Like in CMake, no -std flag is passed for the compiler's default standard."""
