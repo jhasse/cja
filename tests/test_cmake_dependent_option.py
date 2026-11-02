@@ -76,3 +76,24 @@ def test_cmake_dependent_option_false_forces_value() -> None:
     ]
     process_commands(commands, ctx)
     assert ctx.variables["BOX2D_AVX2"] == "OFF"
+
+
+def test_cmake_dependent_option_values() -> None:
+    """The default becomes ON or OFF like in option(), the forced value doesn't."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="set", args=["ENABLED", "ON"], line=1),
+        Command(
+            name="cmake_dependent_option",
+            args=["DEFAULT_TRUE", "help", "TRUE", "ENABLED", "OFF"],
+            line=2,
+        ),
+        Command(
+            name="cmake_dependent_option",
+            args=["FORCED_FALSE", "help", "ON", "NOT ENABLED", "FALSE"],
+            line=3,
+        ),
+    ]
+    process_commands(commands, ctx)
+    assert ctx.variables["DEFAULT_TRUE"] == "ON"
+    assert ctx.variables["FORCED_FALSE"] == "FALSE"

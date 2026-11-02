@@ -12,6 +12,8 @@ from .utils import (
     UNDEFINED_VAR_SENTINEL,
     cmake_regex_to_python,
     compare_versions,
+    is_off,
+    is_on,
 )
 
 # Commands built into CMake (cmake --help-command-list), documented at
@@ -211,18 +213,6 @@ def _parse_number(value: str, whole: bool = False) -> float | None:
     return float.fromhex(match.group()) if hex_number else float(match.group())
 
 
-def _is_on(value: str) -> bool:
-    return value.upper() in ("1", "ON", "YES", "TRUE", "Y")
-
-
-def _is_off(value: str) -> bool:
-    return (
-        value.upper() in ("", "0", "OFF", "NO", "FALSE", "N", "IGNORE")
-        or value == "NOTFOUND"
-        or value.endswith("-NOTFOUND")
-    )
-
-
 def evaluate_condition(
     args: list[str],
     variables: dict[str, str],
@@ -365,14 +355,14 @@ def evaluate_condition(
             return False
 
         # Single value: a constant, or else the name of a variable
-        if _is_on(left):
+        if is_on(left):
             return True
-        if _is_off(left):
+        if is_off(left):
             return False
         number = _parse_number(left, whole=True)
         if number is not None:
             return bool(number)
-        return left in variables and not _is_off(resolve(left))
+        return left in variables and not is_off(resolve(left))
 
     return parse_or()
 

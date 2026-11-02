@@ -317,6 +317,20 @@ def ipo_flag(variables: dict[str, str]) -> str:
     return "-flto=auto"
 
 
+def is_on(value: str) -> bool:
+    """Check if a value is one of CMake's true constants (not numbers)."""
+    return value.upper() in ("1", "ON", "YES", "TRUE", "Y")
+
+
+def is_off(value: str) -> bool:
+    """Check if a value is one of CMake's false constants (not numbers)."""
+    return (
+        value.upper() in ("", "0", "OFF", "NO", "FALSE", "N", "IGNORE")
+        or value == "NOTFOUND"
+        or value.endswith("-NOTFOUND")
+    )
+
+
 def is_constant_truthy(value: str) -> bool:
     """Check if a literal constant is truthy."""
     upper = value.upper()

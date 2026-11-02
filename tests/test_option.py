@@ -33,6 +33,21 @@ def test_option_explicit_off() -> None:
     assert ctx.variables["MY_OPTION"] == "OFF"
 
 
+def test_option_values_become_on_or_off() -> None:
+    """Like CMake, only true constants (not numbers) are ON."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    values = {"A": "TRUE", "B": "y", "C": "1", "D": "2", "E": "foo", "F": ""}
+    commands = [
+        Command(name="option", args=[name, "help", value], line=1)
+        for name, value in values.items()
+    ]
+    process_commands(commands, ctx)
+
+    assert [ctx.variables[name] for name in values] == [
+        "ON", "ON", "ON", "OFF", "OFF", "OFF"
+    ]
+
+
 def test_option_does_not_override() -> None:
     """Test that option does not override existing variable."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))

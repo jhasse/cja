@@ -29,6 +29,7 @@ from .utils import (
     UNDEFINED_VAR_SENTINEL,
     cmake_regex_to_python,
     is_constant_truthy,
+    is_on,
     is_truthy,
     is_verbatim_include,
     join_flags,
@@ -2056,11 +2057,9 @@ def handle_option(
     if args:
         var_name = args[0]
         if var_name not in ctx.variables:
-            # Default to OFF, or use provided value (3rd arg)
-            value = "OFF"
-            if len(args) >= 3:
-                value = args[2]
-            ctx.variables[var_name] = value
+            # Default to OFF, or use provided value (3rd arg) as ON or OFF
+            enabled = len(args) >= 3 and is_on(args[2])
+            ctx.variables[var_name] = "ON" if enabled else "OFF"
 
 
 def handle_cmake_dependent_option(
@@ -2095,7 +2094,7 @@ def handle_cmake_dependent_option(
     if condition_met:
         # Behaves like option(): don't override an already-defined value.
         if option_name not in ctx.variables:
-            ctx.variables[option_name] = default_value
+            ctx.variables[option_name] = "ON" if is_on(default_value) else "OFF"
     else:
         # When dependency is not satisfied, force to fallback value.
         ctx.variables[option_name] = force_value
