@@ -67,6 +67,39 @@ class TestEvaluateCondition:
         variables = {"MY_VAR": "MY_VAR-NOTFOUND"}
         assert evaluate_condition(["MY_VAR"], variables) is False
 
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            ("y", True),
+            ("n", False),
+            ("Ignore", False),
+            ("0.0", False),
+            ("-0", False),
+            ("0x10", True),
+            ("nan", True),
+            ("1e", None),
+            ("t", None),
+            ("notfound", None),
+            ("foo-notfound", None),
+        ],
+    )
+    def test_constant(self, value: str, expected: bool | None) -> None:
+        """Constants win over variables of the same name, like in CMake.
+
+        Others (``None``) name variables, and only the NOTFOUND ones are
+        case-sensitive.
+        """
+        for variable_value, result in (("1", True), ("OFF", False)):
+            variables = {value: variable_value}
+            want = result if expected is None else expected
+            assert evaluate_condition([value], variables) is want
+        assert evaluate_condition([value], {}) is bool(expected)
+
+    def test_variable_values(self) -> None:
+        """Values of variables aren't numbers, only CMake's false constants."""
+        for value, expected in (("0.0", True), ("notfound", True), ("Ignore", False)):
+            assert evaluate_condition(["MY_VAR"], {"MY_VAR": value}) is expected
+
     def test_undefined_variable(self) -> None:
         """Test that undefined variables evaluate to false (e.g. if(WIN32) when WIN32 not set)."""
         variables: dict[str, str] = {}

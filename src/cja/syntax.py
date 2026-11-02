@@ -12,8 +12,6 @@ from .utils import (
     UNDEFINED_VAR_SENTINEL,
     cmake_regex_to_python,
     compare_versions,
-    is_constant_truthy,
-    is_truthy,
 )
 
 # Commands built into CMake (cmake --help-command-list), documented at
@@ -184,26 +182,45 @@ _DECIMAL_NUMBER_RE = re.compile(
 )
 
 
-def _parse_number(value: str) -> float | None:
+def _parse_number(value: str, whole: bool = False) -> float | None:
     """Parse a number like sscanf("%lg"), which CMake uses.
 
     It reads as much as could still become a number and ignores the rest, so
     "3abc" is 3, but fails if what it read isn't a number, like "1e" or "0x".
+    With ``whole``, the rest has to be empty, like for a condition's constant.
     """
     text = value.lstrip(" \t\n\v\f\r")
     special = _SPECIAL_NUMBER_RE.match(text)
     if special:
         word = special.group().lstrip("+-").lower()
-        return float(special.group()) if word in ("inf", "infinity", "nan") else None
+        if word not in ("inf", "infinity", "nan") or (
+            whole and special.end() != len(text)
+        ):
+            return None
+        return float(special.group())
     hex_number = _HEX_NUMBER_RE.match(text)
     match = hex_number or _DECIMAL_NUMBER_RE.match(text)
     assert match  # The decimal pattern also matches nothing
     exponent = match.group("exp")
-    if not match.group("mantissa").strip(".") or (
-        exponent is not None and not exponent.lstrip("+-")
+    if (
+        not match.group("mantissa").strip(".")
+        or (exponent is not None and not exponent.lstrip("+-"))
+        or (whole and match.end() != len(text))
     ):
         return None
     return float.fromhex(match.group()) if hex_number else float(match.group())
+
+
+def _is_on(value: str) -> bool:
+    return value.upper() in ("1", "ON", "YES", "TRUE", "Y")
+
+
+def _is_off(value: str) -> bool:
+    return (
+        value.upper() in ("", "0", "OFF", "NO", "FALSE", "N", "IGNORE")
+        or value == "NOTFOUND"
+        or value.endswith("-NOTFOUND")
+    )
 
 
 def evaluate_condition(
@@ -347,10 +364,15 @@ def evaluate_condition(
                     return False
             return False
 
-        # Single value
-        if left in variables:
-            return is_truthy(resolve(left))
-        return is_constant_truthy(left)
+        # Single value: a constant, or else the name of a variable
+        if _is_on(left):
+            return True
+        if _is_off(left):
+            return False
+        number = _parse_number(left, whole=True)
+        if number is not None:
+            return bool(number)
+        return left in variables and not _is_off(resolve(left))
 
     return parse_or()
 
