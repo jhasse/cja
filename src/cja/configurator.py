@@ -3666,6 +3666,10 @@ int main() {{
                         ctx.check_messages.append(message)
                     elif is_result and not orphaned_result:
                         message = f"{ctx.check_messages.pop()} - {message}"
+                    if message_level in log_levels[log_levels.index("NOTICE") :]:
+                        indent = ctx.variables.get("CMAKE_MESSAGE_INDENT", "")
+                        indent = indent.replace(";", "")
+                        message = indent + message.replace("\n", "\n" + indent)
                     if orphaned_result:
                         ctx.print_warning(
                             f"Ignored {mode} without CHECK_START", cmd.line

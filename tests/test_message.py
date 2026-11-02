@@ -121,3 +121,23 @@ def test_message_checks(capsys: pytest.CaptureFixture[str]) -> None:
         "Looking for foo - found\n"
     )
     assert "Ignored CHECK_PASS without CHECK_START" in captured.err
+
+
+def test_message_indent(capsys: pytest.CaptureFixture[str]) -> None:
+    """CMAKE_MESSAGE_INDENT indents every line of messages but warnings."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    process_commands(
+        parse(
+            'list(APPEND CMAKE_MESSAGE_INDENT "  ")\n'
+            'message("notice")\n'
+            'message(STATUS "multi\\nline")\n'
+            'message(CHECK_START "check")\n'
+            'list(APPEND CMAKE_MESSAGE_INDENT "> ")\n'
+            'message(CHECK_PASS "done")\n'
+            'message(WARNING "warning")\n'
+        ),
+        ctx,
+    )
+    captured = capsys.readouterr()
+    assert captured.out == "  notice\n  multi\n  line\n  check\n  > check - done\n"
+    assert "warning: warning" in captured.err
