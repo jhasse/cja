@@ -50,6 +50,7 @@ from .commands import (
     handle_list,
     handle_macro,
     handle_math,
+    handle_message,
     handle_option,
     handle_set,
     handle_set_property,
@@ -80,6 +81,15 @@ from .find_commands import (
     handle_find_library,
     handle_find_path,
     handle_find_program,
+)
+from .feature_summary import (
+    handle_add_feature_info,
+    handle_feature_summary,
+    handle_print_features,
+    handle_set_feature_info,
+    handle_set_package_info,
+    handle_set_package_properties,
+    include_feature_summary,
 )
 from .find_package import (
     find_package_config_file,
@@ -1380,6 +1390,31 @@ def process_commands(
             case "cmake_parse_arguments":
                 handle_cmake_parse_arguments(ctx, cmd, strict)
 
+            case "feature_summary":
+                handle_feature_summary(ctx, cmd, args, strict)
+
+            case "set_package_properties":
+                handle_set_package_properties(ctx, cmd, args)
+
+            case "add_feature_info":
+                handle_add_feature_info(ctx, cmd, args)
+
+            case "set_package_info":
+                handle_set_package_info(ctx, cmd, args)
+
+            case "set_feature_info":
+                handle_set_feature_info(ctx, cmd, args)
+
+            case "print_enabled_features":
+                handle_print_features(
+                    ctx, cmd, "ENABLED_FEATURES", "Enabled features:", strict
+                )
+
+            case "print_disabled_features":
+                handle_print_features(
+                    ctx, cmd, "DISABLED_FEATURES", "Disabled features:", strict
+                )
+
             case "math":
                 handle_math(ctx, cmd, args, strict)
 
@@ -1420,6 +1455,7 @@ def process_commands(
                         "CheckTypeSize",
                         "CMakeDependentOption",
                         "CPack",
+                        "FeatureSummary",
                         "FetchContent",
                         "FindPackageHandleStandardArgs",
                         "GenerateExportHeader",
@@ -1429,6 +1465,8 @@ def process_commands(
                         # CTest sets BUILD_TESTING to ON by default
                         if "BUILD_TESTING" not in ctx.variables:
                             ctx.variables["BUILD_TESTING"] = "ON"
+                    elif module_name == "FeatureSummary":
+                        include_feature_summary(ctx)
                     elif module_name == "GNUInstallDirs":
                         ctx.variables.setdefault("CMAKE_INSTALL_BINDIR", "bin")
                         ctx.variables.setdefault("CMAKE_INSTALL_SBINDIR", "sbin")
@@ -3559,79 +3597,7 @@ int main() {{
                                 raise SystemExit(1)
 
             case "message":
-                if args:
-                    # In order of verbosity, like CMAKE_MESSAGE_LOG_LEVEL
-                    log_levels = (
-                        "ERROR",
-                        "WARNING",
-                        "NOTICE",
-                        "STATUS",
-                        "VERBOSE",
-                        "DEBUG",
-                        "TRACE",
-                    )
-                    modes = (
-                        "NOTICE",
-                        "STATUS",
-                        "VERBOSE",
-                        "DEBUG",
-                        "TRACE",
-                        "WARNING",
-                        "AUTHOR_WARNING",
-                        "SEND_ERROR",
-                        "FATAL_ERROR",
-                        "DEPRECATION",
-                        "CHECK_START",
-                        "CHECK_PASS",
-                        "CHECK_FAIL",
-                    )
-                    # Check for mode keyword
-                    mode = ""
-                    message_parts = args
-                    if args[0] in modes:
-                        mode = args[0]
-                        message_parts = args[1:]
-
-                    message = "".join(message_parts)
-
-                    log_level = ctx.variables.get("CMAKE_MESSAGE_LOG_LEVEL", "").upper()
-                    if log_level not in log_levels:
-                        log_level = "STATUS"
-                    message_level = mode or "NOTICE"
-                    # Checks are STATUS messages, and CHECK_PASS/CHECK_FAIL
-                    # complete the message of the latest CHECK_START.
-                    if mode.startswith("CHECK_"):
-                        message_level = "STATUS"
-                    is_result = mode in ("CHECK_PASS", "CHECK_FAIL")
-                    orphaned_result = is_result and not ctx.check_messages
-                    if mode == "CHECK_START":
-                        ctx.check_messages.append(message)
-                    elif is_result and not orphaned_result:
-                        message = f"{ctx.check_messages.pop()} - {message}"
-                    if message_level in log_levels[log_levels.index("NOTICE") :]:
-                        indent = ctx.variables.get("CMAKE_MESSAGE_INDENT", "")
-                        indent = indent.replace(";", "")
-                        message = indent + message.replace("\n", "\n" + indent)
-                    if orphaned_result:
-                        ctx.print_warning(
-                            f"Ignored {mode} without CHECK_START", cmd.line
-                        )
-                    elif message_level in log_levels and log_levels.index(
-                        message_level
-                    ) > log_levels.index(log_level):
-                        pass  # Hidden at the current log level
-                    elif mode == "FATAL_ERROR":
-                        ctx.print_error(message, cmd.line)
-                        raise SystemExit(1)
-                    elif mode == "SEND_ERROR":
-                        ctx.print_error(message, cmd.line)
-                        ctx.send_error = True
-                    elif mode in ("WARNING", "AUTHOR_WARNING", "DEPRECATION"):
-                        ctx.print_warning(message, cmd.line)
-                    elif mode == "STATUS":
-                        print(f"{message}")
-                    else:
-                        print(message)
+                handle_message(ctx, cmd, args)
 
             case "enable_testing":
                 assert len(args) == 0

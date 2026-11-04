@@ -43,6 +43,11 @@ def _condition_args(ctx: BuildContext, command: Command, strict: bool) -> list[s
 
 def condition_holds(ctx: BuildContext, command: Command, strict: bool) -> bool:
     """Evaluate the condition of an if(), elseif() or while() command."""
+    return expanded_condition_holds(ctx, _condition_args(ctx, command, strict))
+
+
+def expanded_condition_holds(ctx: BuildContext, args: list[str]) -> bool:
+    """Evaluate a condition whose arguments are already expanded and unquoted."""
 
     def target_exists(name: str) -> bool:
         return (
@@ -52,7 +57,7 @@ def condition_holds(ctx: BuildContext, command: Command, strict: bool) -> bool:
         )
 
     return evaluate_condition(
-        _condition_args(ctx, command, strict),
+        args,
         ctx.variables,
         target_exists=target_exists,
         command_exists=lambda name: name in ctx.functions or name in ctx.macros,
