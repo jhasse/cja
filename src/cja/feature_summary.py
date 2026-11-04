@@ -401,13 +401,9 @@ def handle_print_features(
     ctx: BuildContext, cmd: Command, what: str, description: str, strict: bool
 ) -> None:
     """Handle the deprecated print_enabled_features() and print_disabled_features()."""
-    handle_message(
-        ctx,
-        cmd,
-        [
-            "DEPRECATION",
-            f"{cmd.name.upper()} is deprecated. Use\n"
-            f'    feature_summary(WHAT {what} DESCRIPTION "{description}")',
-        ],
+    message = (
+        f"{cmd.name.upper()} is deprecated. Use\n"
+        f'    feature_summary(WHAT {what} DESCRIPTION "{description}")'
     )
+    handle_message(ctx, cmd, ["DEPRECATION", message])
     handle_feature_summary(ctx, cmd, ["WHAT", what, "DESCRIPTION", description], strict)

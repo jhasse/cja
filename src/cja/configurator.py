@@ -76,12 +76,6 @@ from .config_utils import (
     condition_holds,
     select_if_block,
 )
-from .find_commands import (
-    handle_find_file,
-    handle_find_library,
-    handle_find_path,
-    handle_find_program,
-)
 from .feature_summary import (
     handle_add_feature_info,
     handle_feature_summary,
@@ -90,6 +84,12 @@ from .feature_summary import (
     handle_set_package_info,
     handle_set_package_properties,
     include_feature_summary,
+)
+from .find_commands import (
+    handle_find_file,
+    handle_find_library,
+    handle_find_path,
+    handle_find_program,
 )
 from .find_package import (
     find_package_config_file,

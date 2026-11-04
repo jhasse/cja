@@ -165,13 +165,17 @@ def test_set_package_properties_type_is_not_lowered(
     [
         (
             "set_package_properties(Pkg PROPERTIES TYPE BAD)\n",
-            "Bad package property type BAD used in SET_PACKAGE_PROPERTIES(). "
-            "Valid types are RUNTIME, OPTIONAL, RECOMMENDED and REQUIRED.",
+            (
+                "Bad package property type BAD used in SET_PACKAGE_PROPERTIES(). "
+                "Valid types are RUNTIME, OPTIONAL, RECOMMENDED and REQUIRED."
+            ),
         ),
         (
             "feature_summary(WHAT ENABLED_FEATURES BAD)\n",
-            "The WHAT argument of FEATURE_SUMMARY() contains BAD, "
-            "which is not a valid value.",
+            (
+                "The WHAT argument of FEATURE_SUMMARY() contains BAD, "
+                "which is not a valid value."
+            ),
         ),
         ("feature_summary(VAR v)\n", "doesn't set the required WHAT argument"),
     ],

@@ -25,7 +25,6 @@ from .utils import (
     to_posix_path,
 )
 
-
 # Modules bundled with cja (e.g. FindGTest.cmake, CMakeFindDependencyMacro.cmake)
 BUILTIN_MODULES_DIR = Path(__file__).parent / "cmake" / "Modules"
 
