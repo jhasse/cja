@@ -143,3 +143,47 @@ def test_missing_config_required_fails(tmp_path: Path) -> None:
         _configure(
             tmp_path, "find_package(CjaPkg CONFIG REQUIRED)\n", tmp_path / "empty"
         )
+
+
+def test_find_package_records_results_in_global_properties(tmp_path: Path) -> None:
+    prefix = tmp_path / "prefix"
+    _config(prefix, "lib/cmake/CjaDep", "CjaDepConfig.cmake", "")
+    _config(prefix, "lib/cmake/CjaOwnDep", "CjaOwnDepConfig.cmake", "")
+    _config(
+        prefix,
+        "lib/cmake/CjaPkg",
+        "CjaPkgConfig.cmake",
+        "include(CMakeFindDependencyMacro)\n"
+        "find_dependency(CjaDep)\n"
+        "find_dependency(CjaOwnDep)\n",
+    )
+
+    _, variables = _configure(
+        tmp_path,
+        "find_package(CjaOwnDep CONFIG)\n"
+        "find_package(CjaPkg CONFIG REQUIRED)\n"
+        "find_package(CjaMissing 2.0 EXACT QUIET)\n"
+        "find_package(CjaRange 1.0...2.0 QUIET)\n"
+        "foreach(p PACKAGES_FOUND PACKAGES_NOT_FOUND\n"
+        "    _CMAKE_CjaPkg_TYPE _CMAKE_CjaPkg_QUIET _CMAKE_CjaMissing_QUIET\n"
+        "    _CMAKE_CjaMissing_REQUIRED_VERSION _CMAKE_CjaRange_REQUIRED_VERSION\n"
+        "    _CMAKE_CjaDep_TRANSITIVE_DEPENDENCY\n"
+        "    _CMAKE_CjaOwnDep_TRANSITIVE_DEPENDENCY\n"
+        "    _CMAKE_CjaPkg_TRANSITIVE_DEPENDENCY)\n"
+        "  get_property(${p} GLOBAL PROPERTY ${p})\n"
+        "endforeach()\n",
+        prefix,
+    )
+
+    # Like CMake, finding a package again moves it to the end.
+    assert variables["PACKAGES_FOUND"] == "CjaDep;CjaOwnDep;CjaPkg"
+    assert variables["PACKAGES_NOT_FOUND"] == "CjaMissing;CjaRange"
+    assert variables["_CMAKE_CjaPkg_TYPE"] == "REQUIRED"
+    assert variables["_CMAKE_CjaPkg_QUIET"] == "FALSE"
+    assert variables["_CMAKE_CjaMissing_QUIET"] == "TRUE"
+    assert variables["_CMAKE_CjaMissing_REQUIRED_VERSION"] == "== 2.0"
+    assert variables["_CMAKE_CjaRange_REQUIRED_VERSION"] == "1.0...2.0"
+    # Found only by find_dependency(), or by the project itself first.
+    assert variables["_CMAKE_CjaDep_TRANSITIVE_DEPENDENCY"] == "TRUE"
+    assert variables["_CMAKE_CjaOwnDep_TRANSITIVE_DEPENDENCY"] == "False"
+    assert variables["_CMAKE_CjaPkg_TRANSITIVE_DEPENDENCY"] == "False"

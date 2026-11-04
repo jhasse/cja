@@ -84,6 +84,7 @@ from .find_package import (
     find_package_config_file,
     handle_builtin_find_package,
     handle_find_package_handle_standard_args,
+    record_find_package_result,
     setup_find_module_request,
     unsupported_find_package_args,
 )
@@ -2917,7 +2918,7 @@ int main() {{
                     ctx.variables[find_required_var] = (
                         "TRUE" if (required or prev_required) else "FALSE"
                     )
-                    if not handle_builtin_find_package(
+                    if handle_builtin_find_package(
                         ctx=ctx,
                         cmd=cmd,
                         args=args,
@@ -2925,6 +2926,8 @@ int main() {{
                         required=required,
                         quiet=quiet,
                     ):
+                        record_find_package_result(ctx, package_name, args)
+                    else:
                         # Search for Find<PackageName>.cmake in CMAKE_MODULE_PATH
                         # and the built-in CJA modules (e.g. bundled FindGTest.cmake).
                         # NO_MODULE requests config-mode lookup only, which also
@@ -2968,11 +2971,20 @@ int main() {{
                             setup_find_module_request(ctx, package_name, args)
                             ctx.record_cmake_file(found_file)
                             find_commands = parse_file(found_file)
+                            leave_find_module = ctx.enter_list_file(found_file)
+
+                            def on_exit_find_module(
+                                leave_find_module: Callable[[], None] = leave_find_module,
+                                package_name: str = package_name,
+                                args: list[str] = args,
+                            ) -> None:
+                                leave_find_module()
+                                record_find_package_result(ctx, package_name, args)
 
                             stack.append(
                                 Frame(
                                     commands=find_commands,
-                                    on_exit=ctx.enter_list_file(found_file),
+                                    on_exit=on_exit_find_module,
                                     kind="include",
                                 )
                             )
@@ -3009,6 +3021,7 @@ int main() {{
                                 saved_find_package_name: str
                                 | None = saved_find_package_name,
                                 package_name: str = package_name,
+                                args: list[str] = args,
                                 required: bool = required,
                                 quiet: bool = quiet,
                                 line: int = cmd.line,
@@ -3026,6 +3039,7 @@ int main() {{
                                 value = "TRUE" if found else "FALSE"
                                 ctx.variables[f"{package_name}_FOUND"] = value
                                 ctx.variables[f"{package_name.upper()}_FOUND"] = value
+                                record_find_package_result(ctx, package_name, args)
                                 if not found and required:
                                     ctx.print_error(
                                         f"could not find package: {package_name}", line
@@ -3048,6 +3062,7 @@ int main() {{
                         else:
                             # Unknown package
                             ctx.variables[f"{package_name}_FOUND"] = "FALSE"
+                            record_find_package_result(ctx, package_name, args)
                             if required:
                                 ctx.print_error(
                                     f"could not find package: {package_name}", cmd.line

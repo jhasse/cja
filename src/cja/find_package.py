@@ -590,6 +590,48 @@ def find_package_config_file(
     return None
 
 
+def record_find_package_result(
+    ctx: BuildContext, package_name: str, args: list[str]
+) -> None:
+    """Record the outcome of ``find_package()`` in global properties.
+
+    Like CMake, ``PACKAGES_FOUND`` and ``PACKAGES_NOT_FOUND`` list the
+    packages, and ``_CMAKE_<Pkg>_*`` properties tell whether the call was QUIET
+    or REQUIRED and which version it asked for. FeatureSummary.cmake reads them.
+    """
+    props = ctx.global_properties
+    props[f"_CMAKE_{package_name}_TRANSITIVE_DEPENDENCY"] = "False"
+
+    found = is_truthy(ctx.variables.get(f"{package_name}_FOUND", "")) or is_truthy(
+        ctx.variables.get(f"{package_name.upper()}_FOUND", "")
+    )
+    found_prop = "PACKAGES_FOUND" if found else "PACKAGES_NOT_FOUND"
+    for prop in ("PACKAGES_FOUND", "PACKAGES_NOT_FOUND"):
+        packages = [
+            name for name in props.get(prop, "").split(";") if name and name != package_name
+        ]
+        if prop == found_prop:
+            packages.append(package_name)
+        if packages:
+            props[prop] = ";".join(packages)
+        else:
+            props.pop(prop, None)
+
+    keywords = {arg.upper() for arg in args[1:]}
+    props[f"_CMAKE_{package_name}_QUIET"] = "TRUE" if "QUIET" in keywords else "FALSE"
+
+    version_info = ""
+    if len(args) > 1 and (match := _VERSION_REQUEST_RE.fullmatch(args[1])):
+        if match.group("max"):
+            version_info = args[1]
+        else:
+            version_info = f"{'==' if 'EXACT' in keywords else '>='} {args[1]}"
+    props[f"_CMAKE_{package_name}_REQUIRED_VERSION"] = version_info
+
+    if "REQUIRED" in keywords:
+        props[f"_CMAKE_{package_name}_TYPE"] = "REQUIRED"
+
+
 def setup_find_module_request(
     ctx: BuildContext, package_name: str, args: list[str]
 ) -> None:
