@@ -80,7 +80,12 @@ def target(name: str) -> Command:
             "NEWLINE_STYLE",
         ),
         ([], Command("set_property", ["CACHE", "X", "PROPERTY", "VALUE", "1"]), "CACHE"),
-        ([], Command("get_property", ["v", "DIRECTORY", "PROPERTY", "P"]), "DIRECTORY"),
+        ([], Command("get_property", ["v", "INSTALL", "f", "PROPERTY", "P"]), "INSTALL"),
+        (
+            [],
+            Command("get_property", ["v", "CACHE", "X", "PROPERTY", "HELPSTRING"]),
+            "HELPSTRING",
+        ),
         (
             [],
             Command("get_directory_property", ["v", "DIRECTORY", "sub", "P"]),

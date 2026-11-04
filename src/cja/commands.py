@@ -1189,63 +1189,66 @@ def handle_get_property(
     if prop_idx + 2 < len(args):
         query_type = args[prop_idx + 2].upper()
 
+    value: str | None = None
     if scope_type == "GLOBAL":
-        # Global property
         if query_type == "DEFINED":
             ctx.variables[var_name] = "1" if prop_name in ctx.global_properties else "0"
-        elif query_type == "SET":
-            ctx.variables[var_name] = (
-                "1"
-                if (
-                    ctx.global_properties.get(prop_name)
-                )
-                else "0"
-            )
-        else:
-            # Get the value
-            ctx.variables[var_name] = ctx.global_properties.get(prop_name, "")
+            return
+        value = ctx.global_properties.get(prop_name) or None
 
     elif scope_type == "TARGET":
-        # Target property
-        if scope_args:
-            value = ctx.target_property(scope_args[0], prop_name)
-            if query_type == "DEFINED" or query_type == "SET":
-                ctx.variables[var_name] = "0" if value is None else "1"
-            else:
-                ctx.variables[var_name] = value or ""
+        if not scope_args:
+            return
+        value = ctx.target_property(scope_args[0], prop_name)
 
     elif scope_type == "SOURCE":
-        # Source file property
-        if scope_args:
-            source_file = scope_args[0]
-            expanded_filename = ctx.expand_variables(source_file, strict, cmd.line)
-            expanded_filename = resolve_cmake_path(
-                expanded_filename, ctx.current_source_dir
-            )
+        if not scope_args:
+            return
+        source_file = scope_args[0]
+        expanded_filename = ctx.expand_variables(source_file, strict, cmd.line)
+        expanded_filename = resolve_cmake_path(
+            expanded_filename, ctx.current_source_dir
+        )
+        if expanded_filename in ctx.source_file_properties:
+            file_props = ctx.source_file_properties[expanded_filename]
+            if prop_name == "COMPILE_DEFINITIONS":
+                value = ";".join(file_props.compile_definitions)
+            elif prop_name == "INCLUDE_DIRECTORIES":
+                value = ";".join(file_props.include_directories)
+            elif prop_name == "OBJECT_DEPENDS":
+                value = ";".join(file_props.object_depends)
+            elif prop_name == "SKIP_PRECOMPILE_HEADERS":
+                value = "ON" if file_props.skip_precompile_headers else ""
+        value = value or None
 
-            value = ""
-            if expanded_filename in ctx.source_file_properties:
-                file_props = ctx.source_file_properties[expanded_filename]
-                if prop_name == "COMPILE_DEFINITIONS":
-                    value = ";".join(file_props.compile_definitions)
-                elif prop_name == "INCLUDE_DIRECTORIES":
-                    value = ";".join(file_props.include_directories)
-                elif prop_name == "OBJECT_DEPENDS":
-                    value = ";".join(file_props.object_depends)
-                elif prop_name == "SKIP_PRECOMPILE_HEADERS":
-                    value = "ON" if file_props.skip_precompile_headers else ""
+    elif scope_type == "DIRECTORY":
+        directory = scope_args[0] if scope_args else str(ctx.current_source_dir)
+        abs_dir = resolve_cmake_path(directory, ctx.current_source_dir)
+        value = ctx.directory_properties.get(abs_dir, {}).get(prop_name)
 
-            if query_type == "DEFINED" or query_type == "SET":
-                ctx.variables[var_name] = "1" if value else "0"
-            else:
-                ctx.variables[var_name] = value
+    elif scope_type == "TEST":
+        if not scope_args:
+            return
+        test = _find_test(ctx, cmd, scope_args[0], "get_property(TEST)")
+        if test is not None:
+            value = test.properties.get(prop_name)
+
+    elif scope_type == "CACHE":
+        if not scope_args:
+            return
+        # cja doesn't record the types and help strings of cache entries.
+        if prop_name == "VALUE":
+            value = ctx.cache_values.get(scope_args[0])
+        else:
+            ctx.check_unsupported_args(cmd, [prop_name], strict)
 
     else:
         ctx.check_unsupported_args(cmd, [scope_type], strict)
-        if query_type in ("DEFINED", "SET"):
-            ctx.variables[var_name] = "0"
-        else:
-            ctx.variables[var_name] = ""
+
+    if query_type in ("DEFINED", "SET"):
+        ctx.variables[var_name] = "0" if value is None else "1"
+    else:
+        ctx.variables[var_name] = value or ""
 
 
 def handle_get_directory_property(
