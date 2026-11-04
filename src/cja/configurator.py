@@ -26,6 +26,7 @@ from rich.progress import (
 from termcolor import colored
 
 from .build_context import (
+    BUILTIN_MODULES_DIR,
     BuildContext,
     CustomCommand,
     CustomTarget,
@@ -111,9 +112,6 @@ from .utils import (
     to_posix_path,
     write_if_changed,
 )
-
-# Modules bundled with cja (e.g. FindGTest.cmake, CMakeFindDependencyMacro.cmake)
-BUILTIN_MODULES_DIR = Path(__file__).parent / "cmake" / "Modules"
 
 
 class ReturnFromFunction(Exception):

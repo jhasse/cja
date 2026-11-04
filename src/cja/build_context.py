@@ -26,6 +26,10 @@ from .utils import (
 )
 
 
+# Modules bundled with cja (e.g. FindGTest.cmake, CMakeFindDependencyMacro.cmake)
+BUILTIN_MODULES_DIR = Path(__file__).parent / "cmake" / "Modules"
+
+
 class TrackedDict(dict[str, str]):
     """Dict subclass that records which keys are read.
 
@@ -378,7 +382,9 @@ class BuildContext:
             if var_name not in self.variables:
                 if allow_undefined_empty:
                     return ""
-                if strict:
+                # Modules from CMake rely on undefined variables being empty,
+                # and projects can't change cja's bundled modules anyway.
+                if strict and self.current_list_file.parent != BUILTIN_MODULES_DIR:
                     self.print_warning(
                         f"undefined variable referenced: {var_name}", line
                     )

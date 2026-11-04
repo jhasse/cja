@@ -19,7 +19,7 @@ def _configure(
     monkeypatch.chdir(tmp_path)
     configure(tmp_path, "build", strict=True)
     captured = capsys.readouterr()
-    assert "error" not in captured.err
+    assert captured.err == ""
     return captured.out
 
 
