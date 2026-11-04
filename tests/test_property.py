@@ -92,17 +92,29 @@ def test_get_property_global() -> None:
 
 
 def test_get_property_global_not_set() -> None:
-    """Test get_property for non-existent global property."""
+    """Like CMake, get_property unsets the variable for a property that isn't set."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
     commands = [
+        Command(name="set", args=["MY_VAR", "before"], line=1),
         Command(
             name="get_property",
             args=["MY_VAR", "GLOBAL", "PROPERTY", "NONEXISTENT"],
-            line=1,
-        )
+            line=2,
+        ),
     ]
     process_commands(commands, ctx)
-    assert ctx.variables["MY_VAR"] == ""
+    assert "MY_VAR" not in ctx.variables
+
+
+def test_get_property_global_set_to_empty_is_set() -> None:
+    """Like CMake, a global property set to an empty string counts as SET."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="set_property", args=["GLOBAL", "PROPERTY", "P", ""], line=1),
+        Command(name="get_property", args=["v", "GLOBAL", "PROPERTY", "P", "SET"], line=2),
+    ]
+    process_commands(commands, ctx)
+    assert ctx.variables["v"] == "1"
 
 
 def test_get_property_global_defined() -> None:

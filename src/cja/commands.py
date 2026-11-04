@@ -1194,7 +1194,7 @@ def handle_get_property(
         if query_type == "DEFINED":
             ctx.variables[var_name] = "1" if prop_name in ctx.global_properties else "0"
             return
-        value = ctx.global_properties.get(prop_name) or None
+        value = ctx.global_properties.get(prop_name)
 
     elif scope_type == "TARGET":
         if not scope_args:
@@ -1247,8 +1247,11 @@ def handle_get_property(
 
     if query_type in ("DEFINED", "SET"):
         ctx.variables[var_name] = "0" if value is None else "1"
+    elif value is None:
+        # Like CMake, an unset property unsets the variable.
+        _unset_normal_variable(ctx, var_name)
     else:
-        ctx.variables[var_name] = value or ""
+        ctx.variables[var_name] = value
 
 
 def handle_get_directory_property(
