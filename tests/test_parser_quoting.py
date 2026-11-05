@@ -103,6 +103,26 @@ def test_bracket_argument_no_equals() -> None:
     assert commands[0].args == ["FOO", "bar"]
 
 
+def test_bracket_argument_ignores_leading_newline() -> None:
+    """Like CMake, only a single newline right after the opening bracket."""
+    commands = parse(
+        "set(A [[\nabc]])\n"
+        "set(B [==[\r\n\ndef]==])\n"
+        "set(C [=[\n]=])\n"
+        "set(D [[ \nghi]])\n"
+        "set(E 1)\n"
+    )
+    assert [command.args[1] for command in commands] == [
+        "abc",
+        "\ndef",
+        "",
+        " \nghi",
+        "1",
+    ]
+    # The ignored newlines still count
+    assert commands[-1].line == 10
+
+
 def test_bracket_argument_sets_is_bracket_flag() -> None:
     content = "set(FOO [[bar]])"
     commands = parse(content)

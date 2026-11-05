@@ -155,6 +155,11 @@ def tokenize(content: str) -> list[tuple[str, int, bool]]:
                 if closing_idx != -1:
                     val = content[j:closing_idx]
                     line += val.count("\n")
+                    # Like CMake, ignore a newline right after the opening bracket
+                    if val.startswith("\r\n"):
+                        val = val[2:]
+                    elif val.startswith("\n"):
+                        val = val[1:]
                     tokens.append((val, line, True))
                     i = closing_idx + len(closing)
                     continue
