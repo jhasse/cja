@@ -2860,7 +2860,12 @@ def generate_ninja(
         # Write cja.json with run executable info, removing a stale one first
         (ctx.build_dir / "cja.json").unlink(missing_ok=True)
         if ctx.executables:
-            run_target = ctx.executables[0].name
+            # Without VS_STARTUP_PROJECT, run the first executable of the
+            # shallowest directory, so one from a nested add_subdirectory()
+            # doesn't win just because it was defined first
+            run_target = min(
+                ctx.executables, key=lambda exe: exe.directory_depth
+            ).name
 
             root_dir = str(ctx.source_dir)
             if root_dir in ctx.directory_properties:

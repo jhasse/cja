@@ -58,6 +58,7 @@ class Executable:
     # The directory the target was created in (its CMAKE_CURRENT_SOURCE_DIR)
     source_dir: Path | None = None
     binary_dir: str = ""
+    directory_depth: int = 0
     link_libraries: list[str] = field(default_factory=list)
     compile_features: list[str] = field(default_factory=list)
     include_directories: list[str] = field(default_factory=list)

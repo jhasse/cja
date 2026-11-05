@@ -207,6 +207,9 @@ class BuildContext:
     # Inside an add_subdirectory(... EXCLUDE_FROM_ALL), so new targets start
     # out excluded from "all"
     exclude_from_all: bool = False
+    # How many add_subdirectory()/FetchContent levels below the top-level
+    # directory we are, so "cja run" can prefer the shallowest executable
+    directory_depth: int = 0
     cmake_files: set[Path] = field(default_factory=set)
     configure_depends: set[Path] = field(default_factory=set)
     configure_depend_globs: list[ConfigureDependGlob] = field(default_factory=list)

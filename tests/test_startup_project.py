@@ -1,7 +1,7 @@
 import json
 import platform
 
-from cja.generator import BuildContext, generate_ninja, process_commands
+from cja.generator import BuildContext, configure, generate_ninja, process_commands
 from cja.parser import Command
 
 EXE_EXT = ".exe" if platform.system() == "Windows" else ""
@@ -64,3 +64,30 @@ def test_stale_cja_json_removed(tmp_path):
     generate_ninja(ctx, tmp_path / "build.ninja", "build")
 
     assert not (build_dir / "cja.json").exists()
+
+
+def test_shallowest_executable_by_default(tmp_path):
+    # A adds B, B adds C before defining its own executable. Without a
+    # top-level VS_STARTUP_PROJECT, B's executable should win over C's even
+    # though C's was defined first.
+    source_dir = tmp_path / "a"
+    (source_dir / "b" / "c").mkdir(parents=True)
+    (source_dir / "CMakeLists.txt").write_text(
+        "project(a)\nadd_subdirectory(b)\n"
+    )
+    (source_dir / "b" / "CMakeLists.txt").write_text(
+        "add_subdirectory(c)\nadd_executable(exe_b main.cpp)\n"
+    )
+    (source_dir / "b" / "c" / "CMakeLists.txt").write_text(
+        "add_executable(exe_c main.cpp)\n"
+    )
+    (source_dir / "b" / "main.cpp").write_text("int main() {}\n")
+    (source_dir / "b" / "c" / "main.cpp").write_text("int main() {}\n")
+
+    ctx = configure(source_dir, "build")
+    assert [exe.directory_depth for exe in ctx.executables] == [2, 1]
+
+    generate_ninja(ctx, source_dir / "build" / "build.ninja", "build")
+
+    cja_json = json.loads((source_dir / "build" / "cja.json").read_text())
+    assert cja_json["run_executable"].endswith(f"exe_b{EXE_EXT}")

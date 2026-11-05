@@ -852,6 +852,7 @@ def process_commands(
                         saved_exclude_from_all = ctx.exclude_from_all
                         if fc_exclude_from_all:
                             ctx.exclude_from_all = True
+                        ctx.directory_depth += 1
 
                         fc_binary_dir = binary_dir
                         fc_binary_dir.mkdir(parents=True, exist_ok=True)
@@ -881,6 +882,7 @@ def process_commands(
                             parent_scope_updates = ctx.parent_scope_vars
                             ctx.parent_scope_vars = saved_parent_scope_vars
                             ctx.exclude_from_all = saved_exclude_from_all
+                            ctx.directory_depth -= 1
                             ctx.current_source_dir = saved_current_source_dir
                             ctx.current_list_file = saved_current_list_file
                             ctx.parent_directory = saved_parent_directory
@@ -1253,6 +1255,7 @@ def process_commands(
                         saved_exclude_from_all = ctx.exclude_from_all
                         if sub_exclude_from_all:
                             ctx.exclude_from_all = True
+                        ctx.directory_depth += 1
 
                         if len(args) >= 2:
                             binary_arg = Path(args[1])
@@ -1297,6 +1300,7 @@ def process_commands(
                             parent_scope_updates = ctx.parent_scope_vars
                             ctx.parent_scope_vars = saved_parent_scope_vars
                             ctx.exclude_from_all = saved_exclude_from_all
+                            ctx.directory_depth -= 1
                             ctx.current_source_dir = saved_current_source_dir
                             ctx.current_list_file = saved_current_list_file
                             ctx.parent_directory = saved_parent_directory

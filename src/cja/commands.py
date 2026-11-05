@@ -1624,6 +1624,7 @@ def handle_add_executable(
                 binary_dir=ctx.variables.get(
                     "CMAKE_CURRENT_BINARY_DIR", to_posix_path(ctx.build_dir)
                 ),
+                directory_depth=ctx.directory_depth,
             )
         )
 
