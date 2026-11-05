@@ -29,6 +29,8 @@ from .targets import TARGET_PROPERTY_FIELDS, Executable, ImportedTarget, Library
 from .utils import (
     UNDEFINED_VAR_SENTINEL,
     cmake_regex_to_python,
+    default_archiver,
+    find_linker,
     is_constant_truthy,
     is_on,
     is_truthy,
@@ -102,17 +104,22 @@ def init_project_cache_vars(ctx: BuildContext) -> None:
     Like in CMake, -D values and set(... CACHE ...) before project() take
     precedence.
     """
-    defaults = {
+    defaults: dict[str, Callable[[], str]] = {
         # CMake leaves the build type empty, cja defaults to a debug build.
-        "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_INSTALL_PREFIX": ctx.default_install_prefix(),
-        "CMAKE_C_COMPILER": ctx.c_compiler,
-        "CMAKE_CXX_COMPILER": ctx.cxx_compiler,
-        "CMAKE_MAKE_PROGRAM": to_posix_path(shutil.which("ninja") or "ninja"),
+        "CMAKE_BUILD_TYPE": lambda: "Debug",
+        "CMAKE_INSTALL_PREFIX": ctx.default_install_prefix,
+        "CMAKE_C_COMPILER": lambda: ctx.c_compiler,
+        "CMAKE_CXX_COMPILER": lambda: ctx.cxx_compiler,
+        "CMAKE_MAKE_PROGRAM": lambda: to_posix_path(shutil.which("ninja") or "ninja"),
+        # The archiver that static libraries are made with
+        "CMAKE_AR": lambda: default_archiver(ctx.c_compiler),
+        "CMAKE_LINKER": lambda: find_linker(
+            ctx.c_compiler, ctx.variables.get("CMAKE_C_COMPILER_ID", "")
+        ),
     }
-    for name, value in defaults.items():
+    for name, default in defaults.items():
         if name not in ctx.cache_values:
-            ctx.set_cache(name, value)
+            ctx.set_cache(name, default())
 
 
 def handle_project(

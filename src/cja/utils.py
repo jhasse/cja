@@ -1,4 +1,5 @@
 import os
+import platform
 import re
 import shlex
 import shutil
@@ -6,7 +7,7 @@ import sys
 import tarfile
 import zipfile
 from collections.abc import Callable, Iterable
-from pathlib import Path
+from pathlib import Path, PurePath
 from urllib.parse import unquote, urlparse
 
 _DRIVE_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
@@ -180,6 +181,65 @@ def write_if_changed(path: Path, content: str) -> None:
 def to_posix_path(path: str | Path) -> str:
     """Normalize path separators to forward slashes."""
     return str(path).replace("\\", "/")
+
+
+def default_archiver(c_compiler: str) -> str:
+    """The archiver for static libraries: $AR, or else like CMake the gcc-ar
+    next to a GCC (e.g. gcc-ar-14 for gcc-14), as the LTO objects of a GCC
+    other than the system's default one need its plugin to be indexed."""
+    env_ar = os.getenv("AR")
+    if env_ar:
+        return env_ar
+    if platform.system() == "Windows":
+        return "llvm-ar"
+    compiler = PurePath(c_compiler)
+    match = re.fullmatch(r"(.*-)?gcc(-[0-9.]+)?", compiler.name)
+    if match:
+        gcc_ar = f"{match.group(1) or ''}gcc-ar{match.group(2) or ''}"
+        candidate = str(compiler.with_name(gcc_ar))
+        if shutil.which(candidate):
+            return candidate
+    return "ar"
+
+
+def find_linker(c_compiler: str, compiler_id: str) -> str:
+    """CMAKE_LINKER, searched for like CMake does.
+
+    It's for reference only: like CMake with GCC and Clang, cja links through
+    the compiler driver.
+    """
+    parts = shlex.split(c_compiler) if c_compiler else []
+    if parts and Path(parts[0]).name.lower() in ("ccache", "sccache"):
+        parts = parts[1:]
+    compiler = shutil.which(parts[0]) if parts else None
+    names = ["ld"]
+    if compiler_id == "Clang":
+        if platform.system() == "Windows":
+            names.insert(0, "lld-link")
+        elif platform.system() != "Darwin":
+            names.insert(0, "ld.lld")
+    prefix = suffix = ""
+    hint = None
+    if compiler:
+        hint = str(Path(compiler).parent)
+        # The toolchain prefix and version suffix, e.g. of x86_64-linux-gnu-gcc-13
+        match = re.fullmatch(
+            r"(.+-)?(clang|g?cc)(-cl)?(-?[0-9]+(\.[0-9]+)*)?(-[^.]+)?(\.exe)?",
+            Path(compiler).name,
+        )
+        if match:
+            prefix = match.group(1) or ""
+            suffix = match.group(4) or ""
+    candidates = [
+        candidate
+        for name in names
+        for candidate in (prefix + name + suffix, prefix + name, name + suffix, name)
+    ]
+    for candidate in dict.fromkeys(candidates):
+        found = (hint and shutil.which(candidate, path=hint)) or shutil.which(candidate)
+        if found:
+            return to_posix_path(found)
+    return "CMAKE_LINKER-NOTFOUND"
 
 
 def split_flags(value: str) -> list[str]:

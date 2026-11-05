@@ -15,6 +15,7 @@ from typing import cast
 from termcolor import colored
 
 from .build_context import (
+    CMAKE_ROOT,
     BuildContext,
 )
 from .commands import evaluate_glob, glob_watch_dirs
@@ -24,6 +25,7 @@ from .parser import Command
 from .syntax import Test
 from .targets import Executable, Library
 from .utils import (
+    default_archiver,
     ipo_flag,
     is_truthy,
     is_verbatim_include,
@@ -85,25 +87,6 @@ def _format_imported_flags(flags: str) -> str:
     if "'" not in flags and '"' not in flags:
         return flags
     return " ".join(_quote_if_spaced(token) for token in split_flags(flags))
-
-
-def _default_archiver(c_compiler: str) -> str:
-    """The archiver for static libraries: $AR, or else like CMake the gcc-ar
-    next to a GCC (e.g. gcc-ar-14 for gcc-14), as the LTO objects of a GCC
-    other than the system's default one need its plugin to be indexed."""
-    env_ar = os.getenv("AR")
-    if env_ar:
-        return env_ar
-    if platform.system() == "Windows":
-        return "llvm-ar"
-    compiler = PurePath(c_compiler)
-    match = re.fullmatch(r"(.*-)?gcc(-[0-9.]+)?", compiler.name)
-    if match:
-        gcc_ar = f"{match.group(1) or ''}gcc-ar{match.group(2) or ''}"
-        candidate = str(compiler.with_name(gcc_ar))
-        if shutil.which(candidate):
-            return candidate
-    return "ar"
 
 
 def _infer_compiler_id(compiler: str) -> str:
@@ -1015,7 +998,7 @@ def generate_ninja(
         n.variable("builddir", builddir)
         n.variable("cc", cc)
         n.variable("cxx", cxx)
-        n.variable("ar", _default_archiver(cc))
+        n.variable("ar", ctx.variables.get("CMAKE_AR") or default_archiver(cc))
         n.newline()
 
         cmake_deps: list[str] = []
@@ -2951,6 +2934,7 @@ def run_script(
     cja_cmd = _resolve_cja_cmd()
     ctx.cja_cmd = cja_cmd
     ctx.variables["CMAKE_COMMAND"] = " ".join(cja_cmd)
+    ctx.variables["CMAKE_ROOT"] = to_posix_path(CMAKE_ROOT)
 
     argv = [cja_cmd[0], "-P", str(script_path), *(script_args or [])]
     ctx.variables["CMAKE_ARGC"] = str(len(argv))
@@ -3099,6 +3083,7 @@ def configure(
     # cja only generates Ninja files, so -DCMAKE_GENERATOR can't change it.
     ctx.set_cache("CMAKE_GENERATOR", "Ninja")
     ctx.set_cache("CMAKE_HOME_DIRECTORY", to_posix_path(ctx.source_dir))
+    ctx.set_cache("CMAKE_ROOT", to_posix_path(CMAKE_ROOT))
     ctx.variables.setdefault("CMAKE_BUILD_TYPE", "Debug")
     ctx.variables["CMAKE_FIND_PACKAGE_REDIRECTS_DIR"] = str(
         ctx.build_dir / "CMakeFiles" / "pkgRedirects"

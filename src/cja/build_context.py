@@ -27,7 +27,9 @@ from .utils import (
 )
 
 # Modules bundled with cja (e.g. FindGTest.cmake, CMakeFindDependencyMacro.cmake)
-BUILTIN_MODULES_DIR = Path(__file__).parent / "cmake" / "Modules"
+# CMAKE_ROOT: like CMake's, it has the bundled modules in Modules/
+CMAKE_ROOT = Path(__file__).parent / "cmake"
+BUILTIN_MODULES_DIR = CMAKE_ROOT / "Modules"
 
 
 def is_exact_variable_reference(arg: str) -> bool:

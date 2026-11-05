@@ -5,7 +5,8 @@ from pathlib import Path
 import pytest
 
 from cja.build_context import BuildContext
-from cja.generator import configure
+from cja.generator import configure, run_script
+from cja.utils import default_archiver
 
 
 def _configure(tmp_path: Path, content: str, strict: bool = False) -> BuildContext:
@@ -102,10 +103,11 @@ def test_builtin_cache_entries(tmp_path: Path) -> None:
         tmp_path,
         "set(BEFORE_COMMAND $CACHE{CMAKE_COMMAND})\n"
         "set(BEFORE_HOME $CACHE{CMAKE_HOME_DIRECTORY})\n"
+        "include($CACHE{CMAKE_ROOT}/Modules/CMakePrintHelpers.cmake)\n"
         'set(BEFORE_BUILD_TYPE "$CACHE{CMAKE_BUILD_TYPE}")\n'
         "project(t)\n"
         "foreach(v BUILD_TYPE INSTALL_PREFIX C_COMPILER CXX_COMPILER MAKE_PROGRAM"
-        " PROJECT_NAME)\n"
+        " PROJECT_NAME AR LINKER)\n"
         "  set(CACHED_${v} $CACHE{CMAKE_${v}})\n"
         "endforeach()\n"
         'set(TOP "${PROJECT_IS_TOP_LEVEL} $CACHE{t_IS_TOP_LEVEL}")\n'
@@ -123,6 +125,8 @@ def test_builtin_cache_entries(tmp_path: Path) -> None:
     assert ctx.variables["CACHED_CXX_COMPILER"] == ctx.cxx_compiler
     assert ctx.variables["CACHED_MAKE_PROGRAM"]
     assert ctx.variables["CACHED_PROJECT_NAME"] == "t"
+    assert ctx.variables["CACHED_AR"] == default_archiver(ctx.c_compiler)
+    assert ctx.variables["CACHED_LINKER"]
     assert ctx.variables["TOP"] == "ON ON"
     assert ctx.variables["SUB"] == "OFF OFF t"
     assert ctx.variables["CMAKE_PROJECT_NAME"] == "t"
@@ -139,3 +143,17 @@ def test_builtin_cache_entries_keep_earlier_values(tmp_path: Path) -> None:
     ctx = configure(tmp_path, "build", {"CMAKE_INSTALL_PREFIX": "/cli"})
     assert ctx.cache_values["CMAKE_BUILD_TYPE"] == "Release"
     assert ctx.cache_values["CMAKE_INSTALL_PREFIX"] == "/cli"
+
+
+def test_cmake_ar_is_used(tmp_path: Path) -> None:
+    """Like in CMake, -DCMAKE_AR picks the archiver for static libraries."""
+    (tmp_path / "CMakeLists.txt").write_text("project(t)\n")
+    configure(tmp_path, "build", {"CMAKE_AR": "my-ar"})
+    assert "\nar = my-ar\n" in (tmp_path / "build.ninja").read_text()
+
+
+def test_cmake_root_in_script_mode(tmp_path: Path) -> None:
+    script = tmp_path / "script.cmake"
+    script.write_text("include(${CMAKE_ROOT}/Modules/CMakePrintHelpers.cmake)\n")
+    ctx = run_script(script)
+    assert "cmake_print_variables" in ctx.functions
