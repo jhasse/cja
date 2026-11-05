@@ -30,6 +30,13 @@ from .utils import (
 BUILTIN_MODULES_DIR = Path(__file__).parent / "cmake" / "Modules"
 
 
+def is_exact_variable_reference(arg: str) -> bool:
+    """Whether arg is a single ${VAR} or $CACHE{VAR}, optionally in quotes."""
+    if len(arg) >= 2 and arg[0] == arg[-1] and arg[0] in "\"'":
+        arg = arg[1:-1]
+    return arg.startswith(("${", "$CACHE{")) and arg.endswith("}")
+
+
 class TrackedDict(dict[str, str]):
     """Dict subclass that records which keys are read.
 
@@ -408,11 +415,7 @@ class BuildContext:
                 expanded_args.append(arg)
                 continue
             allow_undefined = False
-            is_exact_var = (
-                (arg.startswith("${") and arg.endswith("}"))
-                or (arg.startswith('"${') and arg.endswith('}"'))
-                or (arg.startswith("'${") and arg.endswith("}'"))
-            )
+            is_exact_var = is_exact_variable_reference(arg)
             if cmd.name in ("if", "elseif", "while"):
                 allow_undefined = (
                     idx + 2 < len(cmd.args)
@@ -420,8 +423,9 @@ class BuildContext:
                     and cmd.args[idx + 2] in ("", '""', "''")
                     and is_exact_var
                 )
-                # In CMake conditions, unresolved ${VAR} tokens are treated
-                # as empty and should not raise undefined-variable warnings.
+                # In CMake conditions, unresolved ${VAR} or $CACHE{VAR} tokens
+                # are treated as empty and should not raise undefined-variable
+                # warnings.
                 allow_undefined = allow_undefined or is_exact_var
             elif cmd.name == "option":
                 # Common CMake pattern:
@@ -458,10 +462,12 @@ class BuildContext:
         line: int = 0,
         allow_undefined_empty: bool = False,
     ) -> str:
-        """Expand ${VAR} and $ENV{VAR} references in a string."""
+        """Expand ${VAR}, $ENV{VAR} and $CACHE{VAR} references in a string."""
         escaped_var_marker = "__CJA_ESC_VAR_OPEN__"
         escaped_env_marker = "__CJA_ESC_ENV_OPEN__"
+        escaped_cache_marker = "__CJA_ESC_CACHE_OPEN__"
         value = value.replace("\\$ENV{", escaped_env_marker)
+        value = value.replace("\\$CACHE{", escaped_cache_marker)
         value = value.replace("\\${", escaped_var_marker)
 
         # Common CMake pattern: if ("${VAR}" STREQUAL "") should not warn when VAR is undefined.
@@ -472,19 +478,22 @@ class BuildContext:
             if match and match.group(1) not in self.variables:
                 return ""
 
+        def replace_undefined(var_name: str) -> str:
+            # Modules from CMake rely on undefined variables being empty,
+            # and projects can't change cja's bundled modules anyway.
+            if (
+                strict
+                and not allow_undefined_empty
+                and self.current_list_file.parent != BUILTIN_MODULES_DIR
+            ):
+                self.print_warning(f"undefined variable referenced: {var_name}", line)
+            return ""
+
         def replace_normal(var_name: str) -> str:
             if not var_name:
                 return ""
             if var_name not in self.variables:
-                if allow_undefined_empty:
-                    return ""
-                # Modules from CMake rely on undefined variables being empty,
-                # and projects can't change cja's bundled modules anyway.
-                if strict and self.current_list_file.parent != BUILTIN_MODULES_DIR:
-                    self.print_warning(
-                        f"undefined variable referenced: {var_name}", line
-                    )
-                return ""
+                return replace_undefined(var_name)
             value = self.variables.get(var_name, "")
             if value == UNDEFINED_VAR_SENTINEL:
                 return ""
@@ -492,6 +501,22 @@ class BuildContext:
 
         def replace_env(var_name: str) -> str:
             return os.environ.get(var_name, "")
+
+        def replace_cache(var_name: str) -> str:
+            if not var_name:
+                return ""
+            if var_name in self.cache_values:
+                return self.cache_values[var_name]
+            # Like CMake, only warn if there's no normal variable either.
+            if var_name in self.variables:
+                return ""
+            return replace_undefined(var_name)
+
+        references = (
+            ("${", replace_normal),
+            ("$ENV{", replace_env),
+            ("$CACHE{", replace_cache),
+        )
 
         def scan(pos: int, in_ref: bool) -> tuple[str, int] | None:
             """Expand references starting at pos in a single pass.
@@ -503,16 +528,21 @@ class BuildContext:
             """
             out: list[str] = []
             while pos < len(value):
-                if value.startswith("${", pos) or value.startswith("$ENV{", pos):
-                    is_env = value[pos + 1] == "E"
-                    inner = scan(pos + (5 if is_env else 2), in_ref=True)
+                reference = None
+                if value[pos] == "$":
+                    reference = next(
+                        (r for r in references if value.startswith(r[0], pos)), None
+                    )
+                if reference:
+                    opening, replace = reference
+                    inner = scan(pos + len(opening), in_ref=True)
                     if inner is None:
                         # Unterminated reference: keep the rest literally
                         out.append(value[pos:])
                         pos = len(value)
                         break
                     name, end = inner
-                    out.append(replace_env(name) if is_env else replace_normal(name))
+                    out.append(replace(name))
                     pos = end + 1
                 elif in_ref and value[pos] == "}":
                     return "".join(out), pos
@@ -527,6 +557,7 @@ class BuildContext:
         assert scanned is not None
         result = scanned[0]
         result = result.replace(escaped_env_marker, "$ENV{")
+        result = result.replace(escaped_cache_marker, "$CACHE{")
         result = result.replace(escaped_var_marker, "${")
         result = result.replace(LITERAL_BACKSLASH_MARKER, "\\")
         return result

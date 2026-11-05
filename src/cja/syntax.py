@@ -2,7 +2,7 @@ import operator
 import os
 import platform
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -217,12 +217,14 @@ def _parse_number(value: str, whole: bool = False) -> float | None:
 def evaluate_condition(
     args: list[str],
     variables: dict[str, str],
+    cache: Mapping[str, str] | None = None,
     target_exists: Callable[[str], bool] | None = None,
     command_exists: Callable[[str], bool] | None = None,
     test_exists: Callable[[str], bool] | None = None,
 ) -> bool:
     """Evaluate a CMake if() condition.
 
+    ``cache`` holds the cache entries, for DEFINED CACHE{VAR}.
     ``command_exists`` is asked about lowercase names of commands that aren't
     built into CMake, i.e. functions and macros.
     """
@@ -237,7 +239,7 @@ def evaluate_condition(
             return m.group(1) in os.environ
         m = re.fullmatch(r"CACHE\{\s*(\w+)\s*\}", name)
         if m:
-            return m.group(1) in variables and variables.get(m.group(1)) != UNDEFINED_VAR_SENTINEL
+            return cache is not None and m.group(1) in cache
         return name in variables and variables.get(name) != UNDEFINED_VAR_SENTINEL
 
     def resolve(name: str) -> str:

@@ -4,18 +4,11 @@ from .build_context import (
     BuildContext,
     find_matching_endforeach,
     find_matching_endif,
+    is_exact_variable_reference,
 )
 from .parser import Command
 from .syntax import evaluate_condition, find_else_or_elseif
 from .utils import split_unquoted_list_args
-
-
-def _is_exact_var_token(token: str) -> bool:
-    return (
-        (token.startswith("${") and token.endswith("}"))
-        or (token.startswith('"${') and token.endswith('}"'))
-        or (token.startswith("'${") and token.endswith("}'"))
-    )
 
 
 def _condition_args(ctx: BuildContext, command: Command, strict: bool) -> list[str]:
@@ -25,13 +18,13 @@ def _condition_args(ctx: BuildContext, command: Command, strict: bool) -> list[s
         if i < len(command.is_bracket) and command.is_bracket[i]:
             expanded.append(arg)
             continue
-        # Match CMake condition behavior: undefined ${VAR} in a condition
-        # evaluates as empty, rather than producing a strict warning.
+        # Match CMake condition behavior: undefined ${VAR} or $CACHE{VAR} in a
+        # condition evaluates as empty, rather than producing a strict warning.
         value = ctx.expand_variables(
             arg,
             strict,
             command.line,
-            allow_undefined_empty=_is_exact_var_token(arg),
+            allow_undefined_empty=is_exact_variable_reference(arg),
         )
         quoted = i < len(command.is_quoted) and command.is_quoted[i]
         if ";" in value and not quoted:
@@ -59,6 +52,7 @@ def expanded_condition_holds(ctx: BuildContext, args: list[str]) -> bool:
     return evaluate_condition(
         args,
         ctx.variables,
+        cache=ctx.cache_values,
         target_exists=target_exists,
         command_exists=lambda name: name in ctx.functions or name in ctx.macros,
         test_exists=lambda name: any(test.name == name for test in ctx.tests),

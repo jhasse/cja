@@ -2173,7 +2173,7 @@ def handle_cmake_dependent_option(
     clauses = [clause.strip() for clause in depends_expr.split(";") if clause.strip()]
     condition_met = True
     for clause in clauses:
-        if not evaluate_condition(clause.split(), ctx.variables):
+        if not evaluate_condition(clause.split(), ctx.variables, ctx.cache_values):
             condition_met = False
             break
 
