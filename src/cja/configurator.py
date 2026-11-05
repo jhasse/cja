@@ -1067,39 +1067,40 @@ def process_commands(
                 stack[-1].pc = len(typing.cast(list[Command], stack[-1].commands))
                 continue
 
-            case "break":
-                # Pop frames until the innermost loop frame is removed.
-                loop_index = next(
-                    (
-                        i
-                        for i in range(len(stack) - 1, -1, -1)
-                        if stack[i].kind in ("foreach", "while")
-                    ),
-                    None,
-                )
-                if loop_index is not None:
-                    while len(stack) > loop_index:
-                        popped = stack.pop()
-                        if popped.on_exit:
-                            popped.on_exit()
-                continue
-
-            case "continue":
-                # Pop frames until (but not including) the innermost loop frame,
-                # then let the loop frame advance to its next iteration naturally.
-                loop_index = next(
-                    (
-                        i
-                        for i in range(len(stack) - 1, -1, -1)
-                        if stack[i].kind in ("foreach", "while")
-                    ),
-                    None,
-                )
-                if loop_index is not None:
-                    while len(stack) > loop_index + 1:
-                        popped = stack.pop()
-                        if popped.on_exit:
-                            popped.on_exit()
+            case "break" | "continue":
+                # The innermost loop of the function or directory
+                loop_index = None
+                in_other_list_file = False
+                for i in range(len(stack) - 1, -1, -1):
+                    if stack[i].kind in ("foreach", "while"):
+                        loop_index = i
+                        break
+                    if stack[i].kind in ("function", "directory"):
+                        break
+                    if stack[i].kind == "include":
+                        in_other_list_file = True
+                if loop_index is None:
+                    message = (
+                        f"A {cmd.name.upper()} command was found outside of a"
+                        " proper FOREACH or WHILE loop scope."
+                    )
+                    if strict:
+                        ctx.print_error(message, cmd.line)
+                        sys.exit(1)
+                    ctx.print_warning(message, cmd.line)
+                    frame.pc += 1
+                    continue
+                if in_other_list_file:
+                    # Like in CMake, a loop outside the current list file (e.g.
+                    # around include()) isn't affected.
+                    frame.pc += 1
+                    continue
+                # break() pops the loop frame too, continue() lets it advance to
+                # its next iteration.
+                while len(stack) > loop_index + (cmd.name == "continue"):
+                    popped = stack.pop()
+                    if popped.on_exit:
+                        popped.on_exit()
                 continue
 
             case "cmake_language" if ctx.expand_arguments(cmd, strict, 0, 1) == ["EVAL"]:
