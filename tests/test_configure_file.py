@@ -84,7 +84,7 @@ def test_configure_file_uses_current_binary_dir(tmp_path: Path) -> None:
 
     process_commands(commands, ctx)
 
-    assert (binary_subdir / "nested" / "out.txt").read_text() == "value"
+    assert (binary_subdir / "nested" / "out.txt").read_text() == "value\n"
 
 
 def test_configure_file_cmakedefine(tmp_path: Path) -> None:
@@ -225,3 +225,28 @@ def test_configure_file_like_cmake(tmp_path: Path) -> None:
         "#define TEXT_VAR\n"
         "${ON_VAR} \n"
     )
+
+
+def test_configure_file_newlines(tmp_path: Path) -> None:
+    """Like CMake, end the last line, but copy COPYONLY files as they are."""
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / "empty.in").write_bytes(b"")
+    (src_dir / "crlf.in").write_bytes(b"a\r\n@B@")
+
+    ctx = BuildContext(source_dir=src_dir, build_dir=tmp_path / "build")
+    ctx.variables["B"] = "b"
+    commands = [
+        Command(name="configure_file", args=["empty.in", "empty.out"], line=1),
+        Command(name="configure_file", args=["crlf.in", "crlf.out"], line=2),
+        Command(
+            name="configure_file", args=["crlf.in", "copy.out", "COPYONLY"], line=3
+        ),
+    ]
+
+    process_commands(commands, ctx)
+
+    build_dir = tmp_path / "build"
+    assert (build_dir / "empty.out").read_bytes() == b""
+    assert (build_dir / "crlf.out").read_text() == "a\nb\n"
+    assert (build_dir / "copy.out").read_bytes() == b"a\r\n@B@"

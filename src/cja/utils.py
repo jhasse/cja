@@ -157,13 +157,22 @@ def cmake_regex_to_python(pattern: str) -> str:
     return "".join(result)
 
 
-def write_if_changed(path: Path, content: str) -> None:
+def write_if_changed(path: Path, content: str | bytes) -> None:
     """Write ``content`` to ``path`` unless the file already holds it.
 
     Like CMake's copy-if-different: an unchanged generated file keeps its
     mtime, so regenerating doesn't force everything that depends on it to
-    rebuild.
+    rebuild. Bytes are written as they are, text with the platform's newlines.
     """
+    if isinstance(content, bytes):
+        try:
+            if path.read_bytes() == content:
+                return
+        except OSError:
+            pass
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+        return
     # Compare against what write_text() would put on disk (text mode turns
     # "\n" into os.linesep); read without newline translation so CRLF content
     # compares correctly.

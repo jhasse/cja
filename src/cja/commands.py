@@ -3977,10 +3977,15 @@ def handle_configure_file(
             sys.exit(1)
         return
 
+    if copyonly:
+        # Like CMake, copy the file as it is
+        write_if_changed(dst, src.read_bytes())
+        return
     content = src.read_text()
-    if not copyonly:
-        content = configure_string(ctx, content, at_only, escape_quotes, strict, cmd.line)
-
+    # Like CMake, which configures the file line by line, end the last line
+    if content and not content.endswith("\n"):
+        content += "\n"
+    content = configure_string(ctx, content, at_only, escape_quotes, strict, cmd.line)
     write_if_changed(dst, content)
 
 
