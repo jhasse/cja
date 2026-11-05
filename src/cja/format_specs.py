@@ -470,7 +470,10 @@ SPECS: dict[str, CmdSpec] = {
     "target_compile_features": spec(kwargs={v: "+" for v in VISIBILITY}),
     "target_compile_options": spec(kwargs={v: "+" for v in VISIBILITY}),
     "target_include_directories": spec(kwargs={v: "+" for v in VISIBILITY}),
-    "target_link_directories": spec(kwargs={v: "+" for v in VISIBILITY}),
+    # cmake-format doesn't know this, target_link_options() and
+    # target_precompile_headers(), so their visibility keywords don't group the
+    # arguments after them.
+    "target_link_directories": spec(flags=VISIBILITY),
     "target_link_libraries": spec(
         kwargs={
             v: "+"
@@ -478,10 +481,8 @@ SPECS: dict[str, CmdSpec] = {
             + ("LINK_PRIVATE", "LINK_PUBLIC", "LINK_INTERFACE_LIBRARIES")
         }
     ),
-    "target_link_options": spec(kwargs={v: "+" for v in VISIBILITY}),
-    "target_precompile_headers": spec(
-        kwargs={"REUSE_FROM": 1} | {v: "+" for v in VISIBILITY}
-    ),
+    "target_link_options": spec(flags=VISIBILITY),
+    "target_precompile_headers": spec(flags=VISIBILITY),
     "target_sources": spec(
         kwargs={
             v: spec(

@@ -212,6 +212,40 @@ my_add_test(
     )
 
 
+def test_visibility_flags() -> None:
+    """Like cmake-format, PRIVATE and co. don't take the arguments after them."""
+    source = (
+        "target_link_directories(my_very_long_target_name PRIVATE "
+        "${CMAKE_CURRENT_SOURCE_DIR}/lib/some/dir ${CMAKE_BINARY_DIR}/other/lib/dir)\n"
+        "target_link_directories(my_very_long_target_name PUBLIC "
+        "${CMAKE_CURRENT_SOURCE_DIR}/lib/some/dir PRIVATE ${CMAKE_BINARY_DIR}/lib)\n"
+        "target_link_options(my_very_long_target_name BEFORE PUBLIC "
+        "-Wl,--some-long-linker-option=value PRIVATE -Wl,--another-option)\n"
+        "target_precompile_headers(my_very_long_target_name PRIVATE <vector> <string> "
+        '<unordered_map> "${CMAKE_CURRENT_SOURCE_DIR}/pch.h")\n'
+        "target_precompile_headers(my_very_long_target_name_that_is_long REUSE_FROM "
+        "my_other_very_long_target_name)\n"
+    )
+    assert (
+        fmt(source)
+        == """\
+target_link_directories(
+  my_very_long_target_name PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/lib/some/dir
+  ${CMAKE_BINARY_DIR}/other/lib/dir)
+target_link_directories(
+  my_very_long_target_name PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/lib/some/dir
+  PRIVATE ${CMAKE_BINARY_DIR}/lib)
+target_link_options(
+  my_very_long_target_name BEFORE PUBLIC -Wl,--some-long-linker-option=value
+  PRIVATE -Wl,--another-option)
+target_precompile_headers(my_very_long_target_name PRIVATE <vector> <string>
+                          <unordered_map> "${CMAKE_CURRENT_SOURCE_DIR}/pch.h")
+target_precompile_headers(my_very_long_target_name_that_is_long REUSE_FROM
+                          my_other_very_long_target_name)
+"""
+    )
+
+
 _LONG_CALL = (
     "my_func(FOO BAR_WITH_A_REALLY_LONG_NAME_THAT_IS_LONG BAZ_ANOTHER_LONG_VALUE "
     "SOURCES a.cpp)\n"
