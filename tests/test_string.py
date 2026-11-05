@@ -396,3 +396,53 @@ def test_string_repeat_errors(capsys) -> None:
                 strict=True,
             )
         assert message in capsys.readouterr().err
+
+
+def test_string_configure(monkeypatch) -> None:
+    """The expected values are the output of CMake 4.3."""
+    monkeypatch.setenv("CJA_TEST_ENV", "env")
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    ctx.variables["A"] = 'x"y'
+    ctx.variables["ON_VAR"] = "ON"
+    template = '@A@ ${A} "lit" @UNDEF@ ${UNDEF} $ENV{CJA_TEST_ENV} @A'
+    commands = [
+        Command(name="string", args=["CONFIGURE", template, "R1"], line=1),
+        Command(name="string", args=["CONFIGURE", template, "R2", "@ONLY"], line=2),
+        Command(
+            name="string", args=["CONFIGURE", template, "R3", "ESCAPE_QUOTES"], line=3
+        ),
+        Command(
+            name="string",
+            args=["CONFIGURE", "#cmakedefine ON_VAR @A@\n#cmakedefine01 OFF", "R4"],
+            line=4,
+        ),
+        Command(name="string", args=["CONFIGURE", "a;b", "R5"], line=5),
+    ]
+    # The arguments are bracket arguments in CMake, so they aren't expanded
+    for command in commands:
+        command.is_bracket = [False, True]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["R1"] == 'x"y x"y "lit"   env @A'
+    assert ctx.variables["R2"] == 'x"y ${A} "lit"  ${UNDEF} $ENV{CJA_TEST_ENV} @A'
+    assert ctx.variables["R3"] == 'x\\"y x\\"y "lit"   env @A'
+    assert ctx.variables["R4"] == '#define ON_VAR x"y\n#define OFF 0'
+    assert ctx.variables["R5"] == "a;b"
+
+
+def test_string_configure_errors(capsys) -> None:
+    import pytest
+
+    cases = [
+        (["x"], "string No output variable specified."),
+        (["x", "o", "FOO"], 'string Unrecognized argument "FOO"'),
+    ]
+    for args, message in cases:
+        ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+        with pytest.raises(SystemExit):
+            process_commands(
+                [Command(name="string", args=["CONFIGURE", *args], line=1)],
+                ctx,
+                strict=True,
+            )
+        assert message in capsys.readouterr().err

@@ -183,3 +183,45 @@ def test_configure_file_keeps_mtime_when_unchanged(tmp_path: Path) -> None:
     configure("world")
     assert out.stat().st_mtime_ns != 0
     assert out.read_bytes().startswith(b"A=world")
+
+
+def test_configure_file_like_cmake(tmp_path: Path) -> None:
+    """The expected output is CMake 4.3's: ESCAPE_QUOTES only escapes the values,
+    #cmakedefine may be anywhere in a line and @VAR@ values aren't expanded again.
+    """
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / "config.in").write_text(
+        '@A@ ${A} "lit" \\${A}\n'
+        "  #cmakedefine01 ON_VAR trailing\n"
+        "  #cmakedefine OFF_VAR trailing\n"
+        "x #  cmakedefine ON_VAR y\n"
+        "#cmakedefine TEXT_VAR\n"
+        "@REF@ @a.b/c+d@\n"
+    )
+
+    ctx = BuildContext(source_dir=src_dir, build_dir=tmp_path / "build")
+    ctx.variables["A"] = 'x"y'
+    ctx.variables["ON_VAR"] = "ON"
+    ctx.variables["OFF_VAR"] = "OFF"
+    ctx.variables["TEXT_VAR"] = "text"
+    ctx.variables["REF"] = "${ON_VAR}"
+    commands = [
+        Command(
+            name="configure_file",
+            args=["config.in", "config.out", "ESCAPE_QUOTES"],
+            line=1,
+        )
+    ]
+
+    process_commands(commands, ctx)
+
+    out = (tmp_path / "build" / "config.out").read_text()
+    assert out == (
+        'x\\"y x\\"y "lit" \\x\\"y\n'
+        "  #define ON_VAR trailing 1\n"
+        "/* #undef OFF_VAR */\n"
+        "x #  define ON_VAR y\n"
+        "#define TEXT_VAR\n"
+        "${ON_VAR} \n"
+    )

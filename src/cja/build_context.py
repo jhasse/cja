@@ -467,8 +467,12 @@ class BuildContext:
         strict: bool = False,
         line: int = 0,
         allow_undefined_empty: bool = False,
+        escape_quotes: bool = False,
     ) -> str:
-        """Expand ${VAR}, $ENV{VAR} and $CACHE{VAR} references in a string."""
+        """Expand ${VAR}, $ENV{VAR} and $CACHE{VAR} references in a string.
+
+        With escape_quotes, quotes in the substituted values are escaped.
+        """
         escaped_var_marker = "__CJA_ESC_VAR_OPEN__"
         escaped_env_marker = "__CJA_ESC_ENV_OPEN__"
         escaped_cache_marker = "__CJA_ESC_CACHE_OPEN__"
@@ -548,7 +552,10 @@ class BuildContext:
                         pos = len(value)
                         break
                     name, end = inner
-                    out.append(replace(name))
+                    replaced = replace(name)
+                    if escape_quotes and not in_ref:
+                        replaced = replaced.replace('"', '\\"')
+                    out.append(replaced)
                     pos = end + 1
                 elif in_ref and value[pos] == "}":
                     return "".join(out), pos

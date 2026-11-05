@@ -17,7 +17,7 @@ from .build_context import (
     find_matching_endfunction,
     find_matching_endmacro,
 )
-from .parser import Command
+from .parser import LITERAL_BACKSLASH_MARKER, Command
 from .syntax import (
     FunctionDef,
     MacroDef,
@@ -32,6 +32,7 @@ from .utils import (
     default_archiver,
     find_linker,
     is_constant_truthy,
+    is_off,
     is_on,
     is_truthy,
     is_verbatim_include,
@@ -2873,6 +2874,9 @@ def handle_string(
     elif subcommand == "REPEAT":
         _handle_string_repeat(ctx, cmd, args[1:], strict)
 
+    elif subcommand == "CONFIGURE":
+        _handle_string_configure(ctx, cmd, args[1:], strict)
+
     else:
         if strict:
             ctx.print_error(f"string() unknown subcommand: {subcommand}", cmd.line)
@@ -2894,6 +2898,30 @@ def _atoi(value: str) -> int:
     """Parse a leading integer like C's atoi(), returning 0 if there is none."""
     match = re.match(r"\s*([+-]?\d+)", value)
     return int(match.group(1)) if match else 0
+
+
+def _handle_string_configure(
+    ctx: BuildContext, cmd: Command, args: list[str], strict: bool
+) -> None:
+    """Handle string(CONFIGURE <string> <out-var> [@ONLY] [ESCAPE_QUOTES])."""
+    message = None
+    if not args:
+        message = "string No input string specified."
+    elif len(args) < 2:
+        message = "string No output variable specified."
+    else:
+        unknown = [arg for arg in args[2:] if arg not in ("@ONLY", "ESCAPE_QUOTES")]
+        if unknown:
+            message = f'string Unrecognized argument "{unknown[0]}"'
+    if message:
+        if strict:
+            ctx.print_error(message, cmd.line)
+            sys.exit(1)
+        ctx.print_warning(message, cmd.line)
+        return
+    ctx.variables[args[1]] = configure_string(
+        ctx, args[0], "@ONLY" in args[2:], "ESCAPE_QUOTES" in args[2:], strict, cmd.line
+    )
 
 
 def _handle_string_repeat(
@@ -3844,6 +3872,63 @@ _FILE_COPY_UNSUPPORTED = frozenset(
 )
 
 
+_CMAKEDEFINE_RE = re.compile(r"#([ \t]*)cmakedefine[ \t]+([A-Za-z_0-9]*)")
+_CMAKEDEFINE01_RE = re.compile(r"#([ \t]*)cmakedefine01[ \t]+([A-Za-z_0-9]*)")
+
+
+def configure_string(
+    ctx: BuildContext,
+    content: str,
+    at_only: bool,
+    escape_quotes: bool,
+    strict: bool,
+    line: int,
+) -> str:
+    """Substitute like configure_file() and string(CONFIGURE) do."""
+
+    def is_defined(name: str) -> bool:
+        value = ctx.variables.get(name)
+        return value is not None and value != UNDEFINED_VAR_SENTINEL and not is_off(value)
+
+    def replace_cmakedefine(text: str) -> str:
+        if match := _CMAKEDEFINE_RE.search(text):
+            if not is_defined(match.group(2)):
+                return f"/* #undef {match.group(2)} */"
+            indentation = match.group(1)
+            return text.replace(f"#{indentation}cmakedefine", f"#{indentation}define")
+        if match := _CMAKEDEFINE01_RE.search(text):
+            indentation = match.group(1)
+            text = text.replace(f"#{indentation}cmakedefine01", f"#{indentation}define")
+            return f"{text} {'1' if is_defined(match.group(2)) else '0'}"
+        return text
+
+    lines = []
+    for text in content.splitlines(keepends=True):
+        core = text.rstrip("\r\n")
+        lines.append(replace_cmakedefine(core) + text[len(core) :])
+    content = "".join(lines)
+
+    # @VAR@ and ${VAR} are substituted in one pass, so substituted values aren't
+    # scanned again. Unlike in arguments, a backslash doesn't escape "${".
+    parts = re.split(r"@([A-Za-z0-9/_.+-]+)@", content)
+    for i, part in enumerate(parts):
+        if i % 2:
+            value = ctx.variables.get(part)
+            if value is None and strict:
+                ctx.print_warning(f"undefined variable referenced: {part}", line)
+            if value is None or value == UNDEFINED_VAR_SENTINEL:
+                value = ""
+            parts[i] = value.replace('"', '\\"') if escape_quotes else value
+        elif not at_only:
+            parts[i] = ctx.expand_variables(
+                part.replace("\\$", f"{LITERAL_BACKSLASH_MARKER}$"),
+                strict,
+                line,
+                escape_quotes=escape_quotes,
+            )
+    return "".join(parts)
+
+
 def handle_configure_file(
     ctx: BuildContext,
     cmd: Command,
@@ -3894,65 +3979,7 @@ def handle_configure_file(
 
     content = src.read_text()
     if not copyonly:
-        # Handle CMake template lines:
-        #   #cmakedefine VAR [value...]
-        #   #cmakedefine01 VAR
-        def replace_cmakedefine_line(line: str) -> str:
-            newline = ""
-            if line.endswith("\r\n"):
-                line_core = line[:-2]
-                newline = "\r\n"
-            elif line.endswith("\n"):
-                line_core = line[:-1]
-                newline = "\n"
-            else:
-                line_core = line
-
-            m01 = re.match(
-                r"^(\s*)#cmakedefine01\s+([A-Za-z_][A-Za-z0-9_]*)\s*(.*)$",
-                line_core,
-            )
-            if m01:
-                indent, var_name, trailing = m01.groups()
-                defined = "1" if is_truthy(ctx.variables.get(var_name, "")) else "0"
-                if trailing:
-                    return f"{indent}#define {var_name} {defined} {trailing}{newline}"
-                return f"{indent}#define {var_name} {defined}{newline}"
-
-            m = re.match(
-                r"^(\s*)#cmakedefine\s+([A-Za-z_][A-Za-z0-9_]*)(.*)$",
-                line_core,
-            )
-            if not m:
-                return line
-
-            indent, var_name, suffix = m.groups()
-            if is_truthy(ctx.variables.get(var_name, "")):
-                return f"{indent}#define {var_name}{suffix}{newline}"
-            return f"{indent}/* #undef {var_name} */{newline}"
-
-        content = "".join(
-            replace_cmakedefine_line(line) for line in content.splitlines(keepends=True)
-        )
-
-        # @VAR@ replacement
-        def replace_at_var(match: re.Match[str]) -> str:
-            var_name = match.group(1)
-            value = ctx.variables.get(var_name, "")
-            if value == "" and var_name not in ctx.variables and strict:
-                ctx.print_warning(
-                    f"undefined variable referenced: {var_name}", cmd.line
-                )
-            return value
-
-        content = re.sub(r"@([A-Za-z_][A-Za-z0-9_]*)@", replace_at_var, content)
-
-        # ${VAR} replacement (unless @ONLY)
-        if not at_only:
-            content = ctx.expand_variables(content, strict, cmd.line)
-
-        if escape_quotes:
-            content = content.replace('"', '\\"')
+        content = configure_string(ctx, content, at_only, escape_quotes, strict, cmd.line)
 
     write_if_changed(dst, content)
 
