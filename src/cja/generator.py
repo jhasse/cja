@@ -3162,7 +3162,7 @@ def configure(
         if msvc_version:
             ctx.variables["MSVC_VERSION"] = msvc_version
 
-    process_commands(commands, ctx, trace, strict)
+    process_commands(commands, ctx, trace, strict, directory=True)
     if ctx.send_error:
         raise SystemExit(1)
 

@@ -38,6 +38,7 @@ from .commands import (
     handle_add_executable,
     handle_add_library,
     handle_cmake_dependent_option,
+    handle_cmake_language,
     handle_cmake_parse_arguments,
     handle_configure_file,
     handle_file,
@@ -582,10 +583,17 @@ def process_commands(
     ctx: BuildContext,
     trace: bool = False,
     strict: bool = False,
+    directory: bool = False,
 ) -> None:
-    """Process CMake commands and populate the build context."""
+    """Process CMake commands and populate the build context.
+
+    With directory, the commands are the top-level CMakeLists.txt.
+    """
     ctx.variables["CMAKE_VERSION"] = "3.28.0"
     stack: list[Frame] = [Frame(commands=commands, pc=0, kind="commands")]
+    if directory:
+        stack[0].kind = "directory"
+        stack[0].directory = ctx.enter_directory(ctx.current_source_dir, ctx.build_dir)
 
     # State saved/restored by cmake_push_check_state()/cmake_pop_check_state().
     check_state_vars = (
@@ -899,66 +907,56 @@ def process_commands(
                             ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = saved_binary_dir
 
                         stack.append(
-                            Frame(commands=sub_commands, on_exit=on_exit_fetchcontent)
+                            Frame(
+                                commands=sub_commands,
+                                on_exit=on_exit_fetchcontent,
+                                kind="directory",
+                                directory=ctx.enter_directory(
+                                    actual_src_dir, fc_binary_dir
+                                ),
+                            )
                         )
             continue
 
         current_commands = typing.cast(list[Command], frame.commands)
         if frame.pc >= len(current_commands):
+            if frame.directory is not None:
+                # Like CMake, run the calls deferred to the end of the
+                # directory one by one, as they can defer further calls.
+                deferred_calls = frame.directory.deferred_calls
+                if deferred_calls:
+                    call = deferred_calls.pop(0)
+                    saved_list_file = ctx.current_list_file
+                    ctx.current_list_file = call.list_file
+
+                    def on_exit_deferred_call(
+                        saved_list_file: Path = saved_list_file,
+                    ) -> None:
+                        ctx.current_list_file = saved_list_file
+
+                    stack.append(
+                        Frame(
+                            commands=[call.command],
+                            on_exit=on_exit_deferred_call,
+                            deferred_call_id=call.id,
+                        )
+                    )
+                    continue
+                frame.directory.deferred_calls = None
             if frame.on_exit:
                 frame.on_exit()
             stack.pop()
             continue
 
         cmd = current_commands[frame.pc]
-        ctx.variables["CMAKE_CURRENT_LIST_LINE"] = str(cmd.line)
-        expanded_args: list[str] = []
-        for idx, arg in enumerate(cmd.args):
-            is_bracket = cmd.is_bracket[idx] if idx < len(cmd.is_bracket) else False
-            if is_bracket:
-                # Bracket arguments ([[...]] / [==[...]==]) are literal: no
-                # variable expansion and no list splitting.
-                expanded_args.append(arg)
-                continue
-            allow_undefined = False
-            is_exact_var = (
-                (arg.startswith("${") and arg.endswith("}"))
-                or (arg.startswith('"${') and arg.endswith('}"'))
-                or (arg.startswith("'${") and arg.endswith("}'"))
-            )
-            if cmd.name in ("if", "elseif", "while"):
-                allow_undefined = (
-                    idx + 2 < len(cmd.args)
-                    and cmd.args[idx + 1] == "STREQUAL"
-                    and cmd.args[idx + 2] in ("", '""', "''")
-                    and is_exact_var
-                )
-                # In CMake conditions, unresolved ${VAR} tokens are treated
-                # as empty and should not raise undefined-variable warnings.
-                allow_undefined = allow_undefined or is_exact_var
-            elif cmd.name == "option":
-                # Common CMake pattern:
-                #   option(FOO "help" ${SOME_DEFAULT})
-                # where SOME_DEFAULT can be undefined and should evaluate empty.
-                allow_undefined = idx == 2 and is_exact_var
-            expanded = ctx.expand_variables(
-                arg,
-                strict,
-                cmd.line,
-                allow_undefined_empty=allow_undefined,
-            )
-            quoted = cmd.is_quoted[idx] if idx < len(cmd.is_quoted) else False
-            if arg and not expanded and not quoted:
-                # An unquoted argument that expands to nothing is dropped.
-                continue
-            if ";" in expanded and not quoted:
-                # Like the whole argument, empty list elements are dropped.
-                expanded_args.extend(
-                    item for item in split_unquoted_list_args(expanded) if item
-                )
-            else:
-                expanded_args.append(expanded)
-        args = expanded_args
+        ctx.variables["CMAKE_CURRENT_LIST_LINE"] = (
+            f"DEFERRED:{frame.deferred_call_id}"
+            if frame.deferred_call_id
+            else str(cmd.line)
+        )
+        # cmake_language() expands its arguments itself, since those of a
+        # deferred call are only expanded when it runs.
+        args = [] if cmd.name == "cmake_language" else ctx.expand_arguments(cmd, strict)
 
         if trace:
             args_str = " ".join(cmd.args) if cmd.args else ""
@@ -1051,19 +1049,21 @@ def process_commands(
                             popped.on_exit()
                     continue
 
-                # Directory-level return(): stop the current list file. For
-                # add_subdirectory(), pop back to the parent; for the top-level
-                # file, drain the remaining commands in the current frame.
-                exited_subdirectory = False
-                while len(stack) > 1:
+                # Directory-level return(): skip the remaining commands of the
+                # directory, but still run its deferred calls.
+                scope_index = next(
+                    (
+                        i
+                        for i in range(len(stack) - 1, -1, -1)
+                        if stack[i].kind == "directory"
+                    ),
+                    0,
+                )
+                while len(stack) > scope_index + 1:
                     popped = stack.pop()
                     if popped.on_exit:
                         popped.on_exit()
-                    if popped.on_exit is not None:
-                        exited_subdirectory = True
-                        break
-                if not exited_subdirectory and stack and stack[-1].commands is not None:
-                    stack[-1].pc = len(stack[-1].commands)
+                stack[-1].pc = len(typing.cast(list[Command], stack[-1].commands))
                 continue
 
             case "break":
@@ -1100,6 +1100,9 @@ def process_commands(
                         if popped.on_exit:
                             popped.on_exit()
                 continue
+
+            case "cmake_language":
+                handle_cmake_language(ctx, cmd, strict)
 
             case "cmake_policy":
                 if args:
@@ -1318,7 +1321,12 @@ def process_commands(
 
                         stack.append(
                             Frame(
-                                commands=sub_commands, on_exit=on_exit_add_subdirectory
+                                commands=sub_commands,
+                                on_exit=on_exit_add_subdirectory,
+                                kind="directory",
+                                directory=ctx.enter_directory(
+                                    sub_source_dir, sub_binary_dir
+                                ),
                             )
                         )
                     else:

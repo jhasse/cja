@@ -1,6 +1,7 @@
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from cja.build_context import Directory
 from cja.parser import Command
 
 
@@ -20,3 +21,7 @@ class Frame:
     fetchcontent_index: int = 0
     fetchcontent_cmd: Command | None = None
     fetchcontent_make_available: bool = True
+    # The directory of a "directory" frame, whose deferred calls run at its end
+    directory: Directory | None = None
+    # Set on the frame running a deferred call, for CMAKE_CURRENT_LIST_LINE
+    deferred_call_id: str = ""

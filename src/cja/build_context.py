@@ -22,6 +22,7 @@ from .utils import (
     UNDEFINED_VAR_SENTINEL,
     make_relative,
     resolve_cmake_path,
+    split_unquoted_list_args,
     to_posix_path,
 )
 
@@ -148,6 +149,27 @@ class ConfigureDependGlob:
 
 
 @dataclass
+class DeferredCall:
+    """A call scheduled by cmake_language(DEFER)."""
+
+    id: str
+    # Its arguments are expanded only when it runs.
+    command: Command
+    # The file of cmake_language(DEFER), where diagnostics of the call point.
+    list_file: Path
+
+
+@dataclass
+class Directory:
+    """The top-level directory or one added by add_subdirectory() or FetchContent."""
+
+    source_dir: Path
+    binary_dir: Path
+    # Calls to run at the end of the directory; None once it's finished.
+    deferred_calls: list[DeferredCall] | None = field(default_factory=list)
+
+
+@dataclass
 class BuildContext:
     """Context for processing CMake commands."""
 
@@ -222,6 +244,10 @@ class BuildContext:
     quiet: bool = False
     # message(SEND_ERROR) was called: keep processing, but fail at the end.
     send_error: bool = False
+    # Every directory entered so far, parents before their subdirectories
+    directories: list[Directory] = field(default_factory=list)
+    # Number of ids generated for cmake_language(DEFER) so far
+    deferred_call_ids: int = 0
 
     def __post_init__(self) -> None:
         self.current_source_dir = self.source_dir
@@ -352,6 +378,74 @@ class BuildContext:
             cmd.line,
         )
         sys.exit(1)
+
+    def enter_directory(self, source_dir: Path, binary_dir: Path) -> Directory:
+        """Start processing the CMakeLists.txt of a directory."""
+        directory = Directory(
+            Path(os.path.normpath(source_dir)), Path(os.path.normpath(binary_dir))
+        )
+        self.directories.append(directory)
+        return directory
+
+    def current_directory(self) -> Directory | None:
+        """The innermost directory whose CMakeLists.txt is still processed."""
+        return next(
+            (d for d in reversed(self.directories) if d.deferred_calls is not None),
+            None,
+        )
+
+    def expand_arguments(
+        self, cmd: Command, strict: bool, start: int = 0, stop: int | None = None
+    ) -> list[str]:
+        """Expand the arguments of cmd from start to stop for calling it."""
+        expanded_args: list[str] = []
+        for idx in range(start, len(cmd.args) if stop is None else stop):
+            arg = cmd.args[idx]
+            is_bracket = cmd.is_bracket[idx] if idx < len(cmd.is_bracket) else False
+            if is_bracket:
+                # Bracket arguments ([[...]] / [==[...]==]) are literal: no
+                # variable expansion and no list splitting.
+                expanded_args.append(arg)
+                continue
+            allow_undefined = False
+            is_exact_var = (
+                (arg.startswith("${") and arg.endswith("}"))
+                or (arg.startswith('"${') and arg.endswith('}"'))
+                or (arg.startswith("'${") and arg.endswith("}'"))
+            )
+            if cmd.name in ("if", "elseif", "while"):
+                allow_undefined = (
+                    idx + 2 < len(cmd.args)
+                    and cmd.args[idx + 1] == "STREQUAL"
+                    and cmd.args[idx + 2] in ("", '""', "''")
+                    and is_exact_var
+                )
+                # In CMake conditions, unresolved ${VAR} tokens are treated
+                # as empty and should not raise undefined-variable warnings.
+                allow_undefined = allow_undefined or is_exact_var
+            elif cmd.name == "option":
+                # Common CMake pattern:
+                #   option(FOO "help" ${SOME_DEFAULT})
+                # where SOME_DEFAULT can be undefined and should evaluate empty.
+                allow_undefined = idx == 2 and is_exact_var
+            expanded = self.expand_variables(
+                arg,
+                strict,
+                cmd.line,
+                allow_undefined_empty=allow_undefined,
+            )
+            quoted = cmd.is_quoted[idx] if idx < len(cmd.is_quoted) else False
+            if arg and not expanded and not quoted:
+                # An unquoted argument that expands to nothing is dropped.
+                continue
+            if ";" in expanded and not quoted:
+                # Like the whole argument, empty list elements are dropped.
+                expanded_args.extend(
+                    item for item in split_unquoted_list_args(expanded) if item
+                )
+            else:
+                expanded_args.append(expanded)
+        return expanded_args
 
     def raise_syntax_error(self, message: str, line: int) -> None:
         """Raise a SyntaxError with file and line information."""

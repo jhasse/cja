@@ -13,6 +13,7 @@ from pathlib import Path
 from .build_context import (
     BuildContext,
     ConfigureDependGlob,
+    DeferredCall,
     find_matching_endfunction,
     find_matching_endmacro,
 )
@@ -2424,6 +2425,156 @@ def handle_macro(
 
     # Skip to after endmacro
     return endmacro_idx + 1
+
+
+# Commands that cmake_language(DEFER CALL) can't call
+_DEFER_INVALID_COMMANDS = frozenset(
+    {
+        "function", "endfunction", "macro", "endmacro", "if", "elseif", "else",
+        "endif", "while", "endwhile", "foreach", "endforeach", "block", "endblock",
+        "return",
+    }
+)
+
+
+class _DeferError(Exception):
+    """A cmake_language(DEFER) call CMake rejects."""
+
+
+def handle_cmake_language(ctx: BuildContext, cmd: Command, strict: bool) -> None:
+    """Handle cmake_language(); DEFER is its only supported subcommand."""
+    # Like CMake, expand the arguments one at a time, so that the arguments of
+    # a deferred call are expanded only when it runs.
+    pending: list[str] = []
+    next_raw = 0
+
+    def take() -> str | None:
+        nonlocal next_raw
+        while not pending:
+            if next_raw == len(cmd.args):
+                return None
+            pending.extend(ctx.expand_arguments(cmd, strict, next_raw, next_raw + 1))
+            next_raw += 1
+        return pending.pop(0)
+
+    try:
+        subcommand = take()
+        if subcommand is None:
+            raise _DeferError("called with incorrect number of arguments")
+        if subcommand != "DEFER":
+            ctx.check_unsupported_args(cmd, [subcommand], strict)
+            return
+
+        options: dict[str, str] = {}
+        while True:
+            option = take()
+            if option is None or option == "CALL":
+                break
+            if option in ("GET_CALL_IDS", "GET_CALL", "CANCEL_CALL"):
+                if "ID" in options or "ID_VAR" in options:
+                    raise _DeferError(f"DEFER {option} does not accept ID or ID_VAR.")
+                args = pending + ctx.expand_arguments(cmd, strict, next_raw)
+                _query_deferred_calls(ctx, option, args, options.get("DIRECTORY"))
+                return
+            if option not in ("DIRECTORY", "ID", "ID_VAR"):
+                raise _DeferError(f"DEFER unknown option: {option}")
+            if option in options:
+                raise _DeferError(f"DEFER given multiple {option} arguments")
+            value = take()
+            if value is None:
+                raise _DeferError(f"DEFER {option} missing value")
+            if not value:
+                raise _DeferError(f"DEFER {option} may not be empty")
+            if option == "ID" and "A" <= value[0] <= "Z":
+                raise _DeferError("DEFER ID may not start in A-Z.")
+            options[option] = value
+        if option is None:
+            raise _DeferError("DEFER must be followed by a CALL argument")
+
+        name = take()
+        if name is None:
+            raise _DeferError("CALL missing command name")
+        if pending:
+            raise _DeferError("CALL command's arguments must be literal")
+        if name.lower() in _DEFER_INVALID_COMMANDS:
+            raise _DeferError(f"invalid command specified: {name}")
+        deferred_calls = _deferred_calls(ctx, options.get("DIRECTORY"), "CALL")
+        call_id = options.get("ID")
+        if call_id is None:
+            call_id = f"__{ctx.deferred_call_ids}"
+            ctx.deferred_call_ids += 1
+        if "ID_VAR" in options:
+            ctx.variables[options["ID_VAR"]] = call_id
+        command = Command(
+            name=name.lower(),
+            args=cmd.args[next_raw:],
+            is_quoted=cmd.is_quoted[next_raw:],
+            line=cmd.line,
+            is_bracket=cmd.is_bracket[next_raw:],
+        )
+        deferred_calls.append(DeferredCall(call_id, command, ctx.current_list_file))
+    except _DeferError as e:
+        message = f"cmake_language {e}"
+        if strict:
+            ctx.print_error(message, cmd.line)
+            sys.exit(1)
+        ctx.print_warning(message, cmd.line)
+
+
+def _query_deferred_calls(
+    ctx: BuildContext, subcommand: str, args: list[str], directory: str | None
+) -> None:
+    """Handle cmake_language(DEFER GET_CALL_IDS|GET_CALL|CANCEL_CALL)."""
+    deferred_calls = _deferred_calls(ctx, directory, subcommand)
+    if subcommand == "CANCEL_CALL":
+        deferred_calls[:] = [call for call in deferred_calls if call.id not in args]
+        return
+    params = ["output variable"]
+    if subcommand == "GET_CALL":
+        params.insert(0, "id")
+    if len(args) < len(params):
+        raise _DeferError(f"DEFER {subcommand} missing {params[len(args)]}")
+    if len(args) > len(params):
+        raise _DeferError(f"DEFER {subcommand} given too many arguments")
+    if subcommand == "GET_CALL_IDS":
+        ctx.variables[args[0]] = ";".join(call.id for call in deferred_calls)
+        return
+    call = next((call for call in deferred_calls if call.id == args[0]), None)
+    # The arguments of the call are the unexpanded ones.
+    ctx.variables[args[1]] = (
+        ";".join([call.command.name, *call.command.args]) if call else ""
+    )
+
+
+def _deferred_calls(
+    ctx: BuildContext, directory: str | None, subcommand: str
+) -> list[DeferredCall]:
+    """The calls deferred to the given directory, or the current one."""
+    if directory is None:
+        found = ctx.current_directory()
+    else:
+        path = Path(os.path.normpath(ctx.current_source_dir / directory))
+        found = next(
+            (d for d in ctx.directories if path in (d.source_dir, d.binary_dir)),
+            None,
+        )
+        if found is None:
+            raise _DeferError(
+                f"DEFER DIRECTORY {to_posix_path(path)} is not known. "
+                "It may not have been processed yet."
+            )
+    if found is None or found.deferred_calls is None:
+        # In script mode, there's no directory to defer calls to.
+        binary_dir = (
+            to_posix_path(found.binary_dir)
+            if found
+            else ctx.variables.get("CMAKE_CURRENT_BINARY_DIR", "")
+        )
+        action = "be scheduled in" if subcommand == "CALL" else "access"
+        raise _DeferError(
+            f"DEFER {subcommand} may not {action} directory {binary_dir} at this time."
+        )
+    return found.deferred_calls
 
 
 def handle_string(
