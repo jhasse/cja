@@ -102,7 +102,7 @@ from .find_package import (
     unsupported_find_package_args,
 )
 from .frame import Frame
-from .parser import Command, unescape_quoted_argument
+from .parser import Command, parse, unescape_quoted_argument
 from .syntax import (
     FetchContentInfo,
     SourceFileProperties,
@@ -1100,6 +1100,33 @@ def process_commands(
                         popped = stack.pop()
                         if popped.on_exit:
                             popped.on_exit()
+                continue
+
+            case "cmake_language" if ctx.expand_arguments(cmd, strict, 0, 1) == ["EVAL"]:
+                eval_args = ctx.expand_arguments(cmd, strict)
+                message = None
+                if len(eval_args) < 2:
+                    message = "called with incorrect number of arguments"
+                elif eval_args[1] != "CODE":
+                    message = "called without CODE argument"
+                if message:
+                    if strict:
+                        ctx.print_error(f"cmake_language {message}", cmd.line)
+                        sys.exit(1)
+                    ctx.print_warning(f"cmake_language {message}", cmd.line)
+                    frame.pc += 1
+                    continue
+                # Like CMake, run the code as a list file named after the call.
+                eval_file = Path(f"{ctx.current_list_file}:{cmd.line}:EVAL")
+                eval_commands = parse(" ".join(eval_args[2:]), filename=str(eval_file))
+                frame.pc += 1
+                stack.append(
+                    Frame(
+                        commands=eval_commands,
+                        on_exit=ctx.enter_list_file(eval_file),
+                        kind="include",
+                    )
+                )
                 continue
 
             case "cmake_language":
