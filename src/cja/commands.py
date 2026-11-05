@@ -96,6 +96,25 @@ def init_compiler_flag_cache_vars(ctx: BuildContext) -> None:
             ctx.set_cache(name, "")
 
 
+def init_project_cache_vars(ctx: BuildContext) -> None:
+    """Create the other cache entries of project() if not already set.
+
+    Like in CMake, -D values and set(... CACHE ...) before project() take
+    precedence.
+    """
+    defaults = {
+        # CMake leaves the build type empty, cja defaults to a debug build.
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_INSTALL_PREFIX": ctx.default_install_prefix(),
+        "CMAKE_C_COMPILER": ctx.c_compiler,
+        "CMAKE_CXX_COMPILER": ctx.cxx_compiler,
+        "CMAKE_MAKE_PROGRAM": to_posix_path(shutil.which("ninja") or "ninja"),
+    }
+    for name, value in defaults.items():
+        if name not in ctx.cache_values:
+            ctx.set_cache(name, value)
+
+
 def handle_project(
     ctx: BuildContext,
     args: list[str],

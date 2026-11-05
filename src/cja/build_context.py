@@ -303,6 +303,10 @@ class BuildContext:
 
         return leave
 
+    def default_install_prefix(self) -> str:
+        """cja installs into the build directory unless told otherwise."""
+        return to_posix_path(self.build_dir / "install")
+
     def set_cache(self, name: str, value: str) -> None:
         """Set a cache entry; a normal binding of the same name keeps hiding it."""
         self.cache_values[name] = value

@@ -3098,13 +3098,12 @@ def configure(
     ctx.variables["CMAKE_MODULE_PATH"] = ""
     # cja only generates Ninja files, so -DCMAKE_GENERATOR can't change it.
     ctx.set_cache("CMAKE_GENERATOR", "Ninja")
+    ctx.set_cache("CMAKE_HOME_DIRECTORY", to_posix_path(ctx.source_dir))
     ctx.variables.setdefault("CMAKE_BUILD_TYPE", "Debug")
     ctx.variables["CMAKE_FIND_PACKAGE_REDIRECTS_DIR"] = str(
         ctx.build_dir / "CMakeFiles" / "pkgRedirects"
     )
-    ctx.variables.setdefault(
-        "CMAKE_INSTALL_PREFIX", to_posix_path(str(ctx.build_dir / "install"))
-    )
+    ctx.variables.setdefault("CMAKE_INSTALL_PREFIX", ctx.default_install_prefix())
     ctx.variables["CMAKE_HOST_SYSTEM_PROCESSOR"] = _detect_host_system_processor()
     host_system = platform.system()
     ctx.variables["CMAKE_HOST_WIN32"] = "TRUE" if host_system == "Windows" else "FALSE"
@@ -3143,7 +3142,7 @@ def configure(
     if "CMAKE_CXX_COMPILER" in ctx.variables:
         ctx.cxx_compiler = ctx.variables["CMAKE_CXX_COMPILER"]
     ctx.cja_cmd = _resolve_cja_cmd()
-    ctx.variables["CMAKE_COMMAND"] = " ".join(ctx.cja_cmd)
+    ctx.set_cache("CMAKE_COMMAND", " ".join(ctx.cja_cmd))
     ctx.variables["CMAKE_C_COMPILER"] = ctx.c_compiler
     ctx.variables["CMAKE_CXX_COMPILER"] = ctx.cxx_compiler
     ctx.variables["CMAKE_C_COMPILER_ID"] = _infer_compiler_id(ctx.c_compiler)

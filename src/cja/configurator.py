@@ -69,6 +69,7 @@ from .commands import (
     handle_target_sources,
     handle_unset,
     init_compiler_flag_cache_vars,
+    init_project_cache_vars,
 )
 from .config_utils import (
     _render_basic_package_version_file,
@@ -1162,8 +1163,18 @@ def process_commands(
                     project_name = args[0]
                     ctx.project_name = project_name
                     ctx.variables["PROJECT_NAME"] = project_name
-                    ctx.variables["CMAKE_PROJECT_NAME"] = project_name
+                    is_top_level = os.path.normpath(
+                        ctx.current_source_dir
+                    ) == os.path.normpath(ctx.source_dir)
+                    # Like CMake, keep the name of the top-level project.
+                    if is_top_level or "CMAKE_PROJECT_NAME" not in ctx.variables:
+                        ctx.variables.pop("CMAKE_PROJECT_NAME", None)
+                        ctx.set_cache("CMAKE_PROJECT_NAME", project_name)
+                    top_level = "ON" if is_top_level else "OFF"
+                    ctx.variables["PROJECT_IS_TOP_LEVEL"] = top_level
+                    ctx.set_cache(f"{project_name}_IS_TOP_LEVEL", top_level)
                     init_compiler_flag_cache_vars(ctx)
+                    init_project_cache_vars(ctx)
                     current_binary_dir = ctx.variables.get(
                         "CMAKE_CURRENT_BINARY_DIR", to_posix_path(ctx.build_dir)
                     )

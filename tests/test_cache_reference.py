@@ -87,3 +87,55 @@ def test_undefined_cache_reference_warning(
     assert "CMakeLists.txt:2: warning: undefined variable referenced: UNDEFINED" in err
     assert ": N" not in err
     assert "IN_CONDITION" not in err
+
+
+def test_builtin_cache_entries(tmp_path: Path) -> None:
+    """The cache entries CMake creates at the start and in project()."""
+    sub_dir = tmp_path / "sub"
+    sub_dir.mkdir()
+    (sub_dir / "CMakeLists.txt").write_text(
+        "project(s)\n"
+        'set(SUB "${PROJECT_IS_TOP_LEVEL} $CACHE{s_IS_TOP_LEVEL}'
+        ' $CACHE{CMAKE_PROJECT_NAME}" PARENT_SCOPE)\n'
+    )
+    ctx = _configure(
+        tmp_path,
+        "set(BEFORE_COMMAND $CACHE{CMAKE_COMMAND})\n"
+        "set(BEFORE_HOME $CACHE{CMAKE_HOME_DIRECTORY})\n"
+        'set(BEFORE_BUILD_TYPE "$CACHE{CMAKE_BUILD_TYPE}")\n'
+        "project(t)\n"
+        "foreach(v BUILD_TYPE INSTALL_PREFIX C_COMPILER CXX_COMPILER MAKE_PROGRAM"
+        " PROJECT_NAME)\n"
+        "  set(CACHED_${v} $CACHE{CMAKE_${v}})\n"
+        "endforeach()\n"
+        'set(TOP "${PROJECT_IS_TOP_LEVEL} $CACHE{t_IS_TOP_LEVEL}")\n'
+        "add_subdirectory(sub)\n",
+    )
+    assert ctx.variables["BEFORE_COMMAND"] == ctx.variables["CMAKE_COMMAND"]
+    assert ctx.variables["BEFORE_HOME"] == tmp_path.as_posix()
+    assert ctx.variables["BEFORE_BUILD_TYPE"] == ""
+    assert ctx.variables["CACHED_BUILD_TYPE"] == "Debug"
+    assert (
+        ctx.variables["CACHED_INSTALL_PREFIX"]
+        == (tmp_path / "build/install").as_posix()
+    )
+    assert ctx.variables["CACHED_C_COMPILER"] == ctx.c_compiler
+    assert ctx.variables["CACHED_CXX_COMPILER"] == ctx.cxx_compiler
+    assert ctx.variables["CACHED_MAKE_PROGRAM"]
+    assert ctx.variables["CACHED_PROJECT_NAME"] == "t"
+    assert ctx.variables["TOP"] == "ON ON"
+    assert ctx.variables["SUB"] == "OFF OFF t"
+    assert ctx.variables["CMAKE_PROJECT_NAME"] == "t"
+    assert ctx.variables["PROJECT_IS_TOP_LEVEL"] == "ON"
+
+
+def test_builtin_cache_entries_keep_earlier_values(tmp_path: Path) -> None:
+    """-D values and cache entries set before project() take precedence."""
+    (tmp_path / "CMakeLists.txt").write_text(
+        'set(CMAKE_BUILD_TYPE Release CACHE STRING "")\n'
+        "project(t)\n"
+        'set(CMAKE_INSTALL_PREFIX /ignored CACHE PATH "")\n'
+    )
+    ctx = configure(tmp_path, "build", {"CMAKE_INSTALL_PREFIX": "/cli"})
+    assert ctx.cache_values["CMAKE_BUILD_TYPE"] == "Release"
+    assert ctx.cache_values["CMAKE_INSTALL_PREFIX"] == "/cli"
