@@ -346,3 +346,53 @@ def test_string_hash_errors(capsys) -> None:
         "string SHA256 requires an output variable and an input string"
         in capsys.readouterr().err
     )
+
+
+def test_string_repeat() -> None:
+    """The expected values are the output of CMake 4.3."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    cases = {
+        "A": ("ab", "3"),
+        "B": ("ab", "0"),
+        "C": ("", "5"),
+        "D": ("x;y", "2"),
+        "E": ("ab", "+2"),
+        "F": ("ab", " 2"),
+    }
+    commands = [
+        Command(
+            name="string",
+            args=["REPEAT", value, count, name],
+            line=1,
+            is_quoted=[False, True, True, False],
+        )
+        for name, (value, count) in cases.items()
+    ]
+    process_commands(commands, ctx, strict=True)
+
+    assert ctx.variables["A"] == "ababab"
+    assert ctx.variables["B"] == ""
+    assert ctx.variables["C"] == ""
+    assert ctx.variables["D"] == "x;yx;y"
+    assert ctx.variables["E"] == "abab"
+    assert ctx.variables["F"] == "abab"
+
+
+def test_string_repeat_errors(capsys) -> None:
+    import pytest
+
+    cases = [
+        (["ab", "2"], "sub-command REPEAT requires three arguments."),
+        (["ab", "2", "o", "p"], "sub-command REPEAT requires three arguments."),
+    ]
+    for count in ("-1", "x", "2x", "2.0", "0x10", "99999999999999999999"):
+        cases.append((["ab", count, "o"], "repeat count is not a positive number."))
+    for args, message in cases:
+        ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+        with pytest.raises(SystemExit):
+            process_commands(
+                [Command(name="string", args=["REPEAT", *args], line=1)],
+                ctx,
+                strict=True,
+            )
+        assert message in capsys.readouterr().err

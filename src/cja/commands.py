@@ -2870,6 +2870,9 @@ def handle_string(
     elif subcommand == "RANDOM":
         _handle_string_random(ctx, cmd, args[1:])
 
+    elif subcommand == "REPEAT":
+        _handle_string_repeat(ctx, cmd, args[1:], strict)
+
     else:
         if strict:
             ctx.print_error(f"string() unknown subcommand: {subcommand}", cmd.line)
@@ -2891,6 +2894,27 @@ def _atoi(value: str) -> int:
     """Parse a leading integer like C's atoi(), returning 0 if there is none."""
     match = re.match(r"\s*([+-]?\d+)", value)
     return int(match.group(1)) if match else 0
+
+
+def _handle_string_repeat(
+    ctx: BuildContext, cmd: Command, args: list[str], strict: bool
+) -> None:
+    """Handle string(REPEAT <string> <count> <out-var>)."""
+    message = None
+    if len(args) != 3:
+        message = "sub-command REPEAT requires three arguments."
+    else:
+        # Parsed like CMake does with strtoul(), into an unsigned long
+        match = re.fullmatch(r"[ \t\n\v\f\r]*\+?([0-9]+)", args[1])
+        if not match or int(match.group(1)) >= 2**64:
+            message = "repeat count is not a positive number."
+    if message:
+        if strict:
+            ctx.print_error(message, cmd.line)
+            sys.exit(1)
+        ctx.print_warning(message, cmd.line)
+        return
+    ctx.variables[args[2]] = args[0] * int(args[1])
 
 
 def _handle_string_random(ctx: BuildContext, cmd: Command, args: list[str]) -> None:
