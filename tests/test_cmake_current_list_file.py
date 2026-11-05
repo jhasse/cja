@@ -3,7 +3,6 @@
 from pathlib import Path
 
 import pytest
-import termcolor
 
 
 def test_cmake_current_list_file(tmp_path: Path) -> None:
@@ -32,11 +31,8 @@ def test_cmake_current_list_file(tmp_path: Path) -> None:
 def test_print_location(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Test that print_warning uses the correct filename in location."""
-    monkeypatch.delenv("FORCE_COLOR", raising=False)
-    termcolor.can_colorize.cache_clear()
 
     source_dir = tmp_path / "src"
     source_dir.mkdir()
@@ -88,11 +84,8 @@ def _write_helpers(source_dir: Path) -> None:
 def test_print_location_in_macro(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Warnings point into the file defining the macro or function."""
-    monkeypatch.delenv("FORCE_COLOR", raising=False)
-    termcolor.can_colorize.cache_clear()
 
     source_dir = tmp_path / "src"
     source_dir.mkdir()

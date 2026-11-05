@@ -4,7 +4,6 @@ import platform
 from pathlib import Path
 
 import pytest
-import termcolor
 
 from cja.configurator import process_commands
 from cja.generator import BuildContext
@@ -70,11 +69,8 @@ def test_check_function_exists_with_required_library():
 
 def test_check_function_exists_prints_status_output(
     capsys: pytest.CaptureFixture[str],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Test check_function_exists prints a single status line per check."""
-    monkeypatch.delenv("FORCE_COLOR", raising=False)
-    termcolor.can_colorize.cache_clear()
 
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
     commands = [

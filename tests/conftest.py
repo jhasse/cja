@@ -1,6 +1,7 @@
 """Setup shared by all tests."""
 
 import pytest
+import termcolor
 
 from cja import generator
 
@@ -22,6 +23,17 @@ def pytest_collection_modifyitems(
     for item in items:
         if item.get_closest_marker("network") is not None:
             item.add_marker(skip)
+
+
+@pytest.fixture(autouse=True)
+def _no_color(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep cja's messages plain, even when e.g. CI sets FORCE_COLOR.
+
+    Unlike NO_COLOR, ANSI_COLORS_DISABLED only affects termcolor, not e.g. the
+    compilers. termcolor caches whether to colorize, so make it check again.
+    """
+    monkeypatch.setenv("ANSI_COLORS_DISABLED", "1")
+    termcolor.can_colorize.cache_clear()
 
 
 @pytest.fixture(autouse=True)
