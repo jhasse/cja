@@ -40,4 +40,5 @@ testpaths = ["tests"]
 norecursedirs = ["build", "build-*", "_deps", ".venv", ".git"]
 markers = [
     "compiler_standard_default: detect the default standards of the compiler",
+    "network: needs internet access, only run with --network",
 ]

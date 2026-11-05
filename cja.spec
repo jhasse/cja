@@ -56,11 +56,7 @@ install -Dpm 0644 completions/cja.bash %{buildroot}%{bash_completions_dir}/cja
 
 
 %check
-# These examples download their dependencies with FetchContent or CPM
-for example in box2d catch2 cereal cpm entt json spdlog yaml-cpp; do
-  deselect="${deselect:-} --deselect tests/test_examples.py::test_example_builds[$example]"
-done
-%pytest $deselect
+%pytest
 
 
 %files -f %{pyproject_files}

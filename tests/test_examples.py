@@ -1,7 +1,8 @@
 """Build every project in examples/ with ``cja build``.
 
-Examples using CPM or FetchContent download their dependencies, so the first
-run needs network access; later runs reuse the CPM cache.
+Examples using CPM or FetchContent download their dependencies, so they need
+internet access and only run with ``pytest --network``. With CPM_SOURCE_CACHE
+set, later runs reuse CPM's downloads.
 """
 
 import platform
@@ -31,8 +32,24 @@ EXAMPLE_MARKS = {
     ),
 }
 
+# Commands that download something, which makes an example need internet access
+DOWNLOAD = re.compile(
+    r"\b(CPMAddPackage|CPMFindPackage|FetchContent_Declare|ExternalProject_Add)\b"
+    r"|\bfile\s*\(\s*DOWNLOAD\b"
+)
+
+
+def _example_marks(example_dir: Path) -> list[pytest.MarkDecorator]:
+    marks = []
+    if example_dir.name in EXAMPLE_MARKS:
+        marks.append(EXAMPLE_MARKS[example_dir.name])
+    if DOWNLOAD.search((example_dir / "CMakeLists.txt").read_text()):
+        marks.append(pytest.mark.network)
+    return marks
+
+
 EXAMPLES = [
-    pytest.param(p.name, marks=EXAMPLE_MARKS.get(p.name, ()))
+    pytest.param(p.name, marks=_example_marks(p))
     for p in sorted(EXAMPLES_DIR.iterdir())
     if (p / "CMakeLists.txt").is_file() and p.name != CLANG_TIDY_EXAMPLE
 ]

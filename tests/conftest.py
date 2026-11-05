@@ -5,6 +5,25 @@ import pytest
 from cja import generator
 
 
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--network",
+        action="store_true",
+        help="run the tests that need internet access (marked with network)",
+    )
+
+
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
+    if config.getoption("--network"):
+        return
+    skip = pytest.mark.skip(reason="needs internet access, run with --network")
+    for item in items:
+        if item.get_closest_marker("network") is not None:
+            item.add_marker(skip)
+
+
 @pytest.fixture(autouse=True)
 def _unknown_standard_default(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
