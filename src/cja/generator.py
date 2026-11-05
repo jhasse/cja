@@ -3096,6 +3096,8 @@ def configure(
     ctx.variables["CMAKE_CURRENT_LIST_FILE"] = to_posix_path(ctx.current_list_file)
     ctx.variables["CMAKE_CURRENT_LIST_DIR"] = to_posix_path(ctx.current_list_file.parent)
     ctx.variables["CMAKE_MODULE_PATH"] = ""
+    # cja only generates Ninja files, so -DCMAKE_GENERATOR can't change it.
+    ctx.set_cache("CMAKE_GENERATOR", "Ninja")
     ctx.variables.setdefault("CMAKE_BUILD_TYPE", "Debug")
     ctx.variables["CMAKE_FIND_PACKAGE_REDIRECTS_DIR"] = str(
         ctx.build_dir / "CMakeFiles" / "pkgRedirects"

@@ -60,3 +60,15 @@ def test_cmake_sizeof_void_p(tmp_path: Path) -> None:
     ctx = configure(source_dir, "build")
 
     assert ctx.variables["CMAKE_SIZEOF_VOID_P"] == "8"
+
+
+def test_cmake_generator(tmp_path: Path) -> None:
+    """CMAKE_GENERATOR is always Ninja, even when given on the command line."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    (source_dir / "CMakeLists.txt").write_text("project(test_generator)")
+
+    ctx = configure(source_dir, "build", {"CMAKE_GENERATOR": "Unix Makefiles"})
+
+    assert ctx.variables["CMAKE_GENERATOR"] == "Ninja"
+    assert ctx.cache_values["CMAKE_GENERATOR"] == "Ninja"
