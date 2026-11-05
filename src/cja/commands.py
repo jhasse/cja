@@ -2603,6 +2603,21 @@ def _deferred_calls(
     return found.deferred_calls
 
 
+# The hash algorithms of string(<HASH>), by their hashlib names
+_STRING_HASHES = {
+    "MD5": "md5",
+    "SHA1": "sha1",
+    "SHA224": "sha224",
+    "SHA256": "sha256",
+    "SHA384": "sha384",
+    "SHA512": "sha512",
+    "SHA3_224": "sha3_224",
+    "SHA3_256": "sha3_256",
+    "SHA3_384": "sha3_384",
+    "SHA3_512": "sha3_512",
+}
+
+
 def handle_string(
     ctx: BuildContext,
     cmd: Command,
@@ -2766,12 +2781,19 @@ def handle_string(
             out_var = args[2]
             ctx.variables[out_var] = string_val.strip()
 
-    elif subcommand == "SHA1":
-        # string(SHA1 <out_var> <input>)
-        if len(args) >= 3:
-            out_var = args[1]
-            input_val = args[2]
-            ctx.variables[out_var] = hashlib.sha1(input_val.encode()).hexdigest()
+    elif subcommand in _STRING_HASHES:
+        # string(<HASH> <out_var> <input>)
+        if len(args) != 3:
+            message = (
+                f"string {subcommand} requires an output variable and an input string"
+            )
+            if strict:
+                ctx.print_error(message, cmd.line)
+                sys.exit(1)
+            ctx.print_warning(message, cmd.line)
+            return
+        algorithm = _STRING_HASHES[subcommand]
+        ctx.variables[args[1]] = hashlib.new(algorithm, args[2].encode()).hexdigest()
 
     elif subcommand == "COMPARE":
         # string(COMPARE <OP> <string1> <string2> <out_var>)

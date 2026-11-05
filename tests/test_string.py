@@ -298,3 +298,51 @@ def test_string_random_errors(capsys) -> None:
     with pytest.raises(SystemExit):
         _run_random("LENGTH", "0", "R")
     assert "sub-command RANDOM: Invoked with bad length." in capsys.readouterr().err
+
+
+def test_string_hashes() -> None:
+    """The expected hashes are the output of CMake 4.3."""
+    expected = {
+        "MD5": "900150983cd24fb0d6963f7d28e17f72",
+        "SHA1": "a9993e364706816aba3e25717850c26c9cd0d89d",
+        "SHA224": "23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7",
+        "SHA256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+        "SHA384": "cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed"
+        "8086072ba1e7cc2358baeca134c825a7",
+        "SHA512": "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a"
+        "2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f",
+        "SHA3_224": "e642824c3f8cf24ad09234ee7d3c766fc9a3a5168d0c94ad73b46fdf",
+        "SHA3_256": "3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532",
+        "SHA3_384": "ec01498288516fc926459f58e2c6ad8df9b473cb0fc08c2596da7cf0e49be4b2"
+        "98d88cea927ac7f539f1edf228376d25",
+        "SHA3_512": "b751850b1a57168a5693cd924b6b096e08f621827444f70d884f5d0240d2712e"
+        "10e116e9192af3c91a7ec57647e3934057340b4cf408d5a56592f8274eec53f0",
+    }
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="string", args=[name, name, "abc"], line=1) for name in expected
+    ]
+    commands.append(Command(name="string", args=["SHA256", "EMPTY", ""], line=2))
+    process_commands(commands, ctx, strict=True)
+
+    for name, value in expected.items():
+        assert ctx.variables[name] == value
+    assert ctx.variables["EMPTY"] == (
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    )
+
+
+def test_string_hash_errors(capsys) -> None:
+    import pytest
+
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    with pytest.raises(SystemExit):
+        process_commands(
+            [Command(name="string", args=["SHA256", "out", "a", "b"], line=1)],
+            ctx,
+            strict=True,
+        )
+    assert (
+        "string SHA256 requires an output variable and an input string"
+        in capsys.readouterr().err
+    )
