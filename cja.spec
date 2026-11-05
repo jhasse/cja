@@ -3,9 +3,9 @@ Version:        0.10.2
 Release:        %autorelease
 Summary:        CMake-compatible build system that generates Ninja build files
 
-# cja and its bundled ninja_syntax.py from Ninja are Apache-2.0. The CMake
-# modules in cja/cmake/Modules/ (CMakePrintHelpers, FindALSA, FindGTest,
-# FindOpenSSL, GoogleTest) are taken from CMake and are BSD-3-Clause.
+# cja and its bundled ninja_syntax.py from Ninja are Apache-2.0. The modules
+# in cja/cmake/Modules/ with CMake's license header are taken from CMake and
+# are BSD-3-Clause.
 License:        Apache-2.0 AND BSD-3-Clause
 URL:            https://github.com/jhasse/cja
 Source:         %{pypi_source cja}
