@@ -524,3 +524,155 @@ def test_file_write_with_other_drive_letter_case_in_cwd(
     configure(Path("."), "build")
 
     assert (tmp_path / "build" / "out.txt").read_text() == "hello"
+
+
+def _download(tmp_path: Path, *args: str, strict: bool = False) -> BuildContext:
+    build_dir = tmp_path / "build"
+    build_dir.mkdir(exist_ok=True)
+    ctx = BuildContext(source_dir=tmp_path, build_dir=build_dir)
+    ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = str(build_dir)
+    process_commands(
+        [Command(name="file", args=["DOWNLOAD", *args], line=1)], ctx, strict=strict
+    )
+    return ctx
+
+
+def test_file_download(tmp_path: Path) -> None:
+    """file(DOWNLOAD) saves relative paths below the current binary directory."""
+    remote = tmp_path / "remote.txt"
+    remote.write_bytes(b"hello\r\nworld\n")
+
+    ctx = _download(
+        tmp_path, remote.as_uri(), "sub/out.txt", "STATUS", "status", "LOG", "log"
+    )
+
+    assert (tmp_path / "build" / "sub" / "out.txt").read_bytes() == b"hello\r\nworld\n"
+    assert ctx.variables["status"] == '0;"No error"'
+    assert "log" in ctx.variables
+
+
+def test_file_download_expected_hash(tmp_path: Path) -> None:
+    remote = tmp_path / "remote.txt"
+    remote.write_text("hello")
+    sha256 = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+
+    _download(tmp_path, remote.as_uri(), "out.txt", "EXPECTED_HASH", f"SHA256={sha256}")
+    out = tmp_path / "build" / "out.txt"
+    assert out.read_text() == "hello"
+
+    # A file that already has the expected hash isn't downloaded again
+    remote.unlink()
+    ctx = _download(
+        tmp_path,
+        remote.as_uri(),
+        "out.txt",
+        "EXPECTED_MD5",
+        "5D41402ABC4B2A76B9719D911017C592",
+        "STATUS",
+        "status",
+    )
+    assert ctx.variables["status"].startswith('0;"returning early')
+
+
+def test_file_download_hash_mismatch(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    remote = tmp_path / "remote.txt"
+    remote.write_text("hello")
+
+    with pytest.raises(SystemExit):
+        _download(
+            tmp_path,
+            remote.as_uri(),
+            "out.txt",
+            "EXPECTED_HASH",
+            "SHA1=0000",
+            "STATUS",
+            "status",
+        )
+
+    assert "HASH mismatch" in capsys.readouterr().err
+    assert not (tmp_path / "build" / "out.txt").exists()
+
+
+def test_file_download_failure(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A failed download is only fatal when the status isn't queried."""
+    missing = (tmp_path / "missing.txt").as_uri()
+
+    ctx = _download(tmp_path, missing, "out.txt", "STATUS", "status")
+    code, _, message = ctx.variables["status"].partition(";")
+    assert code == "37"
+    assert message.startswith('"') and message.endswith('"')
+
+    with pytest.raises(SystemExit):
+        _download(tmp_path, missing, "out.txt")
+    assert "file(DOWNLOAD) failed" in capsys.readouterr().err
+
+
+def test_file_download_without_file(tmp_path: Path) -> None:
+    """Without a <file> the download is only checked."""
+    remote = tmp_path / "remote.txt"
+    remote.write_text("hello")
+
+    ctx = _download(tmp_path, remote.as_uri(), "STATUS", "status")
+
+    assert ctx.variables["status"] == '0;"No error"'
+    assert list((tmp_path / "build").iterdir()) == []
+
+
+def test_file_download_http(tmp_path: Path) -> None:
+    """HTTPHEADER and USERPWD are sent, HTTP errors end up in STATUS."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    seen: dict[str, str | None] = {}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            if self.path != "/data":
+                self.send_error(404)
+                return
+            seen["token"] = self.headers.get("X-Token")
+            seen["auth"] = self.headers.get("Authorization")
+            self.send_response(200)
+            self.send_header("Content-Length", "4")
+            self.end_headers()
+            self.wfile.write(b"data")
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        base = f"http://127.0.0.1:{server.server_port}"
+        _download(
+            tmp_path,
+            f"{base}/data",
+            str(tmp_path / "abs.bin"),
+            "HTTPHEADER",
+            "X-Token: abc",
+            "USERPWD",
+            "user:pw",
+            "TIMEOUT",
+            "30",
+            "SHOW_PROGRESS",
+        )
+        assert (tmp_path / "abs.bin").read_bytes() == b"data"
+        assert seen == {"token": "abc", "auth": "Basic dXNlcjpwdw=="}
+
+        ctx = _download(tmp_path, f"{base}/nope", "STATUS", "status")
+        assert ctx.variables["status"] == '22;"HTTP response code said error"'
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_file_download_strict_unsupported(tmp_path: Path) -> None:
+    remote = tmp_path / "remote.txt"
+    remote.write_text("hello")
+
+    with pytest.raises(SystemExit):
+        _download(tmp_path, remote.as_uri(), "out.txt", "RANGE_START", "1", strict=True)

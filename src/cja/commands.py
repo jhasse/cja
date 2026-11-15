@@ -5,10 +5,16 @@ import os
 import random
 import re
 import shutil
+import socket
+import ssl
 import sys
+import urllib.error
+import urllib.request
+from base64 import b64encode
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import NoReturn
 
 from .build_context import (
     BuildContext,
@@ -3853,8 +3859,209 @@ def handle_file(
 
         write_if_changed(Path(output_path), generated)
 
+    elif subcommand == "DOWNLOAD":
+        _handle_file_download(ctx, cmd, args, strict)
+
     else:
         ctx.check_unsupported_args(cmd, [subcommand], strict)
+
+
+# file(DOWNLOAD) options, with the number of values they take
+_FILE_DOWNLOAD_OPTIONS = {
+    "INACTIVITY_TIMEOUT": 1,
+    "LOG": 1,
+    "SHOW_PROGRESS": 0,
+    "STATUS": 1,
+    "TIMEOUT": 1,
+    "USERPWD": 1,
+    "HTTPHEADER": 1,
+    "NETRC": 1,
+    "NETRC_FILE": 1,
+    "TLS_VERIFY": 1,
+    "TLS_VERSION": 1,
+    "TLS_CAINFO": 1,
+    "EXPECTED_HASH": 1,
+    "EXPECTED_MD5": 1,
+    "RANGE_START": 1,
+    "RANGE_END": 1,
+}
+_FILE_DOWNLOAD_UNSUPPORTED = frozenset(
+    {"NETRC", "NETRC_FILE", "TLS_VERSION", "RANGE_START", "RANGE_END"}
+)
+
+
+def _file_hash(path: Path, algorithm: str) -> str:
+    h = hashlib.new(algorithm)
+    with open(path, "rb") as f:
+        while chunk := f.read(1 << 16):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _download_error_status(error: Exception) -> tuple[int, str]:
+    """Map a failed download to the curl error code and message CMake reports."""
+    if isinstance(error, urllib.error.HTTPError):
+        return 22, "HTTP response code said error"
+    reason = error.reason if isinstance(error, urllib.error.URLError) else error
+    if isinstance(reason, TimeoutError):
+        return 28, "Timeout was reached"
+    if isinstance(reason, socket.gaierror):
+        return 6, "Could not resolve hostname"
+    if isinstance(reason, ssl.SSLError):
+        return 60, "SSL peer certificate or SSH remote key was not OK"
+    if isinstance(reason, FileNotFoundError):
+        return 37, "Couldn't read a file:// file"
+    if isinstance(reason, ConnectionError):
+        return 7, "Could not connect to server"
+    if isinstance(error, ValueError):
+        return 3, "URL using bad/illegal format or missing URL"
+    return 1, str(reason) or type(error).__name__
+
+
+def _handle_file_download(
+    ctx: BuildContext, cmd: Command, args: list[str], strict: bool
+) -> None:
+    """Handle file(DOWNLOAD <url> [<file>] [<options>...])."""
+
+    def fatal(message: str) -> NoReturn:
+        ctx.print_error(message, cmd.line)
+        raise SystemExit(1)
+
+    if len(args) < 2:
+        fatal("file(DOWNLOAD) must be called with at least a URL")
+    url = args[1]
+    i = 2
+    # Without a <file> the download is only checked, not saved
+    output: Path | None = None
+    if i < len(args) and args[i] not in _FILE_DOWNLOAD_OPTIONS:
+        output = Path(args[i])
+        if not output.is_absolute():
+            output = (
+                Path(
+                    ctx.variables.get(
+                        "CMAKE_CURRENT_BINARY_DIR", to_posix_path(ctx.build_dir)
+                    )
+                )
+                / output
+            )
+        i += 1
+
+    options: dict[str, str] = {}
+    headers: dict[str, str] = {}
+    unsupported: list[str] = []
+    while i < len(args):
+        token = args[i]
+        count = _FILE_DOWNLOAD_OPTIONS.get(token)
+        if count is None:
+            fatal(f"file(DOWNLOAD) given unknown argument: {token}")
+        if count and i + 1 >= len(args):
+            fatal(f"file(DOWNLOAD) missing value for {token}")
+        value = args[i + 1] if count else ""
+        if token in _FILE_DOWNLOAD_UNSUPPORTED:
+            unsupported.append(token)
+        elif token == "HTTPHEADER":
+            key, _, header_value = value.partition(":")
+            headers[key.strip()] = header_value.strip()
+        else:
+            options[token] = value
+        i += 1 + count
+    ctx.check_unsupported_args(cmd, unsupported, strict)
+
+    status_var = options.get("STATUS")
+    log_var = options.get("LOG")
+
+    algo_name = ""
+    algorithm = ""
+    expected_hash = ""
+    if "EXPECTED_HASH" in options:
+        algo_name, sep, expected_hash = options["EXPECTED_HASH"].partition("=")
+        algorithm = _STRING_HASHES.get(algo_name, "")
+        if not sep or not algorithm or not expected_hash:
+            fatal(
+                "file(DOWNLOAD) EXPECTED_HASH expects ALGO=value but got: "
+                + options["EXPECTED_HASH"]
+            )
+    elif "EXPECTED_MD5" in options:
+        algo_name, algorithm, expected_hash = "MD5", "md5", options["EXPECTED_MD5"]
+    expected_hash = expected_hash.lower()
+
+    # An existing file with the expected hash doesn't need to be downloaded again
+    if (
+        output is not None
+        and algorithm
+        and output.is_file()
+        and _file_hash(output, algorithm) == expected_hash
+    ):
+        if status_var:
+            ctx.variables[status_var] = (
+                '0;"returning early; file already exists with expected '
+                f'{algo_name} hash"'
+            )
+        if log_var:
+            ctx.variables[log_var] = ""
+        return
+
+    timeouts: list[float] = []
+    for name in ("TIMEOUT", "INACTIVITY_TIMEOUT"):
+        try:
+            seconds = float(options.get(name, "0"))
+        except ValueError:
+            fatal(f"file(DOWNLOAD) {name} is not a number: {options[name]}")
+        if seconds > 0:
+            timeouts.append(seconds)
+
+    if "USERPWD" in options:
+        headers["Authorization"] = (
+            "Basic " + b64encode(options["USERPWD"].encode()).decode()
+        )
+
+    tls_verify = options.get("TLS_VERIFY") or ctx.variables.get("CMAKE_TLS_VERIFY", "")
+    cainfo = options.get("TLS_CAINFO") or ctx.variables.get("CMAKE_TLS_CAINFO", "")
+    ssl_context = ssl.create_default_context(cafile=cainfo or None)
+    if tls_verify and is_off(tls_verify):
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+
+    status = (0, "No error")
+    hasher = hashlib.new(algorithm) if algorithm else None
+    log = ""
+    try:
+        request = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(
+            request, timeout=min(timeouts) if timeouts else None, context=ssl_context
+        ) as response:
+            log = f"{getattr(response, 'status', None) or 200} {response.geturl()}\n"
+            if output is not None:
+                output.parent.mkdir(parents=True, exist_ok=True)
+            with open(output if output is not None else os.devnull, "wb") as f:
+                while chunk := response.read(1 << 16):
+                    f.write(chunk)
+                    if hasher is not None:
+                        hasher.update(chunk)
+    except (OSError, ValueError) as e:
+        status = _download_error_status(e)
+        log = f"{e}\n"
+
+    status_text = f'{status[0]};"{status[1]}"'
+    if log_var:
+        ctx.variables[log_var] = log
+
+    if status[0] == 0 and hasher is not None and hasher.hexdigest() != expected_hash:
+        # Don't let a later run mistake the wrong file for a finished download
+        if output is not None:
+            output.unlink(missing_ok=True)
+        fatal(
+            "file(DOWNLOAD) HASH mismatch\n"
+            f"  for file: [{output if output is not None else ''}]\n"
+            f"    expected hash: [{expected_hash}]\n"
+            f"      actual hash: [{hasher.hexdigest()}]\n"
+            f"           status: [{status_text}]"
+        )
+
+    if status_var:
+        ctx.variables[status_var] = status_text
+    elif status[0] != 0:
+        fatal(f"file(DOWNLOAD) failed for {url}\n  status: [{status_text}]\n  {log.strip()}")
 
 
 _FILE_COPY_UNSUPPORTED = frozenset(
