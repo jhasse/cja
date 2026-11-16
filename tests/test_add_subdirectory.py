@@ -396,3 +396,39 @@ def test_add_subdirectory_system(tmp_path: Path) -> None:
         "-isystem dep/include",
         "-isystem dep/nested/include",
     ]
+
+
+def test_add_subdirectory_system_directory_property(tmp_path: Path) -> None:
+    """add_subdirectory(SYSTEM) sets the SYSTEM directory property, which nested ones inherit."""
+    source_dir = tmp_path / "src"
+    (source_dir / "dep" / "nested").mkdir(parents=True)
+    (source_dir / "other").mkdir()
+    report = (
+        "get_directory_property(system SYSTEM)\n"
+        'set(SYSTEM_${name} "${system}" CACHE INTERNAL "")\n'
+    )
+    (source_dir / "CMakeLists.txt").write_text(
+        f"set(name top)\n{report}add_subdirectory(dep SYSTEM)\nadd_subdirectory(other)\n"
+    )
+    (source_dir / "dep" / "CMakeLists.txt").write_text(
+        f"set(name dep)\n{report}add_subdirectory(nested)\n"
+    )
+    (source_dir / "dep" / "nested" / "CMakeLists.txt").write_text(
+        f"set(name nested)\n{report}"
+    )
+    # Setting it by hand affects the targets created afterwards
+    (source_dir / "other" / "CMakeLists.txt").write_text(
+        "add_library(before INTERFACE)\n"
+        "set_property(DIRECTORY PROPERTY SYSTEM ON)\n"
+        "add_library(after INTERFACE)\n"
+    )
+
+    from cja.generator import configure
+
+    ctx = configure(source_dir, "build", strict=True)
+
+    assert ctx.cache_values["SYSTEM_top"] == ""
+    assert ctx.cache_values["SYSTEM_dep"] == "TRUE"
+    assert ctx.cache_values["SYSTEM_nested"] == "TRUE"
+    assert ctx.target_property("before", "SYSTEM") is None
+    assert ctx.target_property("after", "SYSTEM") == "ON"

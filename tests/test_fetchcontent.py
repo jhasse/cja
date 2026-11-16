@@ -9,6 +9,7 @@ import pytest
 
 from cja.generator import BuildContext, process_commands
 from cja.parser import Command
+from tests.helpers import include_flags
 
 
 class _FakeResponse:
@@ -318,3 +319,35 @@ def test_fetchcontent_git_commit_hash(tmp_path: Path) -> None:
     src_dir = ctx.variables["mylib_SOURCE_DIR"]
     assert (Path(src_dir) / "CMakeLists.txt").exists()
     assert any(lib.name == "mylib" for lib in ctx.libraries)
+
+
+def test_fetchcontent_system(tmp_path: Path) -> None:
+    """With SYSTEM, consumers get the include dirs of the content as -isystem."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    dep_dir = tmp_path / "dep"
+    dep_dir.mkdir()
+    (dep_dir / "CMakeLists.txt").write_text(
+        "add_library(dep INTERFACE)\n"
+        "target_include_directories(dep INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)\n"
+        "get_directory_property(system SYSTEM)\n"
+        'set(DEP_SYSTEM "${system}" CACHE INTERNAL "")\n'
+    )
+    (source_dir / "main.c").write_text("int main(void) { return 0; }\n")
+    (source_dir / "CMakeLists.txt").write_text(
+        "include(FetchContent)\n"
+        "FetchContent_Declare(dep SOURCE_DIR ${CMAKE_SOURCE_DIR}/../dep SYSTEM)\n"
+        "FetchContent_MakeAvailable(dep)\n"
+        "add_executable(app main.c)\n"
+        "target_link_libraries(app PRIVATE dep)\n"
+    )
+
+    from cja.generator import configure
+
+    ctx = configure(source_dir, "build", strict=True)
+
+    assert ctx.cache_values["DEP_SYSTEM"] == "TRUE"
+    content = (source_dir / "build.ninja").read_text()
+    assert include_flags(content, "app_main.o") == [
+        f"-isystem {(dep_dir / 'include').as_posix()}"
+    ]

@@ -3,6 +3,7 @@
 import os
 from pathlib import Path
 
+from cja import generator
 from cja.generator import BuildContext, configure, process_commands
 from cja.parser import Command
 from tests.helpers import copy_unignored_tree, include_flags
@@ -239,3 +240,62 @@ def test_target_include_directories_system_only_after_target(tmp_path: Path) -> 
 
     content = (tmp_path / "build.ninja").read_text()
     assert include_flags(content, "app_main.o") == ["-Iinc", "-ISYSTEM"]
+
+
+def test_include_directories_system(tmp_path: Path) -> None:
+    """include_directories(SYSTEM) are system ones, also for earlier targets and subdirectories."""
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "CMakeLists.txt").write_text(
+        "add_executable(early main.cpp)\n"
+        "include_directories(SYSTEM sys)\n"
+        "include_directories(normal)\n"
+        "add_subdirectory(sub)\n"
+    )
+    (tmp_path / "sub" / "CMakeLists.txt").write_text("add_executable(late ../main.cpp)\n")
+    (tmp_path / "main.cpp").write_text("int main() { return 0; }\n")
+
+    configure(tmp_path, "build", strict=True)
+
+    content = (tmp_path / "build.ninja").read_text()
+    assert include_flags(content, "early_main.o") == ["-Inormal", "-isystem sys"]
+    assert include_flags(content, "late_main.o") == ["-Inormal", "-isystem sys"]
+
+
+def test_implicit_include_directories_are_not_system(tmp_path: Path) -> None:
+    """Implicit include directories are left out, -isystem would reorder them."""
+    implicit = tmp_path / "implicit"
+    (tmp_path / "CMakeLists.txt").write_text(
+        "add_executable(app main.cpp)\n"
+        f"target_include_directories(app SYSTEM PRIVATE sys {implicit.as_posix()})\n"
+    )
+    (tmp_path / "main.cpp").write_text("int main() { return 0; }\n")
+
+    configure(
+        tmp_path,
+        "build",
+        variables={"CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES": implicit.as_posix()},
+        strict=True,
+    )
+
+    content = (tmp_path / "build.ninja").read_text()
+    assert include_flags(content, "app_main.o") == ["-isystem sys"]
+
+
+def test_parse_include_search_list() -> None:
+    """The implicit include directories are read from the compiler's -v output."""
+    output = (
+        "ignoring nonexistent directory \"/usr/local/include/x86_64-linux-gnu\"\n"
+        '#include "..." search starts here:\n'
+        " /quote\n"
+        "#include <...> search starts here:\n"
+        " /usr/lib/gcc/x86_64-linux-gnu/14/../../../../include/c++/14\n"
+        " /usr/include\n"
+        " /System/Library/Frameworks (framework directory)\n"
+        "End of search list.\n"
+        " /after\n"
+    )
+
+    assert generator._parse_include_search_list(output) == [
+        "/usr/include/c++/14",
+        "/usr/include",
+    ]

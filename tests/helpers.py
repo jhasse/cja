@@ -56,7 +56,10 @@ def join_command_lines(*lines: str) -> str:
 
 
 def include_flags(ninja_content: str, obj: str) -> list[str]:
-    """The -I and -isystem flags of the build edge of an object file, in order."""
+    """The -I and -isystem flags of the build edge of an object file, in order.
+
+    Paths use forward slashes, as absolute ones keep native separators on Windows.
+    """
     # Undo ninja_syntax's wrapping of long lines with "$" continuations
     ninja_content = re.sub(r"\$\n +", "", ninja_content)
     edge = re.search(
@@ -64,4 +67,5 @@ def include_flags(ninja_content: str, obj: str) -> list[str]:
     )
     assert edge, f"no build edge for {obj}"
     cflags = re.search(r"^  cflags = (.*)$", edge.group(1), re.MULTILINE)
-    return re.findall(r"-I\S+|-isystem \S+", cflags.group(1)) if cflags else []
+    flags = re.findall(r"-I\S+|-isystem \S+", cflags.group(1)) if cflags else []
+    return [flag.replace("\\", "/") for flag in flags]

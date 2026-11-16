@@ -20,6 +20,7 @@ from .targets import (
 )
 from .utils import (
     UNDEFINED_VAR_SENTINEL,
+    is_truthy,
     make_relative,
     resolve_cmake_path,
     split_unquoted_list_args,
@@ -235,12 +236,12 @@ class BuildContext:
         default_factory=dict
     )  # Properties for directories
     parent_directory: str = ""  # Path to parent directory (if in subdirectory)
+    # The include_directories(SYSTEM) of each directory, keyed like the
+    # INCLUDE_DIRECTORIES in directory_properties
+    directory_system_include_dirs: dict[str, list[str]] = field(default_factory=dict)
     # Inside an add_subdirectory(... EXCLUDE_FROM_ALL), so new targets start
     # out excluded from "all"
     exclude_from_all: bool = False
-    # Inside an add_subdirectory(... SYSTEM), so new targets start out with the
-    # SYSTEM property: their consumers get their include directories as -isystem
-    system: bool = False
     # How many add_subdirectory()/FetchContent levels below the top-level
     # directory we are, so "cja run" can prefer the shallowest executable
     directory_depth: int = 0
@@ -402,6 +403,23 @@ class BuildContext:
         )
         self.directories.append(directory)
         return directory
+
+    def directory_key(self, source_dir: Path) -> str:
+        """The key of a directory in directory_properties, like set_property() uses."""
+        return resolve_cmake_path(str(source_dir), source_dir)
+
+    def inherit_system_property(
+        self, source_dir: Path, parent_dir: Path, system: bool
+    ) -> None:
+        """Set the SYSTEM property of a directory added from parent_dir.
+
+        Like in CMake, add_subdirectory() and FetchContent set it with their SYSTEM
+        option, and a subdirectory of a SYSTEM directory is one, too.
+        """
+        parent = self.directory_properties.get(self.directory_key(parent_dir), {})
+        if system or is_truthy(parent.get("SYSTEM", "")):
+            key = self.directory_key(source_dir)
+            self.directory_properties.setdefault(key, {})["SYSTEM"] = "TRUE"
 
     def current_directory(self) -> Directory | None:
         """The innermost directory whose CMakeLists.txt is still processed."""

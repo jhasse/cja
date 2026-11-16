@@ -1,5 +1,6 @@
 """Ninja build file generator."""
 
+import functools
 import json
 import os
 import platform
@@ -148,6 +149,52 @@ def _infer_compiler_version(compiler: str) -> str:
     minor = match.group(2)
     patch = match.group(3) or "0"
     return f"{major}.{minor}.{patch}"
+
+
+def _parse_include_search_list(output: str) -> list[str]:
+    """The directories of the ``#include <...>`` search list that ``-v`` prints."""
+    dirs: list[str] = []
+    in_list = False
+    for line in output.splitlines():
+        if line.startswith("#include <...> search starts here:"):
+            in_list = True
+        elif line.startswith("End of search list."):
+            break
+        # macOS lists framework directories, too, which aren't include ones
+        elif in_list and line.startswith(" ") and not line.endswith(
+            " (framework directory)"
+        ):
+            dirs.append(to_posix_path(os.path.normpath(line.strip())))
+    return dirs
+
+
+@functools.cache
+def _infer_implicit_include_dirs(compiler: str, lang: str, flags: str) -> str:
+    """The include directories a compiler searches by default, as a CMake list.
+
+    Like CMAKE_<LANG>_IMPLICIT_INCLUDE_DIRECTORIES, it's read from the search
+    list that the compiler prints when it preprocesses with ``-v``.  ``flags``
+    are CMAKE_<LANG>_FLAGS, as e.g. --sysroot changes the search list.
+    """
+    parts = shlex.split(compiler) if compiler else []
+    if parts and Path(parts[0]).name.lower() in ("ccache", "sccache"):
+        parts = parts[1:]
+    if not parts:
+        return ""
+    source_lang = "c" if lang == "C" else "c++"
+    try:
+        result = subprocess.run(
+            [*parts, *split_flags(flags), "-x", source_lang, "-E", "-v", "-"],
+            input="",
+            capture_output=True,
+            text=True,
+            check=True,
+            # The search list's messages are translated.
+            env={**os.environ, "LC_ALL": "C"},
+        )
+    except (subprocess.CalledProcessError, OSError):
+        return ""
+    return ";".join(_parse_include_search_list(result.stderr))
 
 
 def _infer_standard_default(compiler: str, lang: str, flags: str) -> str:
@@ -794,22 +841,36 @@ def _system_include_directories(
     return {inc for d in dirs if (inc := strip_generator_expressions(d))}
 
 
+def _implicit_include_key(path: str) -> str:
+    """Make include directories comparable with the implicit ones of compilers."""
+    return os.path.normcase(os.path.realpath(path))
+
+
 def _move_system_includes_last(
-    flags: list[str], system_dirs: set[str], source_dir: Path
+    flags: list[str],
+    system_dirs: set[str],
+    source_dir: Path,
+    implicit_dirs: set[str],
 ) -> None:
     """Turn the ``-I`` flags of system include directories into ``-isystem``.
 
     Like CMake, they are moved after all other flags, and a directory that is
     also a normal include directory of the target becomes a system one, too.
+    Implicit include directories of the compilers (``implicit_dirs``, see
+    _implicit_include_key) are dropped instead: ``-isystem /usr/include``
+    would break the #include_next of the C++ standard library headers.
     """
     if not system_dirs:
         return
     system_flags = {
-        _include_flag(d, source_dir): "-isystem "
-        + _quote_if_spaced(_ninja_flag_path(d, source_dir))
+        _include_flag(d, source_dir): None
+        if _implicit_include_key(d) in implicit_dirs
+        else "-isystem " + _quote_if_spaced(_ninja_flag_path(d, source_dir))
         for d in system_dirs
     }
-    moved = dict.fromkeys(system_flags[f] for f in flags if f in system_flags)
+    moved = dict.fromkeys(
+        system_flag for f in flags if (system_flag := system_flags.get(f))
+    )
     flags[:] = [f for f in flags if f not in system_flags] + list(moved)
 
 
@@ -948,6 +1009,13 @@ def generate_ninja(
     cc = ctx.c_compiler
     cxx = ctx.cxx_compiler
     windows_clangxx = _is_windows_clangxx(cxx)
+    # Never passed as system include directories, see _move_system_includes_last()
+    implicit_include_dirs = {
+        _implicit_include_key(d)
+        for lang in ("C", "CXX")
+        for d in ctx.variables.get(f"CMAKE_{lang}_IMPLICIT_INCLUDE_DIRECTORIES", "").split(";")
+        if d
+    }
 
     # Detect extensions
     exe_ext = ".exe" if platform.system() == "Windows" else ""
@@ -2033,6 +2101,9 @@ def generate_ninja(
             # Propagate flags from dependencies
             # For compilation, we only follow public dependencies
             expanded_lib_link_libraries = expand_link_libraries(lib.link_libraries)
+            lib_system_dirs = _system_include_directories(
+                ctx, lib.system_include_directories, expanded_lib_link_libraries
+            )
             for dep_name in expanded_lib_link_libraries:
                 dep_lib = ctx.get_library(dep_name)
                 if dep_lib:
@@ -2068,11 +2139,7 @@ def generate_ninja(
                         if flag and flag not in lib_compile_flags:
                             lib_compile_flags.append(flag)
             _move_system_includes_last(
-                lib_compile_flags,
-                _system_include_directories(
-                    ctx, lib.system_include_directories, expanded_lib_link_libraries
-                ),
-                ctx.source_dir,
+                lib_compile_flags, lib_system_dirs, ctx.source_dir, implicit_include_dirs
             )
 
             lib_sources = _sources_with_interface_sources(
@@ -2324,6 +2391,9 @@ def generate_ninja(
                 inc = strip_generator_expressions(inc_dir)
                 compile_flags.append(_include_flag(inc, ctx.source_dir))
 
+            exe_system_dirs = _system_include_directories(
+                ctx, exe.system_include_directories, expanded_compile_libraries
+            )
             for lib_name in expanded_compile_libraries:
                 # Check for public compile features from linked libraries
                 linked_lib = ctx.get_library(lib_name)
@@ -2373,11 +2443,7 @@ def generate_ninja(
                                         _include_flag(inc_dir, ctx.source_dir)
                                     )
             _move_system_includes_last(
-                compile_flags,
-                _system_include_directories(
-                    ctx, exe.system_include_directories, expanded_compile_libraries
-                ),
-                ctx.source_dir,
+                compile_flags, exe_system_dirs, ctx.source_dir, implicit_include_dirs
             )
 
             exe_sources = _sources_with_interface_sources(
@@ -3202,6 +3268,11 @@ def configure(
         default = _infer_standard_default(compiler, lang, flags)
         if default:
             ctx.variables[f"CMAKE_{lang}_STANDARD_DEFAULT"] = default
+        implicit_var = f"CMAKE_{lang}_IMPLICIT_INCLUDE_DIRECTORIES"
+        if implicit_var not in ctx.variables:
+            ctx.variables[implicit_var] = _infer_implicit_include_dirs(
+                compiler, lang, flags
+            )
     if host_system == "Windows" and "MSVC_VERSION" not in ctx.variables:
         msvc_version = _infer_msvc_version(ctx.c_compiler)
         if msvc_version:

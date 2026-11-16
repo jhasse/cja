@@ -147,8 +147,8 @@ def handle_project(
         ctx.set_cache(binary_var, to_posix_path(ctx.build_dir))
 
 
-def _collect_directory_include_dirs(ctx: BuildContext) -> list[str]:
-    """Collect INCLUDE_DIRECTORIES from current directory and parents."""
+def _directory_chain(ctx: BuildContext) -> list[str]:
+    """The keys of the current directory and its parents, the top-level one first."""
     try:
         current = ctx.current_source_dir.resolve()
     except FileNotFoundError:
@@ -165,9 +165,13 @@ def _collect_directory_include_dirs(ctx: BuildContext) -> list[str]:
         if path == root or path.parent == path:
             break
         path = path.parent
+    return chain[::-1]
 
+
+def _collect_directory_include_dirs(ctx: BuildContext) -> list[str]:
+    """Collect INCLUDE_DIRECTORIES from current directory and parents."""
     include_dirs: list[str] = []
-    for d in reversed(chain):
+    for d in _directory_chain(ctx):
         props = ctx.directory_properties.get(d)
         if not props:
             continue
@@ -175,6 +179,15 @@ def _collect_directory_include_dirs(ctx: BuildContext) -> list[str]:
         if value:
             include_dirs.extend([p for p in value.split(";") if p])
     return include_dirs
+
+
+def _collect_directory_system_include_dirs(ctx: BuildContext) -> list[str]:
+    """Collect the include_directories(SYSTEM) of current directory and parents."""
+    return [
+        d
+        for key in _directory_chain(ctx)
+        for d in ctx.directory_system_include_dirs.get(key, [])
+    ]
 
 
 def _default_target_properties(ctx: BuildContext) -> dict[str, str]:
@@ -201,7 +214,8 @@ def _default_target_properties(ctx: BuildContext) -> dict[str, str]:
             properties[f"{kind}_OUTPUT_DIRECTORY"] = output_dir
     if ctx.exclude_from_all:
         properties["EXCLUDE_FROM_ALL"] = "TRUE"
-    if ctx.system:
+    directory = ctx.directory_properties.get(ctx.directory_key(ctx.current_source_dir))
+    if directory and is_truthy(directory.get("SYSTEM", "")):
         properties["SYSTEM"] = "ON"
     return properties
 
@@ -237,9 +251,9 @@ def handle_include_directories(
     if not args:
         return
 
-    ctx.check_unsupported_args(
-        cmd, [arg for arg in args if arg in ("BEFORE", "SYSTEM")], strict
-    )
+    ctx.check_unsupported_args(cmd, [arg for arg in args if arg == "BEFORE"], strict)
+    # Like in CMake, SYSTEM anywhere makes all the directories system ones.
+    system = "SYSTEM" in args
     dirs: list[str] = []
     for arg in args:
         if arg in ("BEFORE", "AFTER", "SYSTEM"):
@@ -274,20 +288,20 @@ def handle_include_directories(
         )
     else:
         ctx.directory_properties[abs_dir]["INCLUDE_DIRECTORIES"] = ";".join(dirs)
+    if system:
+        ctx.directory_system_include_dirs.setdefault(abs_dir, []).extend(dirs)
 
     # Directory-level include dirs apply to all targets defined in this
     # directory, including ones created before this call (matching CMake's
     # generate-time directory property behavior).
-    for lib in ctx.libraries:
-        if lib.source_dir == ctx.current_source_dir:
+    targets: list[Library | Executable] = [*ctx.libraries, *ctx.executables]
+    for target in targets:
+        if target.source_dir == ctx.current_source_dir:
             for d in dirs:
-                if d not in lib.include_directories:
-                    lib.include_directories.append(d)
-    for exe in ctx.executables:
-        if exe.source_dir == ctx.current_source_dir:
-            for d in dirs:
-                if d not in exe.include_directories:
-                    exe.include_directories.append(d)
+                if d not in target.include_directories:
+                    target.include_directories.append(d)
+                if system and d not in target.system_include_directories:
+                    target.system_include_directories.append(d)
 
 
 def handle_target_link_libraries(
@@ -1400,10 +1414,13 @@ def handle_get_directory_property(
         cmd, [arg for arg in args[1:-1] if arg in ("DIRECTORY", "DEFINITION")], strict
     )
 
+    directory = ctx.directory_properties.get(ctx.directory_key(ctx.current_source_dir), {})
     if prop_name == "PARENT_DIRECTORY":
         # For now, we don't support DIRECTORY <dir> argument properly,
         # just return parent of current directory
         ctx.variables[var_name] = ctx.parent_directory
+    elif prop_name in directory or prop_name == "SYSTEM":
+        ctx.variables[var_name] = directory.get(prop_name, "")
     else:
         if strict:
             ctx.print_warning(
@@ -1616,6 +1633,7 @@ def handle_add_library(
                 sources=resolved_sources,
                 lib_type=lib_type,
                 include_directories=include_directories,
+                system_include_directories=_collect_directory_system_include_dirs(ctx),
                 properties=default_properties,
                 defined_file=ctx.current_list_file,
                 defined_line=cmd.line,
@@ -1666,6 +1684,7 @@ def handle_add_executable(
                 name=args[0],
                 sources=sources,
                 include_directories=include_directories,
+                system_include_directories=_collect_directory_system_include_dirs(ctx),
                 properties=default_properties,
                 defined_file=ctx.current_list_file,
                 defined_line=cmd.line,

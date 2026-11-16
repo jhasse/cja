@@ -19,7 +19,6 @@ def target(name: str) -> Command:
 @pytest.mark.parametrize(
     ("setup", "command", "expected"),
     [
-        ([], Command("include_directories", ["SYSTEM", "inc"]), "SYSTEM"),
         ([], Command("include_directories", ["BEFORE", "inc"]), "BEFORE"),
         (
             [target("t")],

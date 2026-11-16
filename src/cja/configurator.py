@@ -512,7 +512,6 @@ _UNSUPPORTED_FETCHCONTENT_OPTIONS = frozenset(
         "UPDATE_COMMAND",
         "FIND_PACKAGE_ARGS",
         "OVERRIDE_FIND_PACKAGE",
-        "SYSTEM",
         "DOWNLOAD_NO_EXTRACT",
         "DOWNLOAD_NAME",
         "SVN_REPOSITORY",
@@ -703,6 +702,7 @@ def process_commands(
                 else:
                     arg_idx += 1
             fc_exclude_from_all = "EXCLUDE_FROM_ALL" in info.args
+            fc_system = "SYSTEM" in info.args
 
             def resolve_fetch_path(path: str, cmd_line: int) -> Path:
                 expanded = ctx.expand_variables(path, strict, cmd_line)
@@ -879,6 +879,9 @@ def process_commands(
                         fc_binary_dir = binary_dir
                         fc_binary_dir.mkdir(parents=True, exist_ok=True)
 
+                        ctx.inherit_system_property(
+                            actual_src_dir, saved_current_source_dir, fc_system
+                        )
                         ctx.current_source_dir = actual_src_dir
                         ctx.current_list_file = sub_cmakelists
                         ctx.parent_directory = str(saved_current_source_dir)
@@ -1309,9 +1312,6 @@ def process_commands(
                         saved_exclude_from_all = ctx.exclude_from_all
                         if sub_exclude_from_all:
                             ctx.exclude_from_all = True
-                        saved_system = ctx.system
-                        if sub_system:
-                            ctx.system = True
                         ctx.directory_depth += 1
 
                         if len(args) >= 2:
@@ -1332,6 +1332,9 @@ def process_commands(
                             sub_binary_dir = Path(saved_binary_dir) / source_component
                         sub_binary_dir.mkdir(parents=True, exist_ok=True)
 
+                        ctx.inherit_system_property(
+                            sub_source_dir, saved_current_source_dir, sub_system
+                        )
                         ctx.current_source_dir = sub_source_dir
                         ctx.current_list_file = sub_cmakelists
                         ctx.parent_directory = str(saved_current_source_dir)
@@ -1352,13 +1355,11 @@ def process_commands(
                                 str, str | None
                             ] = saved_parent_scope_vars,
                             saved_exclude_from_all: bool = saved_exclude_from_all,
-                            saved_system: bool = saved_system,
                         ) -> None:
                             cache_updates = ctx.cache_updates()
                             parent_scope_updates = ctx.parent_scope_vars
                             ctx.parent_scope_vars = saved_parent_scope_vars
                             ctx.exclude_from_all = saved_exclude_from_all
-                            ctx.system = saved_system
                             ctx.directory_depth -= 1
                             ctx.current_source_dir = saved_current_source_dir
                             ctx.current_list_file = saved_current_list_file
