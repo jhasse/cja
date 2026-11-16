@@ -63,7 +63,6 @@ def target(name: str) -> Command:
         ([], Command("list", ["FILTER", "l", "KEEP", "REGEX", "a"]), "KEEP REGEX"),
         ([], Command("get_filename_component", ["v", "a.c", "STEM"]), "STEM"),
         ([], Command("string", ["COMPARE", "LESS_EQUAL", "a", "b", "v"]), "LESS_EQUAL"),
-        ([], Command("file", ["RELATIVE_PATH", "v", "/a", "/a/b"]), "RELATIVE_PATH"),
         ([], Command("file", ["READ", "f.txt", "v", "HEX"]), "HEX"),
         (
             [],

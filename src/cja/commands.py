@@ -3748,6 +3748,23 @@ def handle_file(
             result = path
         ctx.variables[args[-1]] = result
 
+    elif subcommand == "RELATIVE_PATH":
+        # file(RELATIVE_PATH <variable> <directory> <file>)
+        message = ""
+        if len(args) != 4:
+            message = "file RELATIVE_PATH called with incorrect number of arguments"
+        elif not _is_full_path(args[2]):
+            message = f"file RELATIVE_PATH must be passed a full path to the directory: {args[2]}"
+        elif not _is_full_path(args[3]):
+            message = f"file RELATIVE_PATH must be passed a full path to the file: {args[3]}"
+        if message:
+            if strict:
+                ctx.print_error(message, cmd.line)
+                sys.exit(1)
+            ctx.print_warning(message, cmd.line)
+            return
+        ctx.variables[args[1]] = _relative_path(args[2], args[3])
+
     elif subcommand == "MAKE_DIRECTORY":
         # file(MAKE_DIRECTORY [<directories>...])
         for arg in args[1:]:
@@ -3921,6 +3938,58 @@ def handle_file(
 
     else:
         ctx.check_unsupported_args(cmd, [subcommand], strict)
+
+
+def _is_full_path(path: str) -> bool:
+    """Whether CMake takes a path as a full one, e.g. for file(RELATIVE_PATH)."""
+    if sys.platform == "win32":
+        return len(path) >= 2 and (path[1] == ":" or path[0] in "/\\")
+    return path.startswith(("/", "~"))
+
+
+def _split_full_path(path: str) -> tuple[str, list[str]]:
+    """Split a full path into its root and its components.
+
+    Like CMake, ``.`` and ``..`` are collapsed without looking at the file
+    system (so symlinks aren't resolved), backslashes are separators, too,
+    and ``~`` is the home directory except on Windows.
+    """
+    path = path.replace("\\", "/")
+    if sys.platform != "win32" and path.startswith("~"):
+        path = os.path.expanduser(path).replace("\\", "/")
+    root, rest = (path[:2], path[2:]) if path[1:2] == ":" else ("/", path)
+    components: list[str] = []
+    for part in rest.split("/"):
+        if part == "..":
+            if components:
+                components.pop()
+        elif part not in ("", "."):
+            components.append(part)
+    return root, components
+
+
+def _relative_path(directory: str, file: str) -> str:
+    """The path of file relative to directory, like file(RELATIVE_PATH).
+
+    As in CMake, a path that only goes up ends with a slash (``../../``), and
+    on Windows and macOS, the components are compared case-insensitively.
+    """
+    dir_root, dir_parts = _split_full_path(directory)
+    file_root, file_parts = _split_full_path(file)
+
+    def key(part: str) -> str:
+        return part.lower() if sys.platform in ("win32", "darwin") else part
+
+    if key(dir_root) != key(file_root):
+        # Only possible on Windows, for different drives
+        return file
+    common = 0
+    while (
+        common < min(len(dir_parts), len(file_parts))
+        and key(dir_parts[common]) == key(file_parts[common])
+    ):
+        common += 1
+    return "../" * (len(dir_parts) - common) + "/".join(file_parts[common:])
 
 
 # file(DOWNLOAD) options, with the number of values they take

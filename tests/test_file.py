@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -698,3 +699,87 @@ def test_file_read_symlink(tmp_path: Path) -> None:
     ]
     with pytest.raises(SystemExit):
         process_commands(commands, ctx)
+
+
+def _relative_path(tmp_path: Path, *args: str, strict: bool = False) -> str | None:
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    commands = [Command(name="file", args=["RELATIVE_PATH", "v", *args], line=1)]
+    process_commands(commands, ctx, strict=strict)
+    return ctx.variables.get("v")
+
+
+@pytest.mark.parametrize(
+    ("directory", "file", "expected"),
+    [
+        ("/a", "/a", ""),
+        ("/a", "/a/b/c", "b/c"),
+        ("/a/b", "/a/c", "../c"),
+        # Like in CMake, a path that only goes up ends with a slash
+        ("/a/b/c", "/a", "../../"),
+        ("/a/b", "/", "../../"),
+        ("/a/", "/a/b/", "b"),
+        ("/", "/a/b", "a/b"),
+        ("/a/./b/../c", "/a/d", "../d"),
+        ("/a//b", "/a/b/c", "c"),
+        ("/..", "/a", "a"),
+        ("/a", "/a\\b\\c", "b/c"),
+        ("/a", "/a/b c/d", "b c/d"),
+    ],
+)
+def test_file_relative_path(
+    tmp_path: Path, directory: str, file: str, expected: str
+) -> None:
+    """file(RELATIVE_PATH) gives the same results as CMake."""
+    assert _relative_path(tmp_path, directory, file, strict=True) == expected
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlinks need privileges")
+def test_file_relative_path_doesnt_resolve_symlinks(tmp_path: Path) -> None:
+    (tmp_path / "real" / "sub").mkdir(parents=True)
+    (tmp_path / "link").symlink_to(tmp_path / "real")
+
+    result = _relative_path(
+        tmp_path, (tmp_path / "link" / "sub").as_posix(), (tmp_path / "real").as_posix()
+    )
+
+    assert result == "../../real"
+
+
+def test_file_relative_path_case(tmp_path: Path) -> None:
+    """Like in CMake, paths are only compared case-insensitively on Windows and macOS."""
+    result = _relative_path(tmp_path, "/A/b", "/a/b/c")
+
+    assert result == ("c" if sys.platform in ("win32", "darwin") else "../../a/b/c")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="~ isn't a full path on Windows")
+def test_file_relative_path_home(tmp_path: Path) -> None:
+    assert _relative_path(tmp_path, os.path.expanduser("~"), "~/x/y") == "x/y"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="drive letters")
+def test_file_relative_path_drives(tmp_path: Path) -> None:
+    assert _relative_path(tmp_path, "C:\\a", "c:/a/b") == "b"
+    # Like in CMake, there is no relative path to another drive.
+    assert _relative_path(tmp_path, "C:/a", "D:/b") == "D:/b"
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (["rel", "/a"], "must be passed a full path to the directory: rel"),
+        (["/a", "rel"], "must be passed a full path to the file: rel"),
+        (["/a"], "called with incorrect number of arguments"),
+        (["/a", "/b", "/c"], "called with incorrect number of arguments"),
+    ],
+)
+def test_file_relative_path_errors(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], args: list[str], message: str
+) -> None:
+    with pytest.raises(SystemExit):
+        _relative_path(tmp_path, *args, strict=True)
+    assert f"file RELATIVE_PATH {message}" in capsys.readouterr().err
+
+    # Without --strict, it's a warning and the variable stays unset.
+    assert _relative_path(tmp_path, *args) is None
+    assert f"file RELATIVE_PATH {message}" in capsys.readouterr().err
