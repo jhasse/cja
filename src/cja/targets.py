@@ -22,6 +22,10 @@ class Library:
     public_include_directories: list[str] = field(
         default_factory=list
     )  # PUBLIC includes
+    # Which of the include directories are system ones (-isystem), i.e. its
+    # SYSTEM_INCLUDE_DIRECTORIES and INTERFACE_SYSTEM_INCLUDE_DIRECTORIES
+    system_include_directories: list[str] = field(default_factory=list)
+    public_system_include_directories: list[str] = field(default_factory=list)
     compile_definitions: list[str] = field(default_factory=list)  # PRIVATE definitions
     public_compile_definitions: list[str] = field(
         default_factory=list
@@ -62,6 +66,8 @@ class Executable:
     link_libraries: list[str] = field(default_factory=list)
     compile_features: list[str] = field(default_factory=list)
     include_directories: list[str] = field(default_factory=list)
+    # Which of the include directories are system ones (-isystem)
+    system_include_directories: list[str] = field(default_factory=list)
     compile_definitions: list[str] = field(default_factory=list)
     compile_options: list[str] = field(default_factory=list)
     link_directories: list[str] = field(default_factory=list)

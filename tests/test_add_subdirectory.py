@@ -7,6 +7,7 @@ import pytest
 
 from cja.generator import BuildContext, process_commands
 from cja.parser import Command
+from tests.helpers import include_flags
 
 EXE_EXT = ".exe" if platform.system() == "Windows" else ""
 LIB_EXT = ".lib" if platform.system() == "Windows" else ".a"
@@ -342,3 +343,56 @@ def test_compile_options_of_targets_created_by_helpers(tmp_path: Path) -> None:
             i for i, line in enumerate(lines) if f"/{name}_sub.o: cxx" in line
         )
         assert "-Wshadow" in lines[index + 1]
+
+
+def test_add_subdirectory_system(tmp_path: Path) -> None:
+    """Consumers get the include dirs of targets in a SYSTEM subdirectory as -isystem."""
+    source_dir = tmp_path / "src"
+    (source_dir / "dep" / "nested").mkdir(parents=True)
+    (source_dir / "other").mkdir()
+    (source_dir / "CMakeLists.txt").write_text(
+        "add_subdirectory(dep SYSTEM)\n"
+        "add_subdirectory(other)\n"
+        "add_executable(app main.cpp)\n"
+        "target_include_directories(app PRIVATE dep/include)\n"
+        "target_link_libraries(app PRIVATE dep::dep nested not_system other)\n"
+    )
+    (source_dir / "main.cpp").write_text("int main() { return 0; }\n")
+    (source_dir / "dep" / "CMakeLists.txt").write_text(
+        "add_library(dep STATIC dep.cpp)\n"
+        "add_library(dep::dep ALIAS dep)\n"
+        "target_include_directories(dep PUBLIC include)\n"
+        "add_library(not_system INTERFACE)\n"
+        "target_include_directories(not_system INTERFACE not_system)\n"
+        "set_target_properties(not_system PROPERTIES SYSTEM OFF)\n"
+        "add_subdirectory(nested)\n"
+    )
+    (source_dir / "dep" / "dep.cpp").write_text("int dep() { return 0; }\n")
+    # Nested subdirectories are SYSTEM ones, too
+    (source_dir / "dep" / "nested" / "CMakeLists.txt").write_text(
+        "add_library(nested INTERFACE)\n"
+        "target_include_directories(nested INTERFACE include)\n"
+    )
+    # But not the ones added after it
+    (source_dir / "other" / "CMakeLists.txt").write_text(
+        "add_library(other INTERFACE)\n"
+        "target_include_directories(other INTERFACE include)\n"
+    )
+
+    from cja.generator import configure
+
+    ctx = configure(source_dir, "build", strict=True)
+
+    assert ctx.target_property("dep", "SYSTEM") == "ON"
+    assert ctx.target_property("other", "SYSTEM") is None
+    content = (source_dir / "build.ninja").read_text()
+    # The SYSTEM property only affects consumers
+    assert include_flags(content, "dep_dep.o") == ["-Idep/include"]
+    # Being a normal include dir of app as well doesn't keep dep/include from
+    # being a system one, like in CMake.
+    assert include_flags(content, "app_main.o") == [
+        "-Idep/not_system",
+        "-Iother/include",
+        "-isystem dep/include",
+        "-isystem dep/nested/include",
+    ]

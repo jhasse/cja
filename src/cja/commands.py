@@ -201,6 +201,8 @@ def _default_target_properties(ctx: BuildContext) -> dict[str, str]:
             properties[f"{kind}_OUTPUT_DIRECTORY"] = output_dir
     if ctx.exclude_from_all:
         properties["EXCLUDE_FROM_ALL"] = "TRUE"
+    if ctx.system:
+        properties["SYSTEM"] = "ON"
     return properties
 
 
@@ -516,22 +518,27 @@ def handle_target_include_directories(
     """Handle target_include_directories() command."""
     if len(args) >= 2:
         target_name = args[0]
-        ctx.check_unsupported_args(
-            cmd, [arg for arg in args[1:] if arg in ("SYSTEM", "BEFORE")], strict
-        )
+        # Like in CMake, SYSTEM and then BEFORE or AFTER are only options right
+        # after the target name.
+        start = 1
+        system = args[start] == "SYSTEM"
+        if system:
+            start += 1
+        if start < len(args) and args[start] in ("BEFORE", "AFTER"):
+            if args[start] == "BEFORE":
+                ctx.check_unsupported_args(cmd, ["BEFORE"], strict)
+            start += 1
         # Parse directories with visibility keywords
         public_dirs: list[str] = []
         target_dirs: list[str] = []
         visibility = "PUBLIC"  # Default visibility
-        for arg in args[1:]:
+        for arg in args[start:]:
             if arg == "PUBLIC":
                 visibility = "PUBLIC"
             elif arg == "INTERFACE":
                 visibility = "INTERFACE"
             elif arg == "PRIVATE":
                 visibility = "PRIVATE"
-            elif arg in ("SYSTEM", "BEFORE", "AFTER"):
-                pass
             else:
                 # Expand variables and resolve relative paths
                 expanded = ctx.expand_variables(arg, strict, cmd.line)
@@ -566,12 +573,18 @@ def handle_target_include_directories(
         if lib:
             lib.include_directories.extend(target_dirs)
             lib.public_include_directories.extend(public_dirs)
+            if system:
+                lib.system_include_directories.extend(target_dirs)
+                lib.public_system_include_directories.extend(public_dirs)
         else:
             exe = ctx.get_executable(target_name)
             if exe:
                 # Executables don't propagate, so all dirs go to include_directories
                 exe.include_directories.extend(target_dirs)
                 exe.include_directories.extend(public_dirs)
+                if system:
+                    exe.system_include_directories.extend(target_dirs)
+                    exe.system_include_directories.extend(public_dirs)
 
 
 def handle_target_compile_definitions(
@@ -1531,6 +1544,8 @@ def handle_add_library(
                         link_options=lib.link_options,
                         public_link_options=lib.public_link_options,
                         public_include_directories=lib.public_include_directories,
+                        system_include_directories=lib.system_include_directories,
+                        public_system_include_directories=lib.public_system_include_directories,
                         public_compile_definitions=lib.public_compile_definitions,
                         public_compile_options=lib.public_compile_options,
                         public_compile_features=lib.public_compile_features,

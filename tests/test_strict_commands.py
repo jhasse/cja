@@ -23,8 +23,10 @@ def target(name: str) -> Command:
         ([], Command("include_directories", ["BEFORE", "inc"]), "BEFORE"),
         (
             [target("t")],
-            Command("target_include_directories", ["t", "SYSTEM", "PUBLIC", "inc"]),
-            "SYSTEM",
+            Command(
+                "target_include_directories", ["t", "SYSTEM", "BEFORE", "PUBLIC", "inc"]
+            ),
+            "BEFORE",
         ),
         (
             [target("t")],

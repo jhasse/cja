@@ -1,6 +1,7 @@
 """Shared test helpers."""
 
 import platform
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -52,3 +53,15 @@ def join_command_lines(*lines: str) -> str:
     if platform.system() == "Windows" and len(lines) > 1:
         return f'cmd.exe /C "{joined}"'
     return joined
+
+
+def include_flags(ninja_content: str, obj: str) -> list[str]:
+    """The -I and -isystem flags of the build edge of an object file, in order."""
+    # Undo ninja_syntax's wrapping of long lines with "$" continuations
+    ninja_content = re.sub(r"\$\n +", "", ninja_content)
+    edge = re.search(
+        rf"^build \S*/{re.escape(obj)}: .*\n((?:  .*\n)*)", ninja_content, re.MULTILINE
+    )
+    assert edge, f"no build edge for {obj}"
+    cflags = re.search(r"^  cflags = (.*)$", edge.group(1), re.MULTILINE)
+    return re.findall(r"-I\S+|-isystem \S+", cflags.group(1)) if cflags else []

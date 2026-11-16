@@ -77,7 +77,6 @@ def configure(tmp_path: Path, source: str, strict: bool = False) -> BuildContext
             "fetchcontent_populate(): URL",
         ),
         ("include(foo.cmake RESULT_VARIABLE found)", "include(): RESULT_VARIABLE"),
-        ("add_subdirectory(sub SYSTEM)", "add_subdirectory(): SYSTEM"),
         (
             "add_test(NAME t COMMAND app CONFIGURATIONS Debug)",
             "add_test(): CONFIGURATIONS",

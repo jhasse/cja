@@ -30,7 +30,7 @@ def test_assembly_sources_use_asm_rule_without_depfile(tmp_path: Path) -> None:
     assert "depfile = $out.d" in content  # still used by cc/cxx
     assert "\n  deps = gcc\n" in content
 
-    # The assembly object must use the asm rule, not cc with -MMD.
+    # The assembly object must use the asm rule, not cc with -MD.
     assert ": asm " in content or ": asm\n" in content or ": asm $" in content
     asm_edges = [
         line

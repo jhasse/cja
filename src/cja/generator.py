@@ -775,6 +775,44 @@ def _include_flag(path: str, source_dir: Path) -> str:
     return _quote_if_spaced(f"-I{_ninja_flag_path(path, source_dir)}")
 
 
+def _system_include_directories(
+    ctx: BuildContext, own: list[str], dependencies: list[str]
+) -> set[str]:
+    """Return the include directories that a target gets as system ones.
+
+    Like in CMake, these are its own SYSTEM_INCLUDE_DIRECTORIES, the
+    INTERFACE_SYSTEM_INCLUDE_DIRECTORIES of its dependencies and all
+    INTERFACE_INCLUDE_DIRECTORIES of dependencies with the SYSTEM property.
+    """
+    dirs = list(own)
+    for name in dependencies:
+        lib = ctx.get_library(name)
+        if lib:
+            dirs.extend(lib.public_system_include_directories)
+            if is_truthy(lib.properties.get("SYSTEM", "")):
+                dirs.extend(lib.public_include_directories)
+    return {inc for d in dirs if (inc := strip_generator_expressions(d))}
+
+
+def _move_system_includes_last(
+    flags: list[str], system_dirs: set[str], source_dir: Path
+) -> None:
+    """Turn the ``-I`` flags of system include directories into ``-isystem``.
+
+    Like CMake, they are moved after all other flags, and a directory that is
+    also a normal include directory of the target becomes a system one, too.
+    """
+    if not system_dirs:
+        return
+    system_flags = {
+        _include_flag(d, source_dir): "-isystem "
+        + _quote_if_spaced(_ninja_flag_path(d, source_dir))
+        for d in system_dirs
+    }
+    moved = dict.fromkeys(system_flags[f] for f in flags if f in system_flags)
+    flags[:] = [f for f in flags if f not in system_flags] + list(moved)
+
+
 def _cd_command(working_dir: str, source_dir: Path) -> str | None:
     """Return the ``cd <dir>`` command line for a custom command working directory.
 
@@ -1097,7 +1135,7 @@ def generate_ninja(
 
         n.rule(
             "cc",
-            command=f"$cc -MMD -MF $out.d {base_cflags} {c_flags} $cflags -c $in -o $out".replace(
+            command=f"$cc -MD -MF $out.d {base_cflags} {c_flags} $cflags -c $in -o $out".replace(
                 "  ", " "
             ).strip(),
             depfile="$out.d",
@@ -1108,7 +1146,7 @@ def generate_ninja(
 
         n.rule(
             "cxx",
-            command=f"$cxx -MMD -MF $out.d {base_cflags} {cxx_flags} $cflags -c $in -o $out".replace(
+            command=f"$cxx -MD -MF $out.d {base_cflags} {cxx_flags} $cflags -c $in -o $out".replace(
                 "  ", " "
             ).strip(),
             depfile="$out.d",
@@ -1133,7 +1171,7 @@ def generate_ninja(
             ):
                 n.rule(
                     pch_rule,
-                    command=f"{compiler} -MMD -MF $out.d {base_cflags} {lang_flags} $cflags -x {header_lang} -c $in -o $out".replace(
+                    command=f"{compiler} -MD -MF $out.d {base_cflags} {lang_flags} $cflags -x {header_lang} -c $in -o $out".replace(
                         "  ", " "
                     ).strip(),
                     depfile="$out.d",
@@ -2029,6 +2067,13 @@ def generate_ninja(
                         )
                         if flag and flag not in lib_compile_flags:
                             lib_compile_flags.append(flag)
+            _move_system_includes_last(
+                lib_compile_flags,
+                _system_include_directories(
+                    ctx, lib.system_include_directories, expanded_lib_link_libraries
+                ),
+                ctx.source_dir,
+            )
 
             lib_sources = _sources_with_interface_sources(
                 lib.sources, expanded_lib_link_libraries
@@ -2327,6 +2372,13 @@ def generate_ninja(
                                     compile_flags.append(
                                         _include_flag(inc_dir, ctx.source_dir)
                                     )
+            _move_system_includes_last(
+                compile_flags,
+                _system_include_directories(
+                    ctx, exe.system_include_directories, expanded_compile_libraries
+                ),
+                ctx.source_dir,
+            )
 
             exe_sources = _sources_with_interface_sources(
                 exe.sources, expanded_compile_libraries

@@ -1283,9 +1283,8 @@ def process_commands(
                 pass
 
             case "add_subdirectory":
-                if "SYSTEM" in args[1:]:
-                    ctx.check_unsupported_args(cmd, ["SYSTEM"], strict)
                 sub_exclude_from_all = "EXCLUDE_FROM_ALL" in args
+                sub_system = "SYSTEM" in args[1:]
                 args = [a for a in args if a not in ("EXCLUDE_FROM_ALL", "SYSTEM")]
                 if args:
                     sub_dir_name = args[0]
@@ -1310,6 +1309,9 @@ def process_commands(
                         saved_exclude_from_all = ctx.exclude_from_all
                         if sub_exclude_from_all:
                             ctx.exclude_from_all = True
+                        saved_system = ctx.system
+                        if sub_system:
+                            ctx.system = True
                         ctx.directory_depth += 1
 
                         if len(args) >= 2:
@@ -1350,11 +1352,13 @@ def process_commands(
                                 str, str | None
                             ] = saved_parent_scope_vars,
                             saved_exclude_from_all: bool = saved_exclude_from_all,
+                            saved_system: bool = saved_system,
                         ) -> None:
                             cache_updates = ctx.cache_updates()
                             parent_scope_updates = ctx.parent_scope_vars
                             ctx.parent_scope_vars = saved_parent_scope_vars
                             ctx.exclude_from_all = saved_exclude_from_all
+                            ctx.system = saved_system
                             ctx.directory_depth -= 1
                             ctx.current_source_dir = saved_current_source_dir
                             ctx.current_list_file = saved_current_list_file

@@ -5,7 +5,7 @@ from pathlib import Path
 
 from cja.generator import BuildContext, configure, process_commands
 from cja.parser import Command
-from tests.helpers import copy_unignored_tree
+from tests.helpers import copy_unignored_tree, include_flags
 
 EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
 
@@ -192,3 +192,50 @@ def test_target_include_directories_build_install_interface(capsys) -> None:
 
     captured = capsys.readouterr()
     assert "generator expressions in target_include_directories are not yet supported" not in captured.err
+
+
+def test_target_include_directories_system(tmp_path: Path) -> None:
+    """SYSTEM include directories are -isystem flags after the others, like in CMake."""
+    (tmp_path / "CMakeLists.txt").write_text(
+        "add_library(lib STATIC lib.cpp)\n"
+        "target_include_directories(lib SYSTEM PRIVATE private_sys)\n"
+        "target_include_directories(lib SYSTEM PUBLIC public_sys)\n"
+        "target_include_directories(lib SYSTEM AFTER INTERFACE interface_sys)\n"
+        "target_include_directories(lib PUBLIC normal)\n"
+        "add_executable(app main.cpp)\n"
+        "target_include_directories(app SYSTEM PRIVATE app_sys)\n"
+        "target_include_directories(app PRIVATE app_normal)\n"
+        "target_link_libraries(app PRIVATE lib)\n"
+    )
+    (tmp_path / "lib.cpp").write_text("int f() { return 0; }\n")
+    (tmp_path / "main.cpp").write_text("int main() { return 0; }\n")
+
+    configure(tmp_path, "build", strict=True)
+
+    content = (tmp_path / "build.ninja").read_text()
+    assert include_flags(content, "lib_lib.o") == [
+        "-Inormal",
+        "-isystem private_sys",
+        "-isystem public_sys",
+    ]
+    assert include_flags(content, "app_main.o") == [
+        "-Iapp_normal",
+        "-Inormal",
+        "-isystem app_sys",
+        "-isystem public_sys",
+        "-isystem interface_sys",
+    ]
+
+
+def test_target_include_directories_system_only_after_target(tmp_path: Path) -> None:
+    """Like in CMake, SYSTEM is only an option right after the target name."""
+    (tmp_path / "CMakeLists.txt").write_text(
+        "add_executable(app main.cpp)\n"
+        "target_include_directories(app PRIVATE inc SYSTEM)\n"
+    )
+    (tmp_path / "main.cpp").write_text("int main() { return 0; }\n")
+
+    configure(tmp_path, "build")
+
+    content = (tmp_path / "build.ninja").read_text()
+    assert include_flags(content, "app_main.o") == ["-Iinc", "-ISYSTEM"]
