@@ -281,6 +281,48 @@ def test_implicit_include_directories_are_not_system(tmp_path: Path) -> None:
     assert include_flags(content, "app_main.o") == ["-isystem sys"]
 
 
+def test_imported_include_directories_are_system(tmp_path: Path) -> None:
+    """Like in CMake, consumers get the include dirs of imported targets as -isystem."""
+    implicit = tmp_path / "implicit"
+    (tmp_path / "CMakeLists.txt").write_text(
+        "add_library(iface INTERFACE IMPORTED)\n"
+        "set_target_properties(iface PROPERTIES INTERFACE_INCLUDE_DIRECTORIES"
+        f' "${{CMAKE_SOURCE_DIR}}/iface;{implicit.as_posix()}")\n'
+        "add_library(unknown UNKNOWN IMPORTED)\n"
+        "set_target_properties(unknown PROPERTIES INTERFACE_INCLUDE_DIRECTORIES"
+        " ${CMAKE_SOURCE_DIR}/unknown)\n"
+        "add_library(not_system INTERFACE IMPORTED)\n"
+        "set_target_properties(not_system PROPERTIES INTERFACE_INCLUDE_DIRECTORIES"
+        " ${CMAKE_SOURCE_DIR}/not_system SYSTEM OFF)\n"
+        "add_executable(app main.cpp)\n"
+        "target_link_libraries(app PRIVATE iface unknown not_system)\n"
+        "set(CMAKE_NO_SYSTEM_FROM_IMPORTED ON)\n"
+        "add_executable(no_system main.cpp)\n"
+        "target_link_libraries(no_system PRIVATE iface unknown)\n"
+    )
+    (tmp_path / "main.cpp").write_text("int main() { return 0; }\n")
+
+    # Implicit include directories are left out, -isystem would reorder them.
+    configure(
+        tmp_path,
+        "build",
+        variables={"CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES": implicit.as_posix()},
+        strict=True,
+    )
+
+    content = (tmp_path / "build.ninja").read_text()
+    assert include_flags(content, "app_main.o") == [
+        "-Inot_system",
+        "-isystem iface",
+        "-isystem unknown",
+    ]
+    assert include_flags(content, "no_system_main.o") == [
+        "-Iiface",
+        "-Iimplicit",
+        f"-I{(tmp_path / 'unknown').as_posix()}",
+    ]
+
+
 def test_parse_include_search_list() -> None:
     """The implicit include directories are read from the compiler's -v output."""
     output = (

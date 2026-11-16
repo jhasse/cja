@@ -84,12 +84,13 @@ def test_find_openssl_basic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     ninja = re.sub(r" \$\n\s*", " ", (source / "build.ninja").read_text())
     posix_prefix = prefix.as_posix()
     # The prefix contains a space, so each path must stay a single quoted
-    # argument (the quote wraps the whole `-I<dir>` token / library path).
-    assert f"-I{posix_prefix}/include" in ninja
+    # argument. Like in CMake, the include dir of the imported targets is a
+    # system one.
+    assert f"{posix_prefix}/include" in ninja
     assert f"{posix_prefix}/lib/libssl.a" in ninja
     assert f"{posix_prefix}/lib/libcrypto.a" in ninja
     quote = '"' if sys.platform == "win32" else "'"
-    assert f"{quote}-I{posix_prefix}/include{quote}" in ninja
+    assert f"-isystem {quote}{posix_prefix}/include{quote}" in ninja
     assert f"{quote}{posix_prefix}/lib/libssl.a{quote}" in ninja
 
 

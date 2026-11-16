@@ -214,6 +214,9 @@ def _default_target_properties(ctx: BuildContext) -> dict[str, str]:
             properties[f"{kind}_OUTPUT_DIRECTORY"] = output_dir
     if ctx.exclude_from_all:
         properties["EXCLUDE_FROM_ALL"] = "TRUE"
+    no_system_from_imported = ctx.variables.get("CMAKE_NO_SYSTEM_FROM_IMPORTED", "")
+    if no_system_from_imported and no_system_from_imported != UNDEFINED_VAR_SENTINEL:
+        properties["NO_SYSTEM_FROM_IMPORTED"] = no_system_from_imported
     directory = ctx.directory_properties.get(ctx.directory_key(ctx.current_source_dir))
     if directory and is_truthy(directory.get("SYSTEM", "")):
         properties["SYSTEM"] = "ON"
@@ -1596,6 +1599,9 @@ def handle_add_library(
         exclude_from_all = bool(sources) and sources[0] == "EXCLUDE_FROM_ALL"
         if exclude_from_all:
             sources = sources[1:]
+        # Imported INTERFACE libraries are kept as libraries, so that they
+        # support everything that non-imported ones do.
+        interface_imported = lib_type == "INTERFACE" and "IMPORTED" in sources
         if lib_type == "INTERFACE":
             sources = []
 
@@ -1621,6 +1627,10 @@ def handle_add_library(
         default_properties = _default_target_properties(ctx)
         if exclude_from_all:
             default_properties["EXCLUDE_FROM_ALL"] = "TRUE"
+        if interface_imported:
+            # The SYSTEM directory property only applies to non-imported ones.
+            default_properties.pop("SYSTEM", None)
+            default_properties["IMPORTED"] = "TRUE"
         # Unlike executables, libraries get CMAKE_<CONFIG>_POSTFIX.
         for var_name in list(ctx.variables):
             match = re.fullmatch(r"CMAKE_(\w+)_POSTFIX", var_name)

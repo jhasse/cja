@@ -24,7 +24,7 @@ from .configurator import process_commands
 from .ninja_syntax import Writer, escape
 from .parser import Command
 from .syntax import Test
-from .targets import Executable, Library
+from .targets import Executable, ImportedTarget, Library
 from .utils import (
     default_archiver,
     ipo_flag,
@@ -822,23 +822,80 @@ def _include_flag(path: str, source_dir: Path) -> str:
     return _quote_if_spaced(f"-I{_ninja_flag_path(path, source_dir)}")
 
 
+def _is_system_dependency(
+    properties: dict[str, str], imported: bool, consumer: dict[str, str]
+) -> bool:
+    """Whether a consumer gets the INTERFACE_INCLUDE_DIRECTORIES of a target as system ones.
+
+    Like in CMake, that's the case if the target's SYSTEM property is set.
+    Imported targets default to it, unless the older IMPORTED_NO_SYSTEM is set
+    or the consumer has set NO_SYSTEM_FROM_IMPORTED.
+    """
+    if not imported:
+        return is_truthy(properties.get("SYSTEM", ""))
+    if is_truthy(consumer.get("NO_SYSTEM_FROM_IMPORTED", "")):
+        return False
+    if "SYSTEM" in properties:
+        return is_truthy(properties["SYSTEM"])
+    return not is_truthy(properties.get("IMPORTED_NO_SYSTEM", ""))
+
+
 def _system_include_directories(
-    ctx: BuildContext, own: list[str], dependencies: list[str]
+    ctx: BuildContext, own: list[str], dependencies: list[str], consumer: dict[str, str]
 ) -> set[str]:
     """Return the include directories that a target gets as system ones.
 
     Like in CMake, these are its own SYSTEM_INCLUDE_DIRECTORIES, the
     INTERFACE_SYSTEM_INCLUDE_DIRECTORIES of its dependencies and all
-    INTERFACE_INCLUDE_DIRECTORIES of dependencies with the SYSTEM property.
+    INTERFACE_INCLUDE_DIRECTORIES of system dependencies (see
+    _is_system_dependency).  ``consumer`` are the target's properties.  The
+    ones of imported targets that only carry flags are added by
+    _add_imported_cflags().
     """
     dirs = list(own)
     for name in dependencies:
         lib = ctx.get_library(name)
         if lib:
             dirs.extend(lib.public_system_include_directories)
-            if is_truthy(lib.properties.get("SYSTEM", "")):
+            imported = is_truthy(lib.properties.get("IMPORTED", ""))
+            if _is_system_dependency(lib.properties, imported, consumer):
                 dirs.extend(lib.public_include_directories)
     return {inc for d in dirs if (inc := strip_generator_expressions(d))}
+
+
+def _add_imported_cflags(
+    flags: list[str],
+    imported: ImportedTarget,
+    system_dirs: set[str] | None,
+    source_dir: Path,
+) -> None:
+    """Add the compile flags of an imported target that aren't there already.
+
+    With system_dirs, its include directories are system ones: they become
+    separate -I flags for _move_system_includes_last() and are added to it.
+    """
+    cflags = _format_imported_flags(imported.cflags)
+    if system_dirs is not None:
+        tokens = split_flags(imported.cflags)
+        rest: list[str] = []
+        index = 0
+        while index < len(tokens):
+            token = tokens[index]
+            if token == "-I" and index + 1 < len(tokens):
+                index += 1
+                token = "-I" + tokens[index]
+            if token.startswith("-I") and len(token) > 2:
+                system_dirs.add(token[2:])
+                include = _include_flag(token[2:], source_dir)
+                if include not in flags:
+                    flags.append(include)
+            else:
+                rest.append(token)
+            index += 1
+        if len(rest) < len(tokens):
+            cflags = " ".join(_quote_if_spaced(token) for token in rest)
+    if cflags and cflags not in flags:
+        flags.append(cflags)
 
 
 def _implicit_include_key(path: str) -> str:
@@ -2102,7 +2159,10 @@ def generate_ninja(
             # For compilation, we only follow public dependencies
             expanded_lib_link_libraries = expand_link_libraries(lib.link_libraries)
             lib_system_dirs = _system_include_directories(
-                ctx, lib.system_include_directories, expanded_lib_link_libraries
+                ctx,
+                lib.system_include_directories,
+                expanded_lib_link_libraries,
+                lib.properties,
             )
             for dep_name in expanded_lib_link_libraries:
                 dep_lib = ctx.get_library(dep_name)
@@ -2129,9 +2189,16 @@ def generate_ninja(
                             lib_compile_flags.append(opt)
                 if dep_name in ctx.imported_targets:
                     imported = ctx.imported_targets[dep_name]
-                    imported_cflags = _format_imported_flags(imported.cflags)
-                    if imported_cflags and imported_cflags not in lib_compile_flags:
-                        lib_compile_flags.append(imported_cflags)
+                    _add_imported_cflags(
+                        lib_compile_flags,
+                        imported,
+                        lib_system_dirs
+                        if _is_system_dependency(
+                            imported.properties, True, lib.properties
+                        )
+                        else None,
+                        ctx.source_dir,
+                    )
                     for feature in imported.compile_features:
                         flag = compile_feature_to_flag(
                             feature, lib.properties, ctx.variables
@@ -2392,7 +2459,10 @@ def generate_ninja(
                 compile_flags.append(_include_flag(inc, ctx.source_dir))
 
             exe_system_dirs = _system_include_directories(
-                ctx, exe.system_include_directories, expanded_compile_libraries
+                ctx,
+                exe.system_include_directories,
+                expanded_compile_libraries,
+                exe.properties,
             )
             for lib_name in expanded_compile_libraries:
                 # Check for public compile features from linked libraries
@@ -2430,10 +2500,16 @@ def generate_ninja(
                         )
                         if flag and flag not in compile_flags:
                             compile_flags.append(flag)
+                    imported_system = _is_system_dependency(
+                        imported.properties, True, exe.properties
+                    )
                     if imported.cflags:
-                        imported_cflags = _format_imported_flags(imported.cflags)
-                        if imported_cflags not in compile_flags:
-                            compile_flags.append(imported_cflags)
+                        _add_imported_cflags(
+                            compile_flags,
+                            imported,
+                            exe_system_dirs if imported_system else None,
+                            ctx.source_dir,
+                        )
                     elif lib_name.startswith("GTest::"):
                         gtest_includes = ctx.variables.get("GTEST_INCLUDE_DIRS", "")
                         if gtest_includes:
@@ -2442,6 +2518,8 @@ def generate_ninja(
                                     compile_flags.append(
                                         _include_flag(inc_dir, ctx.source_dir)
                                     )
+                                    if imported_system:
+                                        exe_system_dirs.add(inc_dir)
             _move_system_includes_last(
                 compile_flags, exe_system_dirs, ctx.source_dir, implicit_include_dirs
             )
