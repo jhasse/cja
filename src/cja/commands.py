@@ -47,9 +47,28 @@ from .utils import (
     split_flags,
     split_unquoted_list_args,
     strip_generator_expressions,
+    target_objects_genex,
+    target_objects_target,
     to_posix_path,
     write_if_changed,
 )
+
+
+def _resolve_sources(ctx: BuildContext, source: str) -> list[str]:
+    """The sources that an argument of add_library(), add_executable() or
+    target_sources() names, as paths.
+
+    ``$<TARGET_OBJECTS:tgt>`` stays as it is: the generator, which knows the
+    object files of every target, replaces it with those of ``tgt``.
+    """
+    normalized = strip_generator_expressions(
+        source, target_objects=target_objects_genex
+    )
+    return [
+        item if target_objects_target(item) else ctx.resolve_path(item)
+        for item in normalized.split(";")
+        if item and item.strip()
+    ]
 
 
 def _is_supported_include_dir_genex(value: str) -> bool:
@@ -459,14 +478,7 @@ def handle_target_sources(
                 continue
             if in_base_dirs:
                 continue
-            normalized = strip_generator_expressions(source)
-            if not normalized:
-                continue
-            resolved = [
-                ctx.resolve_path(item)
-                for item in normalized.split(";")
-                if item and item.strip()
-            ]
+            resolved = _resolve_sources(ctx, source)
             if visibility in ("PUBLIC", "PRIVATE"):
                 target_sources.extend(resolved)
             if visibility in ("PUBLIC", "INTERFACE"):
@@ -1613,16 +1625,7 @@ def handle_add_library(
             return
         resolved_sources: list[str] = []
         for source in sources:
-            normalized = strip_generator_expressions(source)
-            if not normalized:
-                continue
-            resolved_sources.extend(
-                [
-                    ctx.resolve_path(item)
-                    for item in normalized.split(";")
-                    if item and item.strip()
-                ]
-            )
+            resolved_sources.extend(_resolve_sources(ctx, source))
         include_directories = _collect_directory_include_dirs(ctx)
         default_properties = _default_target_properties(ctx)
         if exclude_from_all:
@@ -1682,12 +1685,7 @@ def handle_add_executable(
             if source == "EXCLUDE_FROM_ALL":
                 default_properties["EXCLUDE_FROM_ALL"] = "TRUE"
                 continue
-            normalized = strip_generator_expressions(source)
-            if not normalized:
-                continue
-            sources.extend(
-                [ctx.resolve_path(item) for item in normalized.split(";") if item]
-            )
+            sources.extend(_resolve_sources(ctx, source))
         include_directories = _collect_directory_include_dirs(ctx)
         ctx.executables.append(
             Executable(

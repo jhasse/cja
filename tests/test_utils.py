@@ -133,6 +133,17 @@ def test_strip_generator_expressions_link_library() -> None:
     assert strip_generator_expressions("$<LINK_LIBRARY:DEFAULT,m,dl>") == "m;dl"
 
 
+def test_strip_generator_expressions_target_objects() -> None:
+    """$<TARGET_OBJECTS:tgt> is what it's told that target's objects are,
+    and nothing if it isn't told."""
+    value = "main.c;$<TARGET_OBJECTS:objs>"
+    assert strip_generator_expressions(value) == "main.c;"
+    assert (
+        strip_generator_expressions(value, target_objects=lambda target: f"{target}.o")
+        == "main.c;objs.o"
+    )
+
+
 def test_strip_generator_expressions_target_file() -> None:
     """$<TARGET_FILE:name> should resolve to the target's output file path."""
     target_files = {"myapp": "$builddir/myapp", "mylib": "$builddir/libmylib.a"}

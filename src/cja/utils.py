@@ -444,6 +444,20 @@ _LINK_LIBRARY_FEATURES = {
     "REEXPORT_FRAMEWORK": "-Wl,-reexport_framework,{}",
 }
 
+_TARGET_OBJECTS = re.compile(r"\$<TARGET_OBJECTS:([^<>;]+)>")
+
+
+def target_objects_genex(target: str) -> str:
+    """``$<TARGET_OBJECTS:target>``, as it's kept among a target's sources."""
+    return f"$<TARGET_OBJECTS:{target}>"
+
+
+def target_objects_target(source: str) -> str | None:
+    """The target whose objects a source stands for, if it's
+    ``$<TARGET_OBJECTS:tgt>``, else None."""
+    match = _TARGET_OBJECTS.fullmatch(source)
+    return match.group(1) if match else None
+
 
 def strip_generator_expressions(
     value: str,
@@ -452,11 +466,15 @@ def strip_generator_expressions(
     target_files: dict[str, str] | None = None,
     compile_language: str | None = None,
     target_property: Callable[[str, str], str | None] | None = None,
+    target_objects: Callable[[str], str] | None = None,
 ) -> str:
     """Strip or evaluate common CMake generator expressions.
 
     ``target_property`` looks up ``$<TARGET_PROPERTY:tgt,prop>``; without it
     (or for the current target's ``$<TARGET_PROPERTY:prop>``) that is empty.
+
+    ``target_objects`` gives what ``$<TARGET_OBJECTS:tgt>`` becomes; without
+    it that is empty too.
 
     ``compile_language`` is the language being compiled (e.g. ``"C"``,
     ``"CXX"``, ``"ASM"``).  When provided, ``$<COMPILE_LANGUAGE:LANG[,...]>``
@@ -582,6 +600,10 @@ def strip_generator_expressions(
                 expand_text(prop_args[0]), expand_text(prop_args[1])
             )
             return value or ""
+        if content.startswith("TARGET_OBJECTS:"):
+            if target_objects is None:
+                return ""
+            return target_objects(expand_text(content[len("TARGET_OBJECTS:") :]))
         if content.startswith("LINK_LIBRARY:"):
             feature, *libraries = split_top_level(
                 content[len("LINK_LIBRARY:") :], ","

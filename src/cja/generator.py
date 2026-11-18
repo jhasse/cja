@@ -35,6 +35,7 @@ from .utils import (
     resolve_cmake_path,
     split_flags,
     strip_generator_expressions,
+    target_objects_target,
     to_posix_path,
     write_if_changed,
 )
@@ -1401,6 +1402,14 @@ def generate_ninja(
         lib_outputs: dict[str, str] = {}
         exe_outputs: dict[str, str] = {}
         object_lib_objects: dict[str, list[str]] = {}
+        # The objects compiled from each library's own sources, which is what
+        # $<TARGET_OBJECTS:...> among another target's sources stands for
+        library_objects: dict[str, list[str]] = {}
+        # The libraries each target has the objects of among its sources
+        target_object_sources: dict[str, list[str]] = {}
+        # Static libraries with such sources: (library, output, objects,
+        # order-only dependencies)
+        static_archives: list[tuple[Library, str, list[str], list[str]]] = []
         # Shared/module libraries to link: (library, output, rule, objects,
         # order-only dependencies, MSVC runtime flag)
         shared_links: list[tuple[Library, str, str, list[str], list[str], str | None]] = []
@@ -1945,6 +1954,73 @@ def generate_ninja(
                     combined.extend(dep_lib.interface_sources)
             return list(dict.fromkeys(combined))
 
+        def _split_target_objects(
+            target: Library | Executable, sources: list[str]
+        ) -> list[str]:
+            """A target's sources without the ``$<TARGET_OBJECTS:tgt>`` among
+            them, which are noted for _target_objects()."""
+            files: list[str] = []
+            libraries: list[str] = []
+            for source in sources:
+                library = target_objects_target(source)
+                if library is None:
+                    files.append(source)
+                else:
+                    libraries.append(library)
+            target_object_sources[target.name] = libraries
+            return files
+
+        def _target_objects(
+            target: Library | Executable, link_inputs: list[str] | None = None
+        ) -> list[str]:
+            """The objects of the libraries a target has as
+            ``$<TARGET_OBJECTS:tgt>`` among its sources, to archive or link
+            along with its own. Only once all libraries have been generated,
+            as the ones it names can be defined after it.
+
+            Without those already among ``link_inputs``, as the objects of an
+            object library that's linked too.
+            """
+            objects: list[str] = []
+            for name in target_object_sources.get(target.name, []):
+                library = ctx.get_library(name)
+                if library is not None and library.name in library_objects:
+                    objects.extend(library_objects[library.name])
+                    continue
+                if library is None and name in ctx.imported_targets:
+                    # Like CMake, which knows no objects of an imported library
+                    # either, unless it's an object library.
+                    continue
+                loc = format_origin(target.defined_file, target.defined_line)
+                message = (
+                    f"{target.name} has $<TARGET_OBJECTS:{name}> among its sources, but"
+                )
+                if ctx.get_executable(name) is not None:
+                    # Which CMake takes the objects of too
+                    label = error_label if strict else warning_label
+                    print(
+                        f"{loc}: {label} {message} the objects of an executable "
+                        "aren't supported",
+                        file=sys.stderr,
+                    )
+                    if strict:
+                        raise SystemExit(1)
+                    continue
+                # CMake doesn't configure such a project either.
+                if library is None and all(
+                    custom.name != name for custom in ctx.custom_targets
+                ):
+                    message += f" there's no target {name}"
+                else:
+                    message += f" {name} isn't a library with objects"
+                print(f"{loc}: {error_label} {message}", file=sys.stderr)
+                raise SystemExit(1)
+            return [
+                obj
+                for obj in dict.fromkeys(objects)
+                if link_inputs is None or obj not in link_inputs
+            ]
+
         def _generated_source_deps(sources: list[str]) -> list[str]:
             """Ninja nodes for custom-command outputs listed among target sources.
 
@@ -2209,8 +2285,11 @@ def generate_ninja(
                 lib_compile_flags, lib_system_dirs, ctx.source_dir, implicit_include_dirs
             )
 
-            lib_sources = _sources_with_interface_sources(
-                lib.sources, expanded_lib_link_libraries
+            lib_sources = _split_target_objects(
+                lib,
+                _sources_with_interface_sources(
+                    lib.sources, expanded_lib_link_libraries
+                ),
             )
             # Filter out headers, .rc, and .manifest files from compileable sources
             compileable_sources: list[str] = [
@@ -2339,6 +2418,7 @@ def generate_ninja(
                     validation=tidy_stamp,
                 )
 
+            library_objects[lib.name] = objects
             if lib.lib_type == "OBJECT":
                 # Object libraries don't produce an archive, just track objects
                 object_lib_objects[lib.name] = objects
@@ -2347,13 +2427,20 @@ def generate_ninja(
                 # Create static library archive
                 lib_name = target_files[lib.name]
                 register_output(lib_name, lib.defined_file, lib.defined_line)
-                n.build(
-                    lib_name,
-                    "ar",
-                    objects,
-                    order_only=lib_dep_order_only or None,
-                )
-                n.newline()
+                if target_object_sources[lib.name]:
+                    # Archived once the objects of all libraries are known, as
+                    # the ones it has among its sources can be defined later.
+                    static_archives.append(
+                        (lib, lib_name, objects, lib_dep_order_only)
+                    )
+                else:
+                    n.build(
+                        lib_name,
+                        "ar",
+                        objects,
+                        order_only=lib_dep_order_only or None,
+                    )
+                    n.newline()
                 lib_outputs[lib.name] = lib_name
             elif lib.lib_type in ("SHARED", "MODULE"):
                 # Create shared/module library output so aliases can resolve to real artifacts.
@@ -2376,10 +2463,20 @@ def generate_ninja(
             if lib.is_alias and lib.alias_for in lib_outputs:
                 lib_outputs[lib.name] = lib_outputs[lib.alias_for]
 
+        for lib, lib_name, objects, order_only in static_archives:
+            n.build(
+                lib_name,
+                "ar",
+                [*objects, *_target_objects(lib)],
+                order_only=order_only or None,
+            )
+            n.newline()
+
         for lib, lib_name, link_rule, objects, order_only, runtime_flag in shared_links:
             lib_link_inputs, lib_link_flags = link_libraries_inputs_and_flags(
                 lib, order_link_libraries(lib.link_libraries)
             )
+            objects = [*objects, *_target_objects(lib, lib_link_inputs)]
             if runtime_flag:
                 lib_link_flags.append(_MSVC_RUNTIME_LINK_FLAG)
             # Like CMake, set the soname (install name on macOS) so that
@@ -2524,8 +2621,11 @@ def generate_ninja(
                 compile_flags, exe_system_dirs, ctx.source_dir, implicit_include_dirs
             )
 
-            exe_sources = _sources_with_interface_sources(
-                exe.sources, expanded_compile_libraries
+            exe_sources = _split_target_objects(
+                exe,
+                _sources_with_interface_sources(
+                    exe.sources, expanded_compile_libraries
+                ),
             )
             # Filter out headers, .rc, and .manifest files from compileable sources
             compileable_sources: list[str] = [
@@ -2660,7 +2760,11 @@ def generate_ninja(
             lib_link_inputs, link_flags = link_libraries_inputs_and_flags(
                 exe, expanded_link_libraries
             )
-            link_inputs = [*objects, *lib_link_inputs]
+            link_inputs = [
+                *objects,
+                *_target_objects(exe, lib_link_inputs),
+                *lib_link_inputs,
+            ]
 
             # On Windows, compile .rc files to .res and add to link inputs
             if rc_sources and platform.system() == "Windows":
