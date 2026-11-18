@@ -435,6 +435,16 @@ def compare_versions(left: str, right: str) -> int:
         i, j = left_match.end(), right_match.end()
 
 
+# How $<LINK_LIBRARY:feature,...> links each of its libraries
+_LINK_LIBRARY_FEATURES = {
+    "DEFAULT": "{}",
+    "FRAMEWORK": "-framework {}",
+    "WEAK_FRAMEWORK": "-Wl,-weak_framework,{}",
+    "NEEDED_FRAMEWORK": "-Wl,-needed_framework,{}",
+    "REEXPORT_FRAMEWORK": "-Wl,-reexport_framework,{}",
+}
+
+
 def strip_generator_expressions(
     value: str,
     variables: dict[str, str] | None = None,
@@ -572,6 +582,18 @@ def strip_generator_expressions(
                 expand_text(prop_args[0]), expand_text(prop_args[1])
             )
             return value or ""
+        if content.startswith("LINK_LIBRARY:"):
+            feature, *libraries = split_top_level(
+                content[len("LINK_LIBRARY:") :], ","
+            )
+            link_format = _LINK_LIBRARY_FEATURES.get(expand_text(feature))
+            if link_format is not None:
+                return ";".join(
+                    link_format.format(library)
+                    for item in libraries
+                    for library in expand_text(item).split(";")
+                    if library
+                )
         if content == "CONFIG":
             return variables.get("CMAKE_BUILD_TYPE", "")
         if content.startswith("CONFIG:"):

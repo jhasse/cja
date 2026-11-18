@@ -120,6 +120,19 @@ def test_strip_generator_expressions_compiler_version_condition() -> None:
     assert strip_generator_expressions(value, variables) == "stdc++fs"
 
 
+def test_strip_generator_expressions_link_library() -> None:
+    """$<LINK_LIBRARY:feature,...> links each library the way the feature says."""
+    assert (
+        strip_generator_expressions("$<LINK_LIBRARY:FRAMEWORK,Cocoa,IOKit;Metal>")
+        == "-framework Cocoa;-framework IOKit;-framework Metal"
+    )
+    assert (
+        strip_generator_expressions("$<LINK_LIBRARY:WEAK_FRAMEWORK,CoreHaptics>")
+        == "-Wl,-weak_framework,CoreHaptics"
+    )
+    assert strip_generator_expressions("$<LINK_LIBRARY:DEFAULT,m,dl>") == "m;dl"
+
+
 def test_strip_generator_expressions_target_file() -> None:
     """$<TARGET_FILE:name> should resolve to the target's output file path."""
     target_files = {"myapp": "$builddir/myapp", "mylib": "$builddir/libmylib.a"}

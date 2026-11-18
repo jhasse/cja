@@ -332,3 +332,30 @@ def test_shared_library_soname_and_rpath(tmp_path: Path) -> None:
 
     assert "-Wl,-soname,libcore.so" in content
     assert f"-Wl,-rpath,{(tmp_path / 'build').as_posix()}" in content
+
+
+def test_target_link_libraries_link_library_framework(tmp_path: Path) -> None:
+    """$<LINK_LIBRARY:FRAMEWORK,...> is linked with -framework, not -l."""
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    commands = [
+        Command(name="add_library", args=["mylib", "STATIC", "lib.c"], line=1),
+        Command(
+            name="target_link_libraries",
+            args=[
+                "mylib",
+                "PRIVATE",
+                "$<LINK_LIBRARY:FRAMEWORK,Cocoa>",
+                "$<LINK_LIBRARY:WEAK_FRAMEWORK,CoreHaptics>",
+            ],
+            line=2,
+        ),
+        Command(name="add_executable", args=["app", "main.c"], line=3),
+        Command(name="target_link_libraries", args=["app", "PRIVATE", "mylib"], line=4),
+    ]
+    process_commands(commands, ctx, strict=True)
+
+    ninja_file = tmp_path / "build.ninja"
+    generate_ninja(ctx, ninja_file, "build")
+    content = re.sub(r"\$\n\s*", "", ninja_file.read_text())
+    libs = next(line for line in content.splitlines() if line.strip().startswith("libs ="))
+    assert libs.endswith(" -framework Cocoa -Wl,-weak_framework,CoreHaptics")
