@@ -20,8 +20,14 @@ EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
 
 # Examples that need a package installed on the system. They're skipped when
 # cja reports the package missing; any other failure still fails the test.
-SYSTEM_PACKAGE_EXAMPLES = {"boost", "freetype", "gtest", "openssl", "qt5"}
-MISSING_PACKAGE = re.compile(r"could not find (?:package|modules): (\S+)")
+# SDL only needs some on Linux, where it refuses to build without X11 or
+# Wayland, or with X11 but without one of its extensions.
+SYSTEM_PACKAGE_EXAMPLES = {"boost", "freetype", "gtest", "openssl", "qt5", "sdl"}
+MISSING_PACKAGE = re.compile(
+    r"could not find (?:package|modules): (\S+)"
+    r"|could not find (X11 or Wayland) development libraries"
+    r"|Couldn't find dependency package for (\w+)"
+)
 
 # Covered by test_clang_tidy_example, which expects the build to fail.
 CLANG_TIDY_EXAMPLE = "clang-tidy"
@@ -82,7 +88,7 @@ def test_example_builds(name: str, tmp_path: Path) -> None:
     if result.returncode != 0 and name in SYSTEM_PACKAGE_EXAMPLES:
         missing = MISSING_PACKAGE.search(output)
         if missing:
-            pytest.skip(f"{missing.group(1)} not installed")
+            pytest.skip(f"{missing.group(missing.lastindex or 0)} not installed")
     assert result.returncode == 0, output
 
 
