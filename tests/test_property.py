@@ -385,3 +385,28 @@ def test_set_property_empty_value_unsets() -> None:
     ]
     process_commands(commands, ctx)
     assert "MY_PROP" not in ctx.global_properties
+
+
+def test_get_cmake_property() -> None:
+    """get_cmake_property() lists variables and reads global properties."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    commands = [
+        Command(name="set", args=["B_NORMAL", "1"], line=1),
+        Command(name="set", args=["A_CACHED", "1", "CACHE", "BOOL", ""], line=2),
+        Command(name="set", args=["REMOVED", "1"], line=3),
+        Command(name="unset", args=["REMOVED"], line=4),
+        Command(name="set_property", args=["GLOBAL", "PROPERTY", "MY_PROP", "x"], line=5),
+        Command(name="get_cmake_property", args=["VARS", "VARIABLES"], line=6),
+        Command(name="get_cmake_property", args=["CACHED", "CACHE_VARIABLES"], line=7),
+        Command(name="get_cmake_property", args=["PROP", "MY_PROP"], line=8),
+        Command(name="get_cmake_property", args=["MISSING", "NO_SUCH_PROP"], line=9),
+    ]
+    process_commands(commands, ctx, strict=True)
+
+    variables = ctx.variables["VARS"].split(";")
+    assert variables == sorted(variables)
+    assert {"A_CACHED", "B_NORMAL"} <= set(variables)
+    assert "REMOVED" not in variables
+    assert ctx.variables["CACHED"].split(";") == ["A_CACHED"]
+    assert ctx.variables["PROP"] == "x"
+    assert ctx.variables["MISSING"] == "NOTFOUND"

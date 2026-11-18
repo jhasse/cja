@@ -2210,6 +2210,31 @@ int main() {{
                 # and has no effect on property values, so it is a no-op here.
                 pass
 
+            case "get_cmake_property":
+                # get_cmake_property(<variable> <property>)
+                if len(args) == 2:
+                    var_name, prop_name = args
+                    ctx.check_unsupported_args(
+                        cmd,
+                        [prop_name]
+                        if prop_name in ("COMMANDS", "COMPONENTS", "MACROS")
+                        else [],
+                        strict,
+                    )
+                    if prop_name == "VARIABLES":
+                        value: str | None = ";".join(
+                            sorted(
+                                name
+                                for name, var_value in ctx.variables.items()
+                                if var_value != UNDEFINED_VAR_SENTINEL
+                            )
+                        )
+                    elif prop_name == "CACHE_VARIABLES":
+                        value = ";".join(sorted(ctx.cache_values))
+                    else:
+                        value = ctx.global_properties.get(prop_name)
+                    ctx.variables[var_name] = "NOTFOUND" if value is None else value
+
             case "get_directory_property":
                 handle_get_directory_property(ctx, cmd, args, strict)
 
