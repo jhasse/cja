@@ -3943,7 +3943,7 @@ def handle_file(
 def _is_full_path(path: str) -> bool:
     """Whether CMake takes a path as a full one, e.g. for file(RELATIVE_PATH)."""
     if sys.platform == "win32":
-        return len(path) >= 2 and (path[1] == ":" or path[0] in "/\\")
+        return path.startswith(("/", "\\")) or path[1:2] == ":"
     return path.startswith(("/", "~"))
 
 
