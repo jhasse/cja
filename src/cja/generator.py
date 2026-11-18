@@ -3103,6 +3103,13 @@ def configure(
     else:
         ctx.variables["CMAKE_SYSTEM_NAME"] = "Linux"
         ctx.variables["UNIX"] = "TRUE"
+    # Like "uname -r"; on Windows that's the full version instead of "11"
+    ctx.variables["CMAKE_SYSTEM_VERSION"] = (
+        platform.version() if host_system == "Windows" else platform.release()
+    )
+    ctx.variables["CMAKE_SYSTEM"] = "-".join(
+        ctx.variables[name] for name in ("CMAKE_SYSTEM_NAME", "CMAKE_SYSTEM_VERSION")
+    )
 
     # cja only builds for 64-bit targets.
     ctx.variables["CMAKE_SIZEOF_VOID_P"] = "8"

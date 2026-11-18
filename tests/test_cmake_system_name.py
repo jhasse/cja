@@ -23,6 +23,22 @@ def test_cmake_system_name(tmp_path: Path) -> None:
     assert ctx.variables["CMAKE_SYSTEM_NAME"] == expected_system_name
 
 
+def test_cmake_system(tmp_path: Path) -> None:
+    """CMAKE_SYSTEM is the system's name and version, e.g. Linux-6.17.4."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    (source_dir / "CMakeLists.txt").write_text("project(test_system)")
+
+    ctx = configure(source_dir, "build")
+
+    version = ctx.variables["CMAKE_SYSTEM_VERSION"]
+    assert version[0].isdigit()
+    assert "." in version
+    assert ctx.variables["CMAKE_SYSTEM"] == (
+        f"{ctx.variables['CMAKE_SYSTEM_NAME']}-{version}"
+    )
+
+
 def test_cmake_host_system_processor(tmp_path: Path) -> None:
     """Test that CMAKE_HOST_SYSTEM_PROCESSOR is set."""
     source_dir = tmp_path / "src"
