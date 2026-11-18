@@ -708,6 +708,16 @@ def _relative_path(tmp_path: Path, *args: str, strict: bool = False) -> str | No
     return ctx.variables.get("v")
 
 
+# Like in CMake, a full path has at least two characters on Windows, so a lone
+# slash is the root everywhere else, but not a full path there.
+slash_is_root = pytest.mark.skipif(
+    sys.platform == "win32", reason="/ isn't a full path on Windows"
+)
+slash_isnt_full_path = pytest.mark.skipif(
+    sys.platform != "win32", reason="/ is a full path except on Windows"
+)
+
+
 @pytest.mark.parametrize(
     ("directory", "file", "expected"),
     [
@@ -716,9 +726,9 @@ def _relative_path(tmp_path: Path, *args: str, strict: bool = False) -> str | No
         ("/a/b", "/a/c", "../c"),
         # Like in CMake, a path that only goes up ends with a slash
         ("/a/b/c", "/a", "../../"),
-        ("/a/b", "/", "../../"),
+        pytest.param("/a/b", "/", "../../", marks=slash_is_root),
         ("/a/", "/a/b/", "b"),
-        ("/", "/a/b", "a/b"),
+        pytest.param("/", "/a/b", "a/b", marks=slash_is_root),
         ("/a/./b/../c", "/a/d", "../d"),
         ("/a//b", "/a/b/c", "c"),
         ("/..", "/a", "a"),
@@ -769,6 +779,16 @@ def test_file_relative_path_drives(tmp_path: Path) -> None:
     [
         (["rel", "/a"], "must be passed a full path to the directory: rel"),
         (["/a", "rel"], "must be passed a full path to the file: rel"),
+        pytest.param(
+            ["/", "/a"],
+            "must be passed a full path to the directory: /",
+            marks=slash_isnt_full_path,
+        ),
+        pytest.param(
+            ["/a", "/"],
+            "must be passed a full path to the file: /",
+            marks=slash_isnt_full_path,
+        ),
         (["/a"], "called with incorrect number of arguments"),
         (["/a", "/b", "/c"], "called with incorrect number of arguments"),
     ],
