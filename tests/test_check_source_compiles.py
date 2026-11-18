@@ -186,3 +186,40 @@ def test_check_source_code_is_evaluated_twice() -> None:
     assert ctx.variables["ESCAPES"] == "1"
     assert ctx.variables["VARIABLE"] == "1"
     assert ctx.variables["ESCAPED_VARIABLE"] == ""
+
+
+def test_check_objc_source_compiles(monkeypatch) -> None:
+    """Objective-C(++) checks compile .m/.mm files with the C/C++ compiler."""
+    calls: list[list[str]] = []
+
+    def fake_run(
+        cmd: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(configurator.subprocess, "run", fake_run)
+
+    content = (
+        "include(CheckOBJCSourceCompiles)\n"
+        "include(CheckOBJCXXSourceCompiles)\n"
+        "check_objc_source_compiles([==[\n"
+        "#import <Foundation/Foundation.h>\n"
+        "int main(void) { return 0; }\n"
+        "]==] HAVE_OBJC)\n"
+        "check_objcxx_source_compiles([==[\n"
+        "#import <Foundation/Foundation.h>\n"
+        "int main() { return 0; }\n"
+        "]==] HAVE_OBJCXX)\n"
+    )
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    ctx.c_compiler = "my-cc"
+    ctx.cxx_compiler = "my-c++"
+    process_commands(parse(content), ctx, strict=True)
+
+    assert ctx.variables["HAVE_OBJC"] == "1"
+    assert ctx.variables["HAVE_OBJCXX"] == "1"
+    assert [(cmd[0], Path(cmd[-1]).suffix) for cmd in calls] == [
+        ("my-cc", ".m"),
+        ("my-c++", ".mm"),
+    ]

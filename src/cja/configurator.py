@@ -149,8 +149,8 @@ def _check_source_compiles(
     import re
     import tempfile
 
-    compiler = ctx.cxx_compiler if language == "CXX" else ctx.c_compiler
-    suffix = ".cpp" if language == "CXX" else ".c"
+    compiler = ctx.cxx_compiler if language in ("CXX", "OBJCXX") else ctx.c_compiler
+    suffix = {"CXX": ".cpp", "OBJC": ".m", "OBJCXX": ".mm"}.get(language, ".c")
 
     def _as_list(name: str, split_words: bool = True) -> list[str]:
         raw = ctx.variables.get(name, "")
@@ -310,7 +310,7 @@ def _check_linker_flag(ctx: "BuildContext", language: str, flag: str) -> bool:
 
 
 def _parse_source_check_args(args: list[str]) -> tuple[str, str, list[str]]:
-    """Parse check_(c|cxx)_source_compiles(<code> <var> [FAIL_REGEX <re>...])."""
+    """Parse check_<lang>_source_compiles(<code> <var> [FAIL_REGEX <re>...])."""
     code = args[0]
     result_var = args[1]
     fail_regexes: list[str] = []
@@ -1494,6 +1494,10 @@ def process_commands(
                         "CheckCXXSourceCompiles",
                         "CheckCSourceRuns",
                         "CheckCXXSourceRuns",
+                        "CheckOBJCSourceCompiles",
+                        "CheckOBJCXXSourceCompiles",
+                        "CheckOBJCSourceRuns",
+                        "CheckOBJCXXSourceRuns",
                         "CheckLinkerFlag",
                         "CheckStructHasMember",
                         "CMakePushCheckState",
@@ -1838,10 +1842,14 @@ def process_commands(
             case (
                 "check_c_source_compiles"
                 | "check_cxx_source_compiles"
+                | "check_objc_source_compiles"
+                | "check_objcxx_source_compiles"
                 | "check_c_source_runs"
                 | "check_cxx_source_runs"
+                | "check_objc_source_runs"
+                | "check_objcxx_source_runs"
             ):
-                # check_(c|cxx)_source_(compiles|runs)(<code> <var>
+                # check_(c|cxx|objc|objcxx)_source_(compiles|runs)(<code> <var>
                 #                                      [FAIL_REGEX <re>...])
                 if len(args) >= 2:
                     if "SRC_EXT" in args[2:]:
@@ -1852,7 +1860,7 @@ def process_commands(
                     code = ctx.expand_variables(
                         unescape_quoted_argument(code), strict, cmd.line
                     )
-                    language = "CXX" if cmd.name.startswith("check_cxx_") else "C"
+                    language = cmd.name.split("_")[1].upper()
                     run = cmd.name.endswith("_runs")
                     success = _check_source_compiles(
                         ctx, code, language, fail_regexes, run=run
