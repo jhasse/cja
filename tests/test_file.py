@@ -676,3 +676,25 @@ def test_file_download_strict_unsupported(tmp_path: Path) -> None:
 
     with pytest.raises(SystemExit):
         _download(tmp_path, remote.as_uri(), "out.txt", "RANGE_START", "1", strict=True)
+
+
+def test_file_read_symlink(tmp_path: Path) -> None:
+    """file(READ_SYMLINK) stores the path a symlink points to, as written."""
+    (tmp_path / "libfoo.so.1").touch()
+    try:
+        (tmp_path / "libfoo.so").symlink_to("libfoo.so.1")
+    except OSError:
+        pytest.skip("creating symlinks isn't permitted")
+
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    commands = [
+        Command(name="file", args=["READ_SYMLINK", "libfoo.so", "TARGET"], line=1),
+    ]
+    process_commands(commands, ctx, strict=True)
+    assert ctx.variables["TARGET"] == "libfoo.so.1"
+
+    commands = [
+        Command(name="file", args=["READ_SYMLINK", "libfoo.so.1", "TARGET"], line=1),
+    ]
+    with pytest.raises(SystemExit):
+        process_commands(commands, ctx)

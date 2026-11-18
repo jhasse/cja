@@ -3772,6 +3772,19 @@ def handle_file(
             p.parent.mkdir(parents=True, exist_ok=True)
             p.touch()
 
+    elif subcommand == "READ_SYMLINK":
+        # file(READ_SYMLINK <linkname> <variable>)
+        if len(args) >= 3:
+            link = ctx.current_source_dir / args[1]
+            try:
+                ctx.variables[args[2]] = to_posix_path(os.readlink(link))
+            except OSError:
+                ctx.print_error(
+                    f"file(READ_SYMLINK) requested of path that is not a symlink: {link}",
+                    cmd.line,
+                )
+                sys.exit(1)
+
     elif subcommand == "LOCK":
         # file(LOCK <path> [DIRECTORY] [RELEASE] [GUARD <FUNCTION|FILE|PROCESS>] [RESULT_VARIABLE <variable>] [TIMEOUT <seconds>])
         # Stub for now, just succeeds
