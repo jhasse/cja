@@ -1,6 +1,7 @@
 """Tests for find_program command."""
 
 import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -233,6 +234,7 @@ find_program(PROG tool VALIDATOR check NO_DEFAULT_PATH
     assert ctx.variables["candidates"] == f"{rejected.as_posix()};{accepted.as_posix()}"
 
 
+@pytest.mark.skipif(shutil.which("sh") is None, reason="sh not found")
 def test_find_program_supported_args_in_strict_mode() -> None:
     """Empty HINTS and arguments without effect are fine in strict mode."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))

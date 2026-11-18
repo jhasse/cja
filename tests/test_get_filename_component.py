@@ -1,6 +1,9 @@
 """Tests for get_filename_component command."""
 
+import shutil
 from pathlib import Path
+
+import pytest
 
 from cja.generator import configure
 
@@ -58,6 +61,7 @@ def test_get_filename_component_extensions(tmp_path: Path) -> None:
     ]
 
 
+@pytest.mark.skipif(shutil.which("sh") is None, reason="sh not found")
 def test_get_filename_component_program_and_cache(tmp_path: Path) -> None:
     (tmp_path / "CMakeLists.txt").write_text(
         'get_filename_component(abs "/x/y/../z/./w" ABSOLUTE)\n'
