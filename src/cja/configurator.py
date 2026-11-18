@@ -119,6 +119,7 @@ from .utils import (
     link_option_args,
     make_relative,
     resolve_cmake_path,
+    split_flags,
     split_unquoted_list_args,
     status_marker,
     to_posix_path,
@@ -180,8 +181,19 @@ def _check_source_compiles(
     # names (on Windows), file paths, or already-formed flags; translate the
     # first two while leaving the rest untouched.
     translated_libraries: list[str] = []
-    for lib in required_libraries:
-        if lib.startswith("-") or "/" in lib or os.sep in lib:
+    imported_cflags: list[str] = []
+    seen_imported: set[str] = set()
+    while required_libraries:
+        lib = required_libraries.pop(0)
+        imported = ctx.imported_targets.get(lib)
+        if imported is not None:
+            # An imported target stands for its usage requirements
+            if lib not in seen_imported:
+                seen_imported.add(lib)
+                imported_cflags.extend(split_flags(imported.cflags))
+                translated_libraries.extend(split_flags(imported.libs))
+                required_libraries[:0] = imported.link_targets
+        elif lib.startswith("-") or "/" in lib or os.sep in lib:
             translated_libraries.append(lib)
         elif lib.lower().endswith(".lib") and Path(lib).name == lib:
             translated_libraries.append(f"-l{lib[:-4]}")
@@ -206,6 +218,7 @@ def _check_source_compiles(
     cmd: list[str] = [compiler]
     cmd.extend(required_flags)
     cmd.extend(required_defs)
+    cmd.extend(imported_cflags)
     for inc in required_includes:
         cmd.append(f"-I{inc}")
     if compile_only:

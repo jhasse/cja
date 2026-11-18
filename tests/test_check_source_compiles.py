@@ -223,3 +223,38 @@ def test_check_objc_source_compiles(monkeypatch) -> None:
         ("my-cc", ".m"),
         ("my-c++", ".mm"),
     ]
+
+
+def test_check_source_compiles_required_imported_target(monkeypatch) -> None:
+    """An imported target in CMAKE_REQUIRED_LIBRARIES stands for its include
+    directories and libraries, including those of the targets it links."""
+    calls: list[list[str]] = []
+
+    def fake_run(
+        cmd: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(configurator.subprocess, "run", fake_run)
+
+    content = (
+        "add_library(Dep::dep UNKNOWN IMPORTED)\n"
+        "set_target_properties(Dep::dep PROPERTIES\n"
+        "  IMPORTED_LOCATION /opt/dep/lib/libdep.a)\n"
+        "add_library(Foo::foo UNKNOWN IMPORTED)\n"
+        "set_target_properties(Foo::foo PROPERTIES\n"
+        "  IMPORTED_LOCATION /opt/foo/lib/libfoo.a\n"
+        "  INTERFACE_INCLUDE_DIRECTORIES /opt/foo/include\n"
+        "  INTERFACE_LINK_LIBRARIES Dep::dep)\n"
+        "set(CMAKE_REQUIRED_LIBRARIES Foo::foo m)\n"
+        "check_c_source_compiles([==[\n"
+        "int main(void) { return 0; }\n"
+        "]==] HAVE_FOO)\n"
+    )
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    process_commands(parse(content), ctx, strict=True)
+
+    assert ctx.variables["HAVE_FOO"] == "1"
+    assert "-I/opt/foo/include" in calls[0]
+    assert calls[0][-3:] == ["/opt/foo/lib/libfoo.a", "/opt/dep/lib/libdep.a", "-lm"]
