@@ -1501,6 +1501,14 @@ def generate_ninja(
                 "INTERFACE",
             ):
                 target_files[target.name] = f"{ninja_dir}/{file_name}"
+        # Imported executables are run from where they are.
+        imported_executables: dict[str, str] = {}
+        for name, imported in ctx.imported_targets.items():
+            location = imported.location(build_type) if imported.executable else None
+            if location:
+                imported_executables[name] = location
+                target_files[name] = location
+                target_file_dirs[name] = location.rpartition("/")[0]
 
         def _resolve_target_dep(name: str) -> str | None:
             """Resolve a target name to a ninja node for use as an order-only dep."""
@@ -1599,14 +1607,19 @@ def generate_ninja(
                 )
                 for c in command
             ]
-            if expanded and expanded[0] in target_files:
+            runs_target = bool(expanded) and expanded[0] in target_files
+            if runs_target:
                 expanded[0] = _absolute_target_file(target_files[expanded[0]])
             parts = []
-            for arg in expanded:
+            for index, arg in enumerate(expanded):
                 if ctx.cja_cmd and arg == ctx.variables.get("CMAKE_COMMAND"):
                     # Expand to the real argv so neither a multi-word command
                     # nor a path with spaces gets mangled.
                     parts.extend(_quote_ninja_cmd_part(p) for p in ctx.cja_cmd)
+                elif runs_target and index == 0:
+                    # The file of a target is one argument, also without
+                    # VERBATIM, e.g. an imported one below "Program Files".
+                    parts.append(_quote_ninja_cmd_part(arg))
                 elif verbatim and arg not in shell_operators:
                     parts.append(_quote_ninja_cmd_part(str(arg)))
                 else:
@@ -2929,6 +2942,9 @@ def generate_ninja(
                     target_files_resolved[target.name] = to_posix_path(
                         f"{directory}/{file_name}"
                     )
+            for name, location in imported_executables.items():
+                target_file_dirs_resolved[name] = target_file_dirs[name]
+                target_files_resolved[name] = location
 
             def _expand_genex_for_test(arg: str) -> str:
                 return strip_generator_expressions(
@@ -3000,6 +3016,8 @@ def generate_ninja(
                     else:
                         cmd[0] = target_exe
                     depends.append(target_exe)
+                elif exe_name in imported_executables:
+                    cmd[0] = _quote_test_arg(imported_executables[exe_name])
 
                 cmd_str = " ".join(cmd)
 

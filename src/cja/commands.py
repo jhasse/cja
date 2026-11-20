@@ -867,7 +867,10 @@ def _apply_imported_target_property(
     imported_target.properties[prop_name] = (
         f"{previous};{prop_value}" if previous and prop_value else prop_value
     )
-    if prop_name.startswith(("IMPORTED_LOCATION", "IMPORTED_IMPLIB")):
+    if imported_target.executable:
+        # Nothing to link: its location is looked up when it's run.
+        pass
+    elif prop_name.startswith(("IMPORTED_LOCATION", "IMPORTED_IMPLIB")):
         if prop_value:
             # Paths derived from CMAKE_CURRENT_LIST_DIR use native separators
             imported_target.libs = join_flags(
@@ -1660,11 +1663,22 @@ def handle_add_executable(
     strict: bool,
 ) -> None:
     """Handle add_executable() command."""
-    if len(args) >= 2 and args[1] in ("IMPORTED", "ALIAS"):
-        # Imported and alias executables can't be used in commands yet.
+    if len(args) >= 2 and args[1] == "IMPORTED":
+        # add_executable(<name> IMPORTED [GLOBAL]): commands and tests run the
+        # file its IMPORTED_LOCATION is set to afterwards.
+        if args[0] not in ctx.imported_targets:
+            ctx.imported_targets[args[0]] = ImportedTarget(
+                executable=True,
+                properties={
+                    "TYPE": "EXECUTABLE",
+                    "IMPORTED": "TRUE",
+                    "IMPORTED_GLOBAL": "TRUE" if "GLOBAL" in args[2:] else "FALSE",
+                },
+            )
+        return
+    if len(args) >= 2 and args[1] == "ALIAS":
+        # Alias executables can't be used in commands yet.
         ctx.check_unsupported_args(cmd, [args[1]], strict)
-        if args[1] == "IMPORTED" and args[0] not in ctx.imported_targets:
-            ctx.imported_targets[args[0]] = ImportedTarget()
         return
     if args:
         # Without sources here, they're usually added with target_sources().

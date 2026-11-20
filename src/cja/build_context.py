@@ -352,8 +352,15 @@ class BuildContext:
             return target.properties.get(prop)
         imported = self.imported_targets.get(name)
         if imported is not None:
+            if prop == "LOCATION" and imported.executable:
+                return imported.location(self.variables.get("CMAKE_BUILD_TYPE", ""))
             return imported.properties.get(prop)
         return None
+
+    def is_imported_executable(self, name: str) -> bool:
+        """Whether it's a target from add_executable(<name> IMPORTED)."""
+        imported = self.imported_targets.get(name)
+        return imported is not None and imported.executable
 
     def get_executable(self, name: str) -> Executable | None:
         for exe in self.executables:

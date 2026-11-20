@@ -52,7 +52,6 @@ def target(name: str) -> Command:
             Command("target_sources", ["t", "PUBLIC", "FILE_SET", "HEADERS", "FILES", "a.h"]),
             "FILE_SET",
         ),
-        ([], Command("add_executable", ["tool", "IMPORTED"]), "IMPORTED"),
         ([], Command("add_executable", ["tool2", "ALIAS", "tool"]), "ALIAS"),
         ([], Command("add_library", ["alias", "ALIAS", "missing"]), "ALIAS"),
         ([], Command("list", ["SORT", "l", "ORDER", "DESCENDING"]), "ORDER DESCENDING"),

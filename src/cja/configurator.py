@@ -2641,6 +2641,7 @@ int main() {{
                                 is_target = (
                                     ctx.get_executable(arg) is not None
                                     or ctx.get_library(arg) is not None
+                                    or ctx.is_imported_executable(arg)
                                     or any(ct.name == arg for ct in ctx.custom_targets)
                                 )
                                 if is_target:
@@ -2735,6 +2736,7 @@ int main() {{
                             is_target = (
                                 ctx.get_executable(arg) is not None
                                 or ctx.get_library(arg) is not None
+                                or ctx.is_imported_executable(arg)
                                 or any(ct.name == arg for ct in ctx.custom_targets)
                             )
                             if is_target:

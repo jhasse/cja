@@ -90,6 +90,23 @@ class ImportedTarget:
     link_targets: list[str] = field(default_factory=list)
     # Properties as set, for get_target_property() and $<TARGET_PROPERTY:...>
     properties: dict[str, str] = field(default_factory=dict)
+    # From add_executable(... IMPORTED): runs in commands instead of linking
+    executable: bool = False
+
+    def location(self, build_type: str) -> str | None:
+        """The file of an imported executable.
+
+        Like in CMake, that's IMPORTED_LOCATION_<CONFIG> of the build type,
+        else IMPORTED_LOCATION, else the one of the first configuration in
+        IMPORTED_CONFIGURATIONS.
+        """
+        configurations = self.properties.get("IMPORTED_CONFIGURATIONS", "")
+        suffixes = [f"_{build_type}", "", *(f"_{c}" for c in configurations.split(";"))]
+        for suffix in suffixes:
+            location = self.properties.get(f"IMPORTED_LOCATION{suffix.upper()}")
+            if location:
+                return location.replace("\\", "/")
+        return None
 
 
 @dataclass
