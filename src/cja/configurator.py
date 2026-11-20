@@ -25,6 +25,7 @@ from rich.progress import (
 )
 from termcolor import colored
 
+from . import git
 from .build_context import (
     BUILTIN_MODULES_DIR,
     BuildContext,
@@ -533,24 +534,6 @@ def _fetchcontent_values(args: list[str], keyword: str) -> list[str]:
     return values
 
 
-def _update_git_submodules(
-    directory: Path, submodules: list[str] | None, recurse: bool
-) -> None:
-    """Update the submodules of a repository cloned by FetchContent.
-
-    Like CMake, all of them are updated unless ``submodules`` has the values of
-    GIT_SUBMODULES, which lists the ones to update: none if it's empty.
-    """
-    if submodules == [] or not (directory / ".gitmodules").is_file():
-        return
-    update_cmd = ["git", "-C", str(directory), "submodule", "update", "--init"]
-    if recurse:
-        update_cmd.append("--recursive")
-    if submodules:
-        update_cmd += ["--", *submodules]
-    subprocess.run(update_cmd, check=True)
-
-
 def _unsupported_fetchcontent_args(args: list[str]) -> list[str]:
     """Return the FetchContent_Declare() options cja would ignore."""
     unsupported = [arg for arg in args if arg in _UNSUPPORTED_FETCHCONTENT_OPTIONS]
@@ -688,6 +671,7 @@ def process_commands(
             url_hash = None
             git_repo = None
             git_tag = None
+            git_shallow = False
             git_submodules_recurse = True
             declared_source_dir: str | None = None
             declared_binary_dir: str | None = None
@@ -700,6 +684,7 @@ def process_commands(
                     "URL_HASH",
                     "GIT_REPOSITORY",
                     "GIT_TAG",
+                    "GIT_SHALLOW",
                     "GIT_SUBMODULES_RECURSE",
                     "SOURCE_DIR",
                     "BINARY_DIR",
@@ -714,6 +699,8 @@ def process_commands(
                         git_repo = val
                     elif key == "GIT_TAG":
                         git_tag = val
+                    elif key == "GIT_SHALLOW":
+                        git_shallow = is_truthy(val)
                     elif key == "GIT_SUBMODULES_RECURSE":
                         git_submodules_recurse = is_truthy(val)
                     elif key == "SOURCE_DIR":
@@ -837,14 +824,8 @@ def process_commands(
                 if fetch_source_needs_populate(src_dir):
                     print(f"Cloning {name} from {git_repo}")
                     try:
-                        clone_cmd = ["git", "clone", git_repo, str(src_dir)]
-                        subprocess.run(clone_cmd, check=True)
-                        if git_tag:
-                            subprocess.run(
-                                ["git", "-C", str(src_dir), "checkout", git_tag],
-                                check=True,
-                            )
-                        _update_git_submodules(
+                        git.clone(git_repo, src_dir, git_tag, git_shallow)
+                        git.update_submodules(
                             src_dir, git_submodules, git_submodules_recurse
                         )
                     except FileNotFoundError:
@@ -862,10 +843,8 @@ def process_commands(
                             sys.exit(1)
                 elif git_tag:
                     try:
-                        subprocess.run(
-                            ["git", "-C", str(src_dir), "checkout", git_tag], check=True
-                        )
-                        _update_git_submodules(
+                        git.checkout(src_dir, git_tag)
+                        git.update_submodules(
                             src_dir, git_submodules, git_submodules_recurse
                         )
                     except (FileNotFoundError, subprocess.CalledProcessError):

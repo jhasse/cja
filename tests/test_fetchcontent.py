@@ -354,7 +354,7 @@ def remote_with_submodules(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> P
     return repos / "remote"
 
 
-def _fetch_git(tmp_path: Path, remote: Path, options: list[str]) -> Path:
+def _fetch_git(tmp_path: Path, remote: Path | str, options: list[str]) -> Path:
     """Make the repository available and return its source directory."""
     source_dir = tmp_path / "src"
     source_dir.mkdir(exist_ok=True)
@@ -409,6 +409,97 @@ def test_fetchcontent_git_submodules_follow_git_tag(
 
     src_dir = _fetch_git(tmp_path, remote, ["GIT_TAG", "v2"])
     assert (src_dir / "sub" / "sub.txt").read_text() == "2"
+
+
+@pytest.fixture
+def remote_with_history(tmp_path: Path) -> Path:
+    """A git repository with three commits: the tags ``v1`` and ``v2``, which
+    also is the branch ``stable``, and the tip of the default branch."""
+    remote = tmp_path / "remote"
+    _git_repo(remote, {"CMakeLists.txt": "", "version.txt": "1"}, [])
+    git(remote, "tag", "v1")
+    (remote / "version.txt").write_text("2")
+    git(remote, "commit", "-am", "second")
+    git(remote, "tag", "v2")
+    git(remote, "branch", "stable")
+    (remote / "version.txt").write_text("3")
+    git(remote, "commit", "-am", "third")
+    return remote
+
+
+def _is_shallow(src_dir: Path) -> bool:
+    return git(src_dir, "rev-parse", "--is-shallow-repository") == "true"
+
+
+@pytest.mark.parametrize(
+    ("options", "version", "commits"),
+    [
+        (["GIT_TAG", "v2"], "2", 2),
+        (["GIT_TAG", "v2", "GIT_SHALLOW", "OFF"], "2", 2),
+        (["GIT_TAG", "v2", "GIT_SHALLOW", "TRUE"], "2", 1),
+        (["GIT_TAG", "stable", "GIT_SHALLOW", "ON"], "2", 1),
+        (["GIT_SHALLOW", "1"], "3", 1),
+    ],
+)
+def test_fetchcontent_git_shallow(
+    tmp_path: Path, remote_with_history: Path, options: list[str], version: str, commits: int
+) -> None:
+    """With GIT_SHALLOW only the commit of the tag or branch is cloned."""
+    # Git ignores --depth for a local path
+    src_dir = _fetch_git(tmp_path, remote_with_history.as_uri(), options)
+
+    assert (src_dir / "version.txt").read_text() == version
+    assert int(git(src_dir, "rev-list", "--count", "HEAD")) == commits
+
+
+def test_fetchcontent_git_shallow_commit(
+    tmp_path: Path, remote_with_history: Path
+) -> None:
+    """A commit can't be cloned shallowly, so the history is cloned as well."""
+    commit = git(remote_with_history, "rev-parse", "v2")
+
+    src_dir = _fetch_git(
+        tmp_path, remote_with_history.as_uri(), ["GIT_TAG", commit, "GIT_SHALLOW", "TRUE"]
+    )
+
+    assert (src_dir / "version.txt").read_text() == "2"
+    assert not _is_shallow(src_dir)
+
+
+@pytest.mark.parametrize(
+    ("tag", "version", "shallow"),
+    [("v2", "2", True), ("stable", "2", True), ("v1^{commit}", "1", False)],
+)
+def test_fetchcontent_git_shallow_changed_git_tag(
+    tmp_path: Path, remote_with_history: Path, tag: str, version: str, shallow: bool
+) -> None:
+    """What a shallow clone doesn't have is fetched, with the history if needed."""
+    remote = remote_with_history
+    if "^" in tag:
+        # A commit that is neither a tag nor a branch
+        tag = git(remote, "rev-parse", tag)
+        git(remote, "tag", "-d", "v1")
+    _fetch_git(tmp_path, remote.as_uri(), ["GIT_SHALLOW", "TRUE"])
+
+    src_dir = _fetch_git(tmp_path, remote.as_uri(), ["GIT_TAG", tag, "GIT_SHALLOW", "TRUE"])
+
+    assert (src_dir / "version.txt").read_text() == version
+    assert _is_shallow(src_dir) == shallow
+
+
+def test_fetchcontent_git_tag_created_after_cloning(
+    tmp_path: Path, remote_with_history: Path
+) -> None:
+    """A GIT_TAG that an existing clone doesn't know is fetched."""
+    remote = remote_with_history
+    _fetch_git(tmp_path, remote, ["GIT_TAG", "v2"])
+    (remote / "version.txt").write_text("4")
+    git(remote, "commit", "-am", "fourth")
+    git(remote, "tag", "v4")
+
+    src_dir = _fetch_git(tmp_path, remote, ["GIT_TAG", "v4"])
+
+    assert (src_dir / "version.txt").read_text() == "4"
 
 
 def test_fetchcontent_system(tmp_path: Path) -> None:
