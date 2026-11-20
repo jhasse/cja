@@ -7,6 +7,16 @@ import subprocess
 from pathlib import Path
 
 
+def git(repo: Path, *args: str) -> None:
+    """Run git in a repository, with the identity it needs for commits."""
+    subprocess.run(
+        ["git", "-c", "user.email=test@test.com", "-c", "user.name=Test", *args],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+
+
 def copy_unignored_tree(src: Path, dst: Path) -> None:
     """Copy only files that are not gitignored from src to dst."""
     dst.mkdir(parents=True, exist_ok=True)
