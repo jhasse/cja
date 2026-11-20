@@ -361,12 +361,28 @@ def test_find_library_honors_find_library_suffixes(tmp_path: Path) -> None:
 
 
 def _module_ctx(tmp_path: Path) -> BuildContext:
+    """A context with a FindFoo.cmake that keeps the request it gets in SEEN,
+    as the Foo_FIND_* variables are gone after find_package()."""
     modules = tmp_path / "cmake"
     modules.mkdir()
-    (modules / "FindFoo.cmake").write_text("set(Foo_FOUND TRUE)\n")
+    (modules / "FindFoo.cmake").write_text(
+        'set(SEEN "")\n'
+        "get_cmake_property(_vars VARIABLES)\n"
+        "foreach(_var IN LISTS _vars)\n"
+        '  if(_var MATCHES "^Foo_FIND_")\n'
+        '    string(APPEND SEEN "${_var}=${${_var}}\\n")\n'
+        "  endif()\n"
+        "endforeach()\n"
+        "set(Foo_FOUND TRUE)\n"
+    )
     ctx = _ctx(tmp_path)
     ctx.variables["CMAKE_MODULE_PATH"] = str(modules)
     return ctx
+
+
+def _seen_request(ctx: BuildContext) -> dict[str, str]:
+    """The Foo_FIND_* variables during the last find_package(Foo)."""
+    return dict(line.split("=", 1) for line in ctx.variables["SEEN"].splitlines())
 
 
 def test_find_module_receives_version_and_components(tmp_path: Path) -> None:
@@ -391,7 +407,7 @@ def test_find_module_receives_version_and_components(tmp_path: Path) -> None:
         ),
     )
 
-    v = ctx.variables
+    v = _seen_request(ctx)
     assert v["Foo_FIND_VERSION"] == "1.2.3"
     assert (v["Foo_FIND_VERSION_MAJOR"], v["Foo_FIND_VERSION_MINOR"]) == ("1", "2")
     assert v["Foo_FIND_VERSION_PATCH"] == "3"
@@ -409,7 +425,7 @@ def test_find_module_version_range_variables(tmp_path: Path) -> None:
 
     _run(ctx, ("find_package", ["Foo", "1.0...<2.0"]))
 
-    v = ctx.variables
+    v = _seen_request(ctx)
     assert v["Foo_FIND_VERSION"] == "1.0"
     assert v["Foo_FIND_VERSION_RANGE"] == "1.0...<2.0"
     assert v["Foo_FIND_VERSION_MAX"] == "2.0"
@@ -424,9 +440,24 @@ def test_find_module_request_variables_do_not_leak_between_calls(
     _run(ctx, ("find_package", ["Foo", "1.2", "COMPONENTS", "a"]))
     _run(ctx, ("find_package", ["Foo"]))
 
-    assert "Foo_FIND_VERSION" not in ctx.variables
-    assert "Foo_FIND_COMPONENTS" not in ctx.variables
-    assert "Foo_FIND_REQUIRED_a" not in ctx.variables
+    v = _seen_request(ctx)
+    assert "Foo_FIND_VERSION" not in v
+    assert "Foo_FIND_COMPONENTS" not in v
+    assert "Foo_FIND_REQUIRED_a" not in v
+
+
+def test_find_module_request_variables_only_exist_during_the_call(
+    tmp_path: Path,
+) -> None:
+    """Like in CMake, they're restored to what they were before the call."""
+    ctx = _module_ctx(tmp_path)
+    ctx.variables["Foo_FIND_VERSION"] = "set by the project"
+
+    _run(ctx, ("find_package", ["Foo", "1.2", "REQUIRED", "COMPONENTS", "a"]))
+
+    assert _seen_request(ctx)["Foo_FIND_VERSION"] == "1.2"
+    request = {k: v for k, v in ctx.variables.items() if k.startswith("Foo_FIND_")}
+    assert request == {"Foo_FIND_VERSION": "set by the project"}
 
 
 # --- find_package_handle_standard_args() ----------------------------------------

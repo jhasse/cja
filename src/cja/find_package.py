@@ -632,6 +632,30 @@ def record_find_package_result(
         props[f"_CMAKE_{package_name}_TYPE"] = "REQUIRED"
 
 
+def save_find_request(ctx: BuildContext, package_name: str) -> dict[str, str]:
+    """Return the ``<Pkg>_FIND_*`` variables, to restore after ``find_package()``."""
+    prefix = f"{package_name}_FIND_"
+    return {
+        key: value for key, value in ctx.variables.items() if key.startswith(prefix)
+    }
+
+
+def restore_find_request(
+    ctx: BuildContext, package_name: str, saved: dict[str, str]
+) -> None:
+    """Restore the ``<Pkg>_FIND_*`` variables at the end of ``find_package()``.
+
+    Like in CMake, the request only exists during the call, so that e.g.
+    ``<Pkg>_FIND_REQUIRED`` of one call doesn't apply to the next one. They're
+    restored instead of removed for the calls nested into a find module.
+    """
+    prefix = f"{package_name}_FIND_"
+    for key in [key for key in ctx.variables if key.startswith(prefix)]:
+        ctx.variables.pop(key, None)
+    for key, value in saved.items():
+        ctx.variables[key] = value
+
+
 def setup_find_module_request(
     ctx: BuildContext, package_name: str, args: list[str]
 ) -> None:

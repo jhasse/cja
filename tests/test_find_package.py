@@ -128,6 +128,27 @@ def test_find_package_no_module_does_not_clear_required_in_module(
     assert exc_info.value.code == 1
 
 
+def test_find_package_required_does_not_apply_to_later_calls(tmp_path: Path) -> None:
+    """Like in CMake, REQUIRED of one call doesn't make the next one fail."""
+    module_dir = tmp_path / "cmake"
+    module_dir.mkdir()
+    (module_dir / "FindOncePkg.cmake").write_text(
+        "find_package_handle_standard_args(OncePkg DEFAULT_MSG ONCEPKG_LIB)\n"
+    )
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    ctx.variables["CMAKE_MODULE_PATH"] = str(module_dir)
+
+    commands = [
+        Command(name="set", args=["ONCEPKG_LIB", "/lib/libonce.a"], line=1),
+        Command(name="find_package", args=["OncePkg", "REQUIRED"], line=2),
+        Command(name="unset", args=["ONCEPKG_LIB"], line=3),
+        Command(name="find_package", args=["OncePkg", "QUIET"], line=4),
+    ]
+    process_commands(commands, ctx)
+
+    assert ctx.variables["OncePkg_FOUND"] == "FALSE"
+
+
 def test_gtest_imported_target_fallback_link_flags(tmp_path: Path) -> None:
     """GTest imported targets should link via GTEST_*_LIBRARIES when needed."""
     (tmp_path / "sample.cpp").write_text("int main() { return 0; }\n")

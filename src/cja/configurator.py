@@ -98,6 +98,8 @@ from .find_package import (
     handle_builtin_find_package,
     handle_find_package_handle_standard_args,
     record_find_package_result,
+    restore_find_request,
+    save_find_request,
     setup_find_module_request,
     unsupported_find_package_args,
 )
@@ -3083,8 +3085,11 @@ int main() {{
                     required = "REQUIRED" in upper_args
                     no_module = "NO_MODULE" in upper_args
                     quiet = "QUIET" in upper_args or ctx.quiet
+                    # The request is only visible during the call, and a call
+                    # nested into a find module keeps its <Pkg>_FIND_REQUIRED.
+                    find_request = save_find_request(ctx, package_name)
                     find_required_var = f"{package_name}_FIND_REQUIRED"
-                    prev_required = ctx.variables.get(find_required_var) == "TRUE"
+                    prev_required = find_request.get(find_required_var) == "TRUE"
                     ctx.variables[find_required_var] = (
                         "TRUE" if (required or prev_required) else "FALSE"
                     )
@@ -3097,6 +3102,7 @@ int main() {{
                         quiet=quiet,
                     ):
                         record_find_package_result(ctx, package_name, args)
+                        restore_find_request(ctx, package_name, find_request)
                     else:
                         # Search for Find<PackageName>.cmake in CMAKE_MODULE_PATH
                         # and the built-in CJA modules (e.g. bundled FindGTest.cmake).
@@ -3147,9 +3153,11 @@ int main() {{
                                 leave_find_module: Callable[[], None] = leave_find_module,
                                 package_name: str = package_name,
                                 args: list[str] = args,
+                                find_request: dict[str, str] = find_request,
                             ) -> None:
                                 leave_find_module()
                                 record_find_package_result(ctx, package_name, args)
+                                restore_find_request(ctx, package_name, find_request)
 
                             stack.append(
                                 Frame(
@@ -3195,6 +3203,7 @@ int main() {{
                                 required: bool = required,
                                 quiet: bool = quiet,
                                 line: int = cmd.line,
+                                find_request: dict[str, str] = find_request,
                             ) -> None:
                                 leave_config_file()
                                 if saved_find_package_name is None:
@@ -3210,6 +3219,7 @@ int main() {{
                                 ctx.variables[f"{package_name}_FOUND"] = value
                                 ctx.variables[f"{package_name.upper()}_FOUND"] = value
                                 record_find_package_result(ctx, package_name, args)
+                                restore_find_request(ctx, package_name, find_request)
                                 if not found and required:
                                     ctx.print_error(
                                         f"could not find package: {package_name}", line
@@ -3233,6 +3243,7 @@ int main() {{
                             # Unknown package
                             ctx.variables[f"{package_name}_FOUND"] = "FALSE"
                             record_find_package_result(ctx, package_name, args)
+                            restore_find_request(ctx, package_name, find_request)
                             if required:
                                 ctx.print_error(
                                     f"could not find package: {package_name}", cmd.line
