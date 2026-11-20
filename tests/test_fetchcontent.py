@@ -1,5 +1,6 @@
 """Tests for FetchContent command."""
 
+import subprocess
 import tarfile
 import urllib.request
 from pathlib import Path
@@ -9,7 +10,7 @@ import pytest
 
 from cja.generator import BuildContext, process_commands
 from cja.parser import Command
-from tests.helpers import include_flags
+from tests.helpers import git, include_flags
 
 
 class _FakeResponse:
@@ -264,8 +265,6 @@ def test_fetchcontent_retries_empty_src_dir(
 
 def test_fetchcontent_git_commit_hash(tmp_path: Path) -> None:
     """Test FetchContent_Declare with GIT_TAG set to a commit hash (not a branch/tag name)."""
-    import subprocess
-
     # Create a local bare-ish git repo to act as the remote
     remote_dir = tmp_path / "remote"
     remote_dir.mkdir()
@@ -319,6 +318,97 @@ def test_fetchcontent_git_commit_hash(tmp_path: Path) -> None:
     src_dir = ctx.variables["mylib_SOURCE_DIR"]
     assert (Path(src_dir) / "CMakeLists.txt").exists()
     assert any(lib.name == "mylib" for lib in ctx.libraries)
+
+
+def _git_repo(path: Path, files: dict[str, str], submodules: list[Path]) -> None:
+    """Create a git repository with a commit of the files and submodules."""
+    path.mkdir()
+    git(path, "init")
+    for name, content in files.items():
+        (path / name).write_text(content)
+    for submodule in submodules:
+        git(path, "submodule", "add", submodule.as_posix(), submodule.name)
+    git(path, "add", ".")
+    git(path, "commit", "-m", "init")
+
+
+@pytest.fixture
+def remote_with_submodules(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A git repository with the submodules ``other`` and ``sub``, which itself
+    has the submodule ``nested``."""
+    # Git doesn't clone submodules from local paths by default.
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "protocol.file.allow")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "always")
+    repos = tmp_path / "repos"
+    repos.mkdir()
+    _git_repo(repos / "nested", {"nested.txt": "nested"}, [])
+    _git_repo(repos / "sub", {"sub.txt": "1"}, [repos / "nested"])
+    _git_repo(repos / "other", {"other.txt": "other"}, [])
+    _git_repo(
+        repos / "remote",
+        {"CMakeLists.txt": "add_library(mylib STATIC mylib.c)", "mylib.c": ""},
+        [repos / "sub", repos / "other"],
+    )
+    git(repos / "remote", "tag", "v1")
+    return repos / "remote"
+
+
+def _fetch_git(tmp_path: Path, remote: Path, options: list[str]) -> Path:
+    """Make the repository available and return its source directory."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir(exist_ok=True)
+    ctx = BuildContext(source_dir=source_dir, build_dir=tmp_path / "build")
+    commands = [
+        Command(name="include", args=["FetchContent"], line=1),
+        Command(
+            name="fetchcontent_declare",
+            args=["mylib", "GIT_REPOSITORY", str(remote), *options],
+            line=2,
+        ),
+        Command(name="fetchcontent_makeavailable", args=["mylib"], line=3),
+    ]
+    process_commands(commands, ctx, strict=True)
+    return Path(ctx.variables["mylib_SOURCE_DIR"])
+
+
+@pytest.mark.parametrize(
+    ("options", "expected"),
+    [
+        ([], ["sub/sub.txt", "sub/nested/nested.txt", "other/other.txt"]),
+        (["GIT_SUBMODULES", ""], []),
+        # Without a value, which CPM.cmake passes on for "", it has no effect
+        (["GIT_SUBMODULES"], ["sub/sub.txt", "sub/nested/nested.txt", "other/other.txt"]),
+        (["GIT_SUBMODULES", "sub"], ["sub/sub.txt", "sub/nested/nested.txt"]),
+        (["GIT_SUBMODULES_RECURSE", "OFF"], ["sub/sub.txt", "other/other.txt"]),
+    ],
+)
+def test_fetchcontent_git_submodules(
+    tmp_path: Path, remote_with_submodules: Path, options: list[str], expected: list[str]
+) -> None:
+    """Like CMake, all submodules are cloned recursively by default."""
+    src_dir = _fetch_git(tmp_path, remote_with_submodules, ["GIT_TAG", "v1", *options])
+
+    files = ["sub/sub.txt", "sub/nested/nested.txt", "other/other.txt"]
+    assert [name for name in files if (src_dir / name).exists()] == expected
+
+
+def test_fetchcontent_git_submodules_follow_git_tag(
+    tmp_path: Path, remote_with_submodules: Path
+) -> None:
+    """Checking out another GIT_TAG in an existing clone updates the submodules."""
+    remote = remote_with_submodules
+    (remote.parent / "sub" / "sub.txt").write_text("2")
+    git(remote.parent / "sub", "commit", "-am", "update")
+    git(remote / "sub", "pull")
+    git(remote, "commit", "-am", "update sub")
+    git(remote, "tag", "v2")
+
+    src_dir = _fetch_git(tmp_path, remote, ["GIT_TAG", "v1"])
+    assert (src_dir / "sub" / "sub.txt").read_text() == "1"
+
+    src_dir = _fetch_git(tmp_path, remote, ["GIT_TAG", "v2"])
+    assert (src_dir / "sub" / "sub.txt").read_text() == "2"
 
 
 def test_fetchcontent_system(tmp_path: Path) -> None:

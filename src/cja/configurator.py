@@ -521,24 +521,39 @@ _UNSUPPORTED_FETCHCONTENT_OPTIONS = frozenset(
 )
 
 
+def _fetchcontent_values(args: list[str], keyword: str) -> list[str]:
+    """Return the values of a FetchContent_Declare() option, empty ones included."""
+    values: list[str] = []
+    for value in args[args.index(keyword) + 1 :]:
+        if re.fullmatch(r"[A-Z][A-Z0-9_]*", value):
+            break
+        values.append(value)
+    return values
+
+
+def _update_git_submodules(
+    directory: Path, submodules: list[str] | None, recurse: bool
+) -> None:
+    """Update the submodules of a repository cloned by FetchContent.
+
+    Like CMake, all of them are updated unless ``submodules`` has the values of
+    GIT_SUBMODULES, which lists the ones to update: none if it's empty.
+    """
+    if submodules == [] or not (directory / ".gitmodules").is_file():
+        return
+    update_cmd = ["git", "-C", str(directory), "submodule", "update", "--init"]
+    if recurse:
+        update_cmd.append("--recursive")
+    if submodules:
+        update_cmd += ["--", *submodules]
+    subprocess.run(update_cmd, check=True)
+
+
 def _unsupported_fetchcontent_args(args: list[str]) -> list[str]:
     """Return the FetchContent_Declare() options cja would ignore."""
-
-    def values_after(keyword: str) -> list[str]:
-        values: list[str] = []
-        for value in args[args.index(keyword) + 1 :]:
-            if re.fullmatch(r"[A-Z][A-Z0-9_]*", value):
-                break
-            if value:
-                values.append(value)
-        return values
-
     unsupported = [arg for arg in args if arg in _UNSUPPORTED_FETCHCONTENT_OPTIONS]
-    # Submodules aren't cloned.
-    if "GIT_SUBMODULES" in args and values_after("GIT_SUBMODULES"):
-        unsupported.append("GIT_SUBMODULES")
     # Only the first URL is tried.
-    if "URL" in args and len(values_after("URL")) > 1:
+    if "URL" in args and len(list(filter(None, _fetchcontent_values(args, "URL")))) > 1:
         unsupported.append("URL")
     return unsupported
 
@@ -671,6 +686,7 @@ def process_commands(
             url_hash = None
             git_repo = None
             git_tag = None
+            git_submodules_recurse = True
             declared_source_dir: str | None = None
             declared_binary_dir: str | None = None
             src_dir: Path | None = None
@@ -682,6 +698,7 @@ def process_commands(
                     "URL_HASH",
                     "GIT_REPOSITORY",
                     "GIT_TAG",
+                    "GIT_SUBMODULES_RECURSE",
                     "SOURCE_DIR",
                     "BINARY_DIR",
                 ):
@@ -695,6 +712,8 @@ def process_commands(
                         git_repo = val
                     elif key == "GIT_TAG":
                         git_tag = val
+                    elif key == "GIT_SUBMODULES_RECURSE":
+                        git_submodules_recurse = is_truthy(val)
                     elif key == "SOURCE_DIR":
                         declared_source_dir = val
                     else:
@@ -703,6 +722,13 @@ def process_commands(
                     arg_idx += 1
             fc_exclude_from_all = "EXCLUDE_FROM_ALL" in info.args
             fc_system = "SYSTEM" in info.args
+            git_submodules: list[str] | None = None
+            if "GIT_SUBMODULES" in info.args:
+                listed = _fetchcontent_values(info.args, "GIT_SUBMODULES")
+                # Like in CMake, only an empty value disables the submodules;
+                # without any value it's as if GIT_SUBMODULES wasn't given.
+                if listed:
+                    git_submodules = [path for path in listed if path]
 
             def resolve_fetch_path(path: str, cmd_line: int) -> Path:
                 expanded = ctx.expand_variables(path, strict, cmd_line)
@@ -816,6 +842,9 @@ def process_commands(
                                 ["git", "-C", str(src_dir), "checkout", git_tag],
                                 check=True,
                             )
+                        _update_git_submodules(
+                            src_dir, git_submodules, git_submodules_recurse
+                        )
                     except FileNotFoundError:
                         if strict:
                             ctx.print_error(
@@ -833,6 +862,9 @@ def process_commands(
                     try:
                         subprocess.run(
                             ["git", "-C", str(src_dir), "checkout", git_tag], check=True
+                        )
+                        _update_git_submodules(
+                            src_dir, git_submodules, git_submodules_recurse
                         )
                     except (FileNotFoundError, subprocess.CalledProcessError):
                         if strict:

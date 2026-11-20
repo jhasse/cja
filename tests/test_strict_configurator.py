@@ -65,10 +65,6 @@ def configure(tmp_path: Path, source: str, strict: bool = False) -> BuildContext
             "fetchcontent_declare(): SOURCE_SUBDIR",
         ),
         (
-            "fetchcontent_declare(dep GIT_REPOSITORY u GIT_SUBMODULES ext/a)",
-            "fetchcontent_declare(): GIT_SUBMODULES",
-        ),
-        (
             "fetchcontent_declare(dep URL https://a/x.zip https://b/x.zip)",
             "fetchcontent_declare(): URL",
         ),
