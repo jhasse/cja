@@ -3253,6 +3253,7 @@ def run_script(
     ctx.cja_cmd = cja_cmd
     ctx.variables["CMAKE_COMMAND"] = " ".join(cja_cmd)
     ctx.variables["CMAKE_ROOT"] = to_posix_path(CMAKE_ROOT)
+    ctx.global_properties["CMAKE_ROLE"] = "SCRIPT"
 
     argv = [cja_cmd[0], "-P", str(script_path), *(script_args or [])]
     ctx.variables["CMAKE_ARGC"] = str(len(argv))
@@ -3402,6 +3403,7 @@ def configure(
     ctx.set_cache("CMAKE_GENERATOR", "Ninja")
     ctx.set_cache("CMAKE_HOME_DIRECTORY", to_posix_path(ctx.source_dir))
     ctx.set_cache("CMAKE_ROOT", to_posix_path(CMAKE_ROOT))
+    ctx.global_properties["CMAKE_ROLE"] = "PROJECT"
     ctx.variables.setdefault("CMAKE_BUILD_TYPE", "Debug")
     ctx.variables["CMAKE_FIND_PACKAGE_REDIRECTS_DIR"] = str(
         ctx.build_dir / "CMakeFiles" / "pkgRedirects"

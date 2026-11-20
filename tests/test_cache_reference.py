@@ -152,6 +152,18 @@ def test_cmake_ar_is_used(tmp_path: Path) -> None:
     assert "\nar = my-ar\n" in (tmp_path / "build.ninja").read_text()
 
 
+def test_cmake_role(tmp_path: Path) -> None:
+    """Modules use it to tell whether they can define targets."""
+    (tmp_path / "CMakeLists.txt").write_text(
+        "project(t NONE)\nget_property(ROLE GLOBAL PROPERTY CMAKE_ROLE)\n"
+    )
+    assert configure(tmp_path, "build").variables["ROLE"] == "PROJECT"
+
+    script = tmp_path / "script.cmake"
+    script.write_text("get_cmake_property(ROLE CMAKE_ROLE)\n")
+    assert run_script(script).variables["ROLE"] == "SCRIPT"
+
+
 def test_cmake_root_in_script_mode(tmp_path: Path) -> None:
     script = tmp_path / "script.cmake"
     script.write_text("include(${CMAKE_ROOT}/Modules/CMakePrintHelpers.cmake)\n")
