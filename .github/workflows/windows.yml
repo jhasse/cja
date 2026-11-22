@@ -16,5 +16,10 @@ jobs:
     - name: Install the latest version of uv
       uses: astral-sh/setup-uv@v7
 
+    # The MSVC STL of Visual Studio 2026 requires Clang 22 or newer, but the image has LLVM 20.
+    # Remove this step once the image has been updated.
+    - name: Upgrade LLVM
+      run: winget install --id LLVM.LLVM --exact --source winget --silent --disable-interactivity --accept-source-agreements --accept-package-agreements
+
     - name: Run tests
       run: uv run pytest --color=yes
