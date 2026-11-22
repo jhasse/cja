@@ -20,20 +20,8 @@ ninja -Cbuild
 ## Install
 
 ```sh
-pip install cja
+uv tool install cja
 ```
-
-Or, if you're in a managed Python environment:
-
-```sh
-pipx install cja
-```
-
-### Bash completion
-
-Distribution packages install it automatically. Otherwise copy
-[completions/cja.bash](completions/cja.bash) to `~/.local/share/bash-completion/completions/cja`.
-Besides subcommands and options it completes the targets of `cja build`.
 
 ## Comparison to CMake
 
@@ -170,6 +158,12 @@ default. It runs on save with `configureOnSave`, or when the client sends the `c
 | `buildDir`        | `"build"` | Build directory used for configuring         |
 | `strict`          | `true`    | Configure with `--strict`                    |
 | `configureArgs`   | `[]`      | Additional arguments, e.g. `["-DFOO=ON"]`    |
+
+### Bash completion
+
+Distribution packages install it automatically. Otherwise copy
+[completions/cja.bash](completions/cja.bash) to `~/.local/share/bash-completion/completions/cja`.
+Besides subcommands and options it completes the targets of `cja build`.
 
 ## Building the RPM
 
