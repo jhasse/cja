@@ -127,6 +127,8 @@ class CustomCommand:
     uses_terminal: bool = False
     defined_file: Path | None = None
     defined_line: int = 0
+    # Files that the commands may write as well, kept like the outputs
+    byproducts: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -148,6 +150,8 @@ class CustomTarget:
     dependencies: list[str] = field(default_factory=list)
     # EXCLUDE_FROM_ALL is set unless the target was added with ALL
     properties: dict[str, str] = field(default_factory=dict)
+    # Files that the commands may write, kept like the outputs of a custom command
+    byproducts: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -444,6 +448,13 @@ class BuildContext:
     def directory_key(self, source_dir: Path) -> str:
         """The key of a directory in directory_properties, like set_property() uses."""
         return resolve_cmake_path(str(source_dir), source_dir)
+
+    def custom_command_output(self, path: str) -> str:
+        """How the output of a custom command is kept: relative to the build
+        directory if it's in there, and else to the top-level source directory,
+        with a relative path being about the current source directory."""
+        relative = make_relative(path, self.build_dir)
+        return self.resolve_path(path) if relative == path else relative
 
     def source_file_scope(self, source_dir: Path) -> dict[str, SourceFileProperties]:
         """The properties that source files have for the targets of a directory."""

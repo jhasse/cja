@@ -893,3 +893,55 @@ add_custom_target(subgen ALL DEPENDS subgen.txt)
     ):
         assert (tmp_path / "build" / created).is_file(), created
         assert not (tmp_path / created).exists(), created
+
+
+def test_custom_command_byproducts(tmp_path: Path) -> None:
+    """BYPRODUCTS are files that the commands write besides their outputs, so
+    they're generated ones and other commands can depend on them."""
+    import subprocess
+
+    from cja.generator import configure
+
+    (tmp_path / "CMakeLists.txt").write_text("""\
+cmake_minimum_required(VERSION 3.10)
+project(ByproductsTest C)
+
+add_custom_command(OUTPUT main.txt BYPRODUCTS by.txt
+    COMMAND ${CMAKE_COMMAND} -E touch main.txt
+    COMMAND ${CMAKE_COMMAND} -E touch by.txt)
+add_custom_command(OUTPUT user.txt DEPENDS by.txt
+    COMMAND ${CMAKE_COMMAND} -E touch user.txt)
+add_custom_target(gen ALL DEPENDS user.txt BYPRODUCTS target_by.txt
+    COMMAND ${CMAKE_COMMAND} -E touch target_by.txt)
+add_executable(app main.c)
+add_custom_command(TARGET app POST_BUILD BYPRODUCTS post_by.txt
+    COMMAND ${CMAKE_COMMAND} -E touch post_by.txt)
+foreach(file by.txt target_by.txt post_by.txt other.txt)
+  get_property("GENERATED_${file}"
+      SOURCE ${CMAKE_CURRENT_BINARY_DIR}/${file} PROPERTY GENERATED)
+endforeach()
+""")
+    (tmp_path / "main.c").write_text("int main(void) { return 0; }\n")
+
+    ctx = configure(tmp_path, "build", strict=True)
+
+    for file in ("by.txt", "target_by.txt", "post_by.txt"):
+        assert ctx.variables[f"GENERATED_{file}"] == "1", file
+    assert ctx.variables["GENERATED_other.txt"] == "0"
+
+    ninja_content = re.sub(r"\$\n *", "", (tmp_path / "build.ninja").read_text())
+    assert (
+        "build $builddir/main.txt | $builddir/by.txt: custom_command\n" in ninja_content
+    )
+    assert (
+        "build $builddir/user.txt: custom_command $builddir/by.txt\n" in ninja_content
+    )
+    assert "build $builddir/gen.stamp | $builddir/target_by.txt: " in ninja_content
+    assert (
+        "build $builddir/CMakeFiles/app.post_build | $builddir/post_by.txt: "
+        in ninja_content
+    )
+
+    subprocess.run(["ninja"], cwd=tmp_path, check=True, capture_output=True)
+    for created in ("by.txt", "user.txt", "target_by.txt", "post_by.txt"):
+        assert (tmp_path / "build" / created).is_file(), created

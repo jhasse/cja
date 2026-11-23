@@ -1728,19 +1728,43 @@ def generate_ninja(
                     parts.append(str(arg))
             return " ".join(parts)
 
-        # Generate custom commands
-        for custom_cmd in ctx.custom_commands:
-            outputs = []
-            for o in custom_cmd.outputs:
+        def _output_nodes(
+            paths: list[str], origin_file: Path | None, origin_line: int
+        ) -> list[str]:
+            """The ninja nodes of the outputs or byproducts of a custom command."""
+            nodes: list[str] = []
+            for o in paths:
                 # Evaluate generator expressions (e.g. $<$<BOOL:..>:/$<CONFIG>>)
                 # so they don't leak into build.ninja output paths.
                 o = _expand_genex(o)
                 if not Path(o).is_absolute():
-                    prefixed_o = f"$builddir/{o}"
-                    outputs.append(prefixed_o)
                     custom_command_outputs.add(o)
-                else:
-                    outputs.append(o)
+                    o = f"$builddir/{o}"
+                nodes.append(o)
+                register_output(o, origin_file, origin_line)
+            return nodes
+
+        # Byproducts of custom targets are known before the commands that
+        # depend on them.
+        custom_target_byproducts = {
+            ct.name: _output_nodes(ct.byproducts, ct.defined_file, ct.defined_line)
+            for ct in ctx.custom_targets
+        }
+        post_build_byproducts = {
+            exe.name: _output_nodes(
+                exe.post_build_byproducts, exe.defined_file, exe.defined_line
+            )
+            for exe in ctx.executables
+        }
+
+        # Generate custom commands
+        for custom_cmd in ctx.custom_commands:
+            outputs = _output_nodes(
+                custom_cmd.outputs, custom_cmd.defined_file, custom_cmd.defined_line
+            )
+            byproducts = _output_nodes(
+                custom_cmd.byproducts, custom_cmd.defined_file, custom_cmd.defined_line
+            )
 
             # Process multiple commands
             cmd_parts: list[str] = [
@@ -1771,10 +1795,9 @@ def generate_ninja(
                 "custom_command",
                 depends,
                 variables={"cmd": cmd_str},
+                implicit_outputs=byproducts or None,
                 pool="console" if custom_cmd.uses_terminal else None,
             )
-            for out in outputs:
-                register_output(out, custom_cmd.defined_file, custom_cmd.defined_line)
             n.newline()
 
         # Generate custom targets (phony targets)
@@ -1822,6 +1845,7 @@ def generate_ninja(
                     ct_depends,
                     order_only=ct_dep_order_only or None,
                     variables={"cmd": _join_command_lines(ct_cmd_parts)},
+                    implicit_outputs=custom_target_byproducts[ct.name] or None,
                     pool="console" if ct.uses_terminal else None,
                 )
                 n.build([ct.name], "phony", [stamp])
@@ -3063,7 +3087,13 @@ def generate_ninja(
                     f"{cmake_cmd_quoted} -E touch {_quote_ninja_cmd_part(stamp_path)}"
                 )
                 pb_cmd_str = _join_command_lines(pb_cmd_parts)
-                n.build([stamp], "custom_command", [exe_name], variables={"cmd": pb_cmd_str})
+                n.build(
+                    [stamp],
+                    "custom_command",
+                    [exe_name],
+                    variables={"cmd": pb_cmd_str},
+                    implicit_outputs=post_build_byproducts[exe.name] or None,
+                )
                 n.newline()
                 if in_all:
                     default_targets.remove(exe_name)

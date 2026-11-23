@@ -42,11 +42,7 @@ def configure(tmp_path: Path, source: str, strict: bool = False) -> BuildContext
                 "add_custom_command(TARGET app POST_BUILD COMMAND echo hi"
                 " WORKING_DIRECTORY /tmp BYPRODUCTS out.txt)"
             ),
-            "add_custom_command(): WORKING_DIRECTORY, BYPRODUCTS",
-        ),
-        (
-            "add_custom_target(gen COMMAND touch out.txt BYPRODUCTS out.txt)",
-            "add_custom_target(): BYPRODUCTS",
+            "add_custom_command(): WORKING_DIRECTORY",
         ),
         (
             "execute_process(COMMAND echo a OUTPUT_FILE out.txt)",

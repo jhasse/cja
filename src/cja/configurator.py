@@ -378,6 +378,7 @@ def _add_custom_command_target(
     acc_target_name = ctx.expand_variables(args[1], strict, cmd.line)
     acc_when = args[2]  # POST_BUILD, PRE_BUILD, or PRE_LINK
     acc_commands: list[list[str]] = []
+    acc_byproducts: list[str] = []
     acc_section: str | None = None
     acc_unsupported: list[str] = []
     acc_expand_lists = False
@@ -397,8 +398,7 @@ def _add_custom_command_target(
             "JOB_POOL",
             "JOB_SERVER_AWARE",
         ):
-            # Only COMMENT, JOB_POOL and JOB_SERVER_AWARE
-            # are harmless to drop.
+            # Only COMMENT, JOB_POOL and JOB_SERVER_AWARE are harmless to drop.
             acc_section = acc_arg
         elif acc_arg == "ARGS":
             # Legacy CMake keyword; ignored.
@@ -407,7 +407,9 @@ def _add_custom_command_target(
             expanded_acc = ctx.expand_variables(acc_arg, strict, cmd.line)
             if acc_section == "COMMAND" and acc_commands:
                 acc_commands[-1].append(expanded_acc)
-            elif acc_section in ("WORKING_DIRECTORY", "BYPRODUCTS") and expanded_acc:
+            elif acc_section == "BYPRODUCTS" and expanded_acc:
+                acc_byproducts.append(ctx.custom_command_output(expanded_acc))
+            elif acc_section == "WORKING_DIRECTORY" and expanded_acc:
                 acc_unsupported.append(acc_section)
     if acc_expand_lists and any(
         ";" in a for c in acc_commands for a in c
@@ -427,6 +429,8 @@ def _add_custom_command_target(
     if acc_commands and acc_target_obj is not None:
         if acc_when == "POST_BUILD":
             acc_target_obj.post_build_commands.extend(acc_commands)
+            if acc_target_exe is not None:
+                acc_target_exe.post_build_byproducts.extend(acc_byproducts)
         elif acc_when == "PRE_BUILD":
             acc_target_obj.pre_build_commands.extend(acc_commands)
         elif acc_when == "PRE_LINK":
@@ -2579,6 +2583,7 @@ int main() {{
                 else:
                     # Minimal support: add_custom_command(OUTPUT ... COMMAND ... DEPENDS ... MAIN_DEPENDENCY ... WORKING_DIRECTORY ... VERBATIM)
                     outputs: list[str] = []
+                    byproducts: list[str] = []
                     command_list: list[list[str]] = []
                     depends: list[str] = []
                     main_dependency: str | None = None
@@ -2630,14 +2635,12 @@ int main() {{
                             if not arg:
                                 arg_idx += 1
                                 continue
-                            if current_section in ("DEPFILE", "BYPRODUCTS", "IMPLICIT_DEPENDS"):
+                            if current_section in ("DEPFILE", "IMPLICIT_DEPENDS"):
                                 cc_unsupported.append(current_section)
                             elif current_section == "OUTPUT":
-                                # Make relative to build_dir or source_dir
-                                rel = make_relative(arg, ctx.build_dir)
-                                if rel == arg:
-                                    rel = ctx.resolve_path(arg)
-                                outputs.append(rel)
+                                outputs.append(ctx.custom_command_output(arg))
+                            elif current_section == "BYPRODUCTS":
+                                byproducts.append(ctx.custom_command_output(arg))
                             elif current_section == "COMMAND":
                                 command_list[-1].append(arg)
                             elif current_section == "DEPENDS":
@@ -2684,6 +2687,7 @@ int main() {{
                                 uses_terminal=uses_terminal,
                                 defined_file=ctx.current_list_file,
                                 defined_line=cmd.line,
+                                byproducts=byproducts,
                             )
                         )
 
@@ -2701,6 +2705,7 @@ int main() {{
                 target_name = ctx.expand_variables(args[0], strict, cmd.line)
                 ct_commands: list[list[str]] = []
                 ct_depends: list[str] = []
+                ct_byproducts: list[str] = []
                 ct_all = False
                 ct_working_directory: str | None = None
                 ct_verbatim = False
@@ -2737,7 +2742,7 @@ int main() {{
                             ct_idx += 1
                             continue
                         if ct_section == "BYPRODUCTS":
-                            ct_unsupported.append(ct_section)
+                            ct_byproducts.append(ctx.custom_command_output(arg))
                         elif ct_section == "COMMAND":
                             ct_commands[-1].append(arg)
                         elif ct_section == "DEPENDS":
@@ -2786,6 +2791,7 @@ int main() {{
                             "CMAKE_CURRENT_BINARY_DIR", to_posix_path(ctx.build_dir)
                         ),
                         properties=ct_properties,
+                        byproducts=ct_byproducts,
                     )
                 )
 
