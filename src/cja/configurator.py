@@ -2752,6 +2752,10 @@ int main() {{
                         comment=ct_comment,
                         defined_file=ctx.current_list_file,
                         defined_line=cmd.line,
+                        source_dir=ctx.current_source_dir,
+                        binary_dir=ctx.variables.get(
+                            "CMAKE_CURRENT_BINARY_DIR", to_posix_path(ctx.build_dir)
+                        ),
                         properties=ct_properties,
                     )
                 )

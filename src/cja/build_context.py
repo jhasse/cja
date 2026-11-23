@@ -142,6 +142,9 @@ class CustomTarget:
     comment: str = ""
     defined_file: Path | None = None
     defined_line: int = 0
+    # The directory the target was created in (its CMAKE_CURRENT_SOURCE_DIR)
+    source_dir: Path | None = None
+    binary_dir: str = ""
     dependencies: list[str] = field(default_factory=list)
     # EXCLUDE_FROM_ALL is set unless the target was added with ALL
     properties: dict[str, str] = field(default_factory=dict)
@@ -341,11 +344,19 @@ class BuildContext:
     def target_property(self, name: str, prop: str) -> str | None:
         """A target's property, or None if the target or property is unknown."""
         lib = self.get_library(name)
-        exe = self.get_executable(name)
-        target = lib or exe
+        target = lib or self.get_executable(name) or self.get_custom_target(name)
         if target is not None:
             if prop == "TYPE":
-                return f"{lib.lib_type}_LIBRARY" if lib else "EXECUTABLE"
+                if lib is not None:
+                    return f"{lib.lib_type}_LIBRARY"
+                return "EXECUTABLE" if isinstance(target, Executable) else "UTILITY"
+            if prop == "NAME":
+                # Of the aliased target, if name is an alias
+                return target.name
+            if prop == "SOURCE_DIR":
+                return to_posix_path(target.source_dir) if target.source_dir else None
+            if prop == "BINARY_DIR":
+                return target.binary_dir or None
             field_name = TARGET_PROPERTY_FIELDS.get(prop)
             if field_name is not None and hasattr(target, field_name):
                 values: list[str] = getattr(target, field_name)
@@ -355,10 +366,7 @@ class BuildContext:
         if imported is not None:
             if prop == "LOCATION" and imported.executable:
                 return imported.location(self.variables.get("CMAKE_BUILD_TYPE", ""))
-            return imported.properties.get(prop)
-        custom = self.get_custom_target(name)
-        if custom is not None:
-            return "UTILITY" if prop == "TYPE" else custom.properties.get(prop)
+            return name if prop == "NAME" else imported.properties.get(prop)
         return None
 
     def is_imported_executable(self, name: str) -> bool:
