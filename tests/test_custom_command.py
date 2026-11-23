@@ -106,7 +106,12 @@ add_custom_command(
         ninja_content = ninja_file.read_text()
         assert "rule custom_command" in ninja_content
         assert "$builddir/generated.txt" in ninja_content
-        assert "echo Hello from custom command > generated.txt" in ninja_content
+        # Like in CMake, the spaces are escaped also without VERBATIM
+        if platform.system() == "Windows":
+            message = '"Hello from custom command"'
+        else:
+            message = r"Hello\ from\ custom\ command"
+        assert f"echo {message} > generated.txt" in ninja_content
         assert "input.txt" in ninja_content
 
 
@@ -1103,3 +1108,35 @@ FetchContent_MakeAvailable(dep)
     binary_dir = project / "build" / "_deps" / "dep-build"
     for created in ("gen.c", f"libgenerated{LIB_EXT}", "second.txt", "by.txt"):
         assert (binary_dir / created).is_file(), created
+
+
+@pytest.mark.parametrize("event", ["", "POST_BUILD"])
+def test_arguments_with_spaces_without_verbatim(tmp_path: Path, event: str) -> None:
+    """Like in CMake, an argument with spaces stays one also without VERBATIM,
+    while the shell sees all of its other characters."""
+    import subprocess
+
+    from cja.generator import configure
+
+    if event:
+        command = "add_custom_command(TARGET app POST_BUILD"
+    else:
+        command = "add_custom_command(OUTPUT copied.txt"
+    (tmp_path / "CMakeLists.txt").write_text(f"""\
+cmake_minimum_required(VERSION 3.10)
+project(SpacesTest C)
+add_executable(app main.c)
+{command}
+    COMMAND ${{CMAKE_COMMAND}} -E copy "${{CMAKE_CURRENT_SOURCE_DIR}}/my file.txt" copied.txt
+    COMMAND echo "x y" > echoed.txt)
+add_custom_target(copy ALL DEPENDS {"app" if event else "copied.txt"})
+""")
+    (tmp_path / "main.c").write_text("int main(void) { return 0; }\n")
+    (tmp_path / "my file.txt").write_text("content")
+
+    configure(tmp_path, "build")
+    subprocess.run(["ninja"], cwd=tmp_path, check=True, capture_output=True)
+
+    assert (tmp_path / "build" / "copied.txt").read_text() == "content"
+    echoed = (tmp_path / "build" / "echoed.txt").read_text().strip().strip('"')
+    assert echoed == "x y"

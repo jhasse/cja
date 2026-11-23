@@ -133,7 +133,10 @@ add_custom_target(gen COMMAND touch out.txt BYPRODUCTS out.txt JOB_POOL console)
 add_test(NAME t COMMAND app --flag CONFIGURATIONS Debug)
 """,
     )
-    assert ctx.get_executable("app").post_build_commands == [["echo", "hi"]]  # type: ignore[union-attr]
+    assert [
+        command.command
+        for command in ctx.get_executable("app").post_build_commands  # type: ignore[union-attr]
+    ] == [["echo", "hi"]]
     assert ctx.custom_targets[0].commands == [["touch", "out.txt"]]
     assert ctx.tests[0].command == ["app", "--flag"]
 

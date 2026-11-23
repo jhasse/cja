@@ -3,6 +3,15 @@ from pathlib import Path
 
 
 @dataclass
+class BuildEventCommand:
+    """A command of add_custom_command(TARGET ... PRE_BUILD|PRE_LINK|POST_BUILD)."""
+
+    command: list[str]
+    working_directory: str
+    verbatim: bool = False
+
+
+@dataclass
 class Library:
     """A library target."""
 
@@ -46,9 +55,9 @@ class Library:
     is_alias: bool = False
     alias_for: str | None = None
     dependencies: list[str] = field(default_factory=list)
-    post_build_commands: list[list[str]] = field(default_factory=list)
-    pre_build_commands: list[list[str]] = field(default_factory=list)
-    pre_link_commands: list[list[str]] = field(default_factory=list)
+    post_build_commands: list[BuildEventCommand] = field(default_factory=list)
+    pre_build_commands: list[BuildEventCommand] = field(default_factory=list)
+    pre_link_commands: list[BuildEventCommand] = field(default_factory=list)
 
 
 @dataclass
@@ -74,14 +83,12 @@ class Executable:
     link_options: list[str] = field(default_factory=list)
     properties: dict[str, str] = field(default_factory=dict)
     dependencies: list[str] = field(default_factory=list)
-    post_build_commands: list[list[str]] = field(default_factory=list)
-    # The directory that each of the POST_BUILD commands runs in
-    post_build_working_directories: list[str] = field(default_factory=list)
+    post_build_commands: list[BuildEventCommand] = field(default_factory=list)
     # Files that the POST_BUILD commands may write, kept like the outputs of
     # a custom command
     post_build_byproducts: list[str] = field(default_factory=list)
-    pre_build_commands: list[list[str]] = field(default_factory=list)
-    pre_link_commands: list[list[str]] = field(default_factory=list)
+    pre_build_commands: list[BuildEventCommand] = field(default_factory=list)
+    pre_link_commands: list[BuildEventCommand] = field(default_factory=list)
 
 
 @dataclass

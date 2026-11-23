@@ -878,6 +878,17 @@ def _ninja_flag_path(path: str, source_dir: Path) -> str:
     return path
 
 
+def _escape_old_style(arg: str) -> str:
+    """Escape an argument of a custom command without VERBATIM, like CMake.
+
+    Only spaces are escaped then, or on Windows an argument with spaces is
+    quoted unless it has quotes already. Other characters are left to the shell.
+    """
+    if platform.system() == "Windows":
+        return f'"{arg}"' if " " in arg and '"' not in arg else arg
+    return arg.replace(" ", "\\ ")
+
+
 def _quote_if_spaced(part: str) -> str:
     """Quote a flag or path for a Ninja command line if it contains whitespace."""
     return _quote_ninja_cmd_part(part) if re.search(r"\s", part) else part
@@ -1731,10 +1742,12 @@ def generate_ninja(
                     # The file of a target is one argument, also without
                     # VERBATIM, e.g. an imported one below "Program Files".
                     parts.append(_quote_ninja_cmd_part(arg))
-                elif verbatim and arg not in shell_operators:
-                    parts.append(_quote_ninja_cmd_part(str(arg)))
+                elif arg in shell_operators:
+                    parts.append(arg)
+                elif verbatim:
+                    parts.append(_quote_ninja_cmd_part(arg))
                 else:
-                    parts.append(str(arg))
+                    parts.append(_escape_old_style(arg))
             return " ".join(parts)
 
         def _output_nodes(
@@ -3093,15 +3106,11 @@ def generate_ninja(
                 pb_cmd_parts: list[str] = []
                 pb_directory: str | None = None
                 pb_changed_directory = False
-                for pb_cmd, pb_working_directory in zip(
-                    exe.post_build_commands,
-                    exe.post_build_working_directories,
-                    strict=True,
-                ):
+                for pb_cmd in exe.post_build_commands:
                     # Like in CMake, each command runs in its WORKING_DIRECTORY,
                     # which is the binary directory of the target by default.
                     pb_working_directory = _absolute_target_file(
-                        _expand_genex(pb_working_directory)
+                        _expand_genex(pb_cmd.working_directory)
                     )
                     if pb_working_directory != pb_directory:
                         pb_directory = pb_working_directory
@@ -3115,10 +3124,13 @@ def generate_ninja(
                     # Like other custom commands, so that shell operators like
                     # ">" work and $<TARGET_FILE:...> is absolute, e.g. for
                     # gtest/doctest_discover_tests() that run the executable in
-                    # another WORKING_DIRECTORY. The arguments are always
-                    # quoted, as CMake escapes spaces also without VERBATIM.
+                    # another WORKING_DIRECTORY.
                     pb_cmd_parts.append(
-                        _format_command(pb_cmd, verbatim=True, current_target=exe.name)
+                        _format_command(
+                            pb_cmd.command,
+                            verbatim=pb_cmd.verbatim,
+                            current_target=exe.name,
+                        )
                     )
                 # Touch the stamp so ninja skips this step when nothing has changed
                 cmake_cmd_quoted = " ".join(_quote_ninja_cmd_part(p) for p in cmake_cmd_parts)

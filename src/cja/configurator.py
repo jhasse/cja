@@ -117,7 +117,7 @@ from .syntax import (
     SourceFileProperties,
     Test,
 )
-from .targets import ImportedTarget, InstallTarget
+from .targets import BuildEventCommand, ImportedTarget, InstallTarget
 from .utils import (
     UNDEFINED_VAR_SENTINEL,
     archive_filename_from_url,
@@ -380,6 +380,7 @@ def _add_custom_command_target(
     acc_commands: list[list[str]] = []
     acc_byproducts: list[str] = []
     acc_working_directory: str | None = None
+    acc_verbatim = False
     acc_section: str | None = None
     acc_unsupported: list[str] = []
     acc_expand_lists = False
@@ -388,6 +389,7 @@ def _add_custom_command_target(
             acc_section = acc_arg
             acc_commands.append([])
         elif acc_arg in ("VERBATIM", "USES_TERMINAL"):
+            acc_verbatim = acc_verbatim or acc_arg == "VERBATIM"
             acc_section = None
         elif acc_arg == "COMMAND_EXPAND_LISTS":
             acc_expand_lists = True
@@ -428,20 +430,21 @@ def _add_custom_command_target(
         acc_unsupported.append(acc_when)
     ctx.check_unsupported_args(cmd, acc_unsupported, strict)
     if acc_commands and acc_target_obj is not None:
+        working_directory = _custom_command_working_directory(
+            ctx, acc_working_directory
+        )
+        build_event_commands = [
+            BuildEventCommand(command, working_directory, acc_verbatim)
+            for command in acc_commands
+        ]
         if acc_when == "POST_BUILD":
-            acc_target_obj.post_build_commands.extend(acc_commands)
+            acc_target_obj.post_build_commands.extend(build_event_commands)
             if acc_target_exe is not None:
-                working_directory = _custom_command_working_directory(
-                    ctx, acc_working_directory
-                )
-                acc_target_exe.post_build_working_directories.extend(
-                    [working_directory] * len(acc_commands)
-                )
                 acc_target_exe.post_build_byproducts.extend(acc_byproducts)
         elif acc_when == "PRE_BUILD":
-            acc_target_obj.pre_build_commands.extend(acc_commands)
+            acc_target_obj.pre_build_commands.extend(build_event_commands)
         elif acc_when == "PRE_LINK":
-            acc_target_obj.pre_link_commands.extend(acc_commands)
+            acc_target_obj.pre_link_commands.extend(build_event_commands)
 
 
 # The keywords of try_compile()'s signatures.
