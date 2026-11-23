@@ -1140,3 +1140,57 @@ add_custom_target(copy ALL DEPENDS {"app" if event else "copied.txt"})
     assert (tmp_path / "build" / "copied.txt").read_text() == "content"
     echoed = (tmp_path / "build" / "echoed.txt").read_text().strip().strip('"')
     assert echoed == "x y"
+
+
+@pytest.mark.parametrize(
+    ("target", "message"),
+    [
+        ("no_such_target", "No TARGET 'no_such_target' has been created in this directory."),
+        ("imported", "TARGET 'imported' is IMPORTED and does not build here."),
+        ("in_sub", "TARGET 'in_sub' was not created in this directory."),
+    ],
+)
+def test_build_event_of_target_elsewhere(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], target: str, message: str
+) -> None:
+    """Like in CMake, add_custom_command(TARGET) is for the targets that are
+    built by the current directory."""
+    from cja.generator import configure
+
+    (tmp_path / "CMakeLists.txt").write_text(f"""\
+cmake_minimum_required(VERSION 3.10)
+project(BuildEventTargetTest C)
+add_executable(app main.c)
+add_custom_target(custom)
+add_library(imported UNKNOWN IMPORTED)
+add_subdirectory(sub)
+add_custom_command(TARGET app POST_BUILD COMMAND echo app)
+add_custom_command(TARGET custom POST_BUILD COMMAND echo custom)
+add_custom_command(TARGET {target} POST_BUILD COMMAND echo {target})
+""")
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "CMakeLists.txt").write_text("add_executable(in_sub ../main.c)\n")
+    (tmp_path / "main.c").write_text("int main(void) { return 0; }\n")
+
+    ctx = configure(tmp_path, "build")
+
+    err = capsys.readouterr().err
+    assert f"CMakeLists.txt:9: warning: {message}" in err
+    assert err.count("warning:") == 1
+    assert [c.command for c in ctx.get_executable("app").post_build_commands] == [  # type: ignore[union-attr]
+        ["echo", "app"]
+    ]
+    in_sub = ctx.get_executable("in_sub")
+    assert in_sub is not None
+    assert in_sub.post_build_commands == []
+
+    # POST_BUILD steps of custom targets aren't supported with --strict.
+    cmake_file = tmp_path / "CMakeLists.txt"
+    cmake_file.write_text(
+        cmake_file.read_text().replace(
+            "add_custom_command(TARGET custom POST_BUILD COMMAND echo custom)\n", ""
+        )
+    )
+    with pytest.raises(SystemExit):
+        configure(tmp_path, "build", strict=True)
+    assert f"error: {message}" in capsys.readouterr().err

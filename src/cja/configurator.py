@@ -369,6 +369,24 @@ def _custom_command_working_directory(
     return to_posix_path(Path(binary_dir) / working_directory)
 
 
+def _build_event_target_error(ctx: BuildContext, name: str) -> str | None:
+    """Why add_custom_command(TARGET <name> ...) can't add to that target, if
+    it can't, like CMake says."""
+    lib = ctx.get_library(name)
+    target = lib or ctx.get_executable(name) or ctx.get_custom_target(name)
+    if (target is None and name in ctx.imported_targets) or (
+        lib is not None and is_truthy(lib.properties.get("IMPORTED", ""))
+    ):
+        return f"TARGET '{name}' is IMPORTED and does not build here."
+    if target is None:
+        return f"No TARGET '{name}' has been created in this directory."
+    if target.source_dir is not None and os.path.normpath(
+        target.source_dir
+    ) != os.path.normpath(ctx.current_source_dir):
+        return f"TARGET '{name}' was not created in this directory."
+    return None
+
+
 def _add_custom_command_target(
     ctx: BuildContext, cmd: Command, args: list[str], strict: bool
 ) -> None:
@@ -376,6 +394,13 @@ def _add_custom_command_target(
     if len(args) < 3:
         return
     acc_target_name = ctx.expand_variables(args[1], strict, cmd.line)
+    target_error = _build_event_target_error(ctx, acc_target_name)
+    if target_error is not None:
+        if strict:
+            ctx.print_error(target_error, cmd.line)
+            sys.exit(1)
+        ctx.print_warning(target_error, cmd.line)
+        return
     acc_when = args[2]  # POST_BUILD, PRE_BUILD, or PRE_LINK
     acc_commands: list[list[str]] = []
     acc_byproducts: list[str] = []
