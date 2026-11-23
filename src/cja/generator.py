@@ -1745,7 +1745,9 @@ def generate_ninja(
                 elif arg in shell_operators:
                     parts.append(arg)
                 elif verbatim:
-                    parts.append(_quote_ninja_cmd_part(arg))
+                    # Like CMake, also escape "$" for ninja, which would take
+                    # it for one of its variables.
+                    parts.append(_quote_ninja_cmd_part(arg).replace("$", "$$"))
                 else:
                     parts.append(_escape_old_style(arg))
             return " ".join(parts)

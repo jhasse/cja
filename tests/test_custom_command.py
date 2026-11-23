@@ -1194,3 +1194,29 @@ add_custom_command(TARGET {target} POST_BUILD COMMAND echo {target})
     with pytest.raises(SystemExit):
         configure(tmp_path, "build", strict=True)
     assert f"error: {message}" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("event", ["", "POST_BUILD"])
+def test_verbatim_dollar_sign(tmp_path: Path, event: str) -> None:
+    """With VERBATIM, a "$" reaches the command, like in CMake."""
+    import subprocess
+
+    from cja.generator import configure
+
+    if event:
+        command = "add_custom_command(TARGET app POST_BUILD"
+    else:
+        command = "add_custom_command(OUTPUT dollar.txt"
+    (tmp_path / "CMakeLists.txt").write_text(f"""\
+cmake_minimum_required(VERSION 3.10)
+project(DollarTest C)
+add_executable(app main.c)
+{command} COMMAND echo [[dol$lar]] > dollar.txt VERBATIM)
+add_custom_target(dollar ALL DEPENDS {"app" if event else "dollar.txt"})
+""")
+    (tmp_path / "main.c").write_text("int main(void) { return 0; }\n")
+
+    configure(tmp_path, "build")
+    subprocess.run(["ninja"], cwd=tmp_path, check=True, capture_output=True)
+
+    assert (tmp_path / "build" / "dollar.txt").read_text().strip() == "dol$lar"
