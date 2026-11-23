@@ -324,6 +324,11 @@ def cmd_command_mode(args: list[str]) -> int:
         for directory in cmd_args:
             Path(directory).mkdir(parents=True, exist_ok=True)
         return 0
+    elif cmd in ("echo", "echo_append"):
+        # Like in CMake, the arguments separated by single spaces
+        sys.stdout.write(" ".join(cmd_args) + ("\n" if cmd == "echo" else ""))
+        sys.stdout.flush()
+        return 0
     elif cmd == "touch":
         for f in cmd_args:
             p = Path(f)

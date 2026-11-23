@@ -386,6 +386,29 @@ def test_cli_make_directory(tmp_path: Path) -> None:
     assert dir_path.is_dir()
 
 
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        (["echo"], "\n"),
+        (["echo", "a b", "c"], "a b c\n"),
+        (["echo", "", ""], " \n"),
+        (["echo_append", "a", "b"], "a b"),
+        (["echo_append"], ""),
+    ],
+)
+def test_cli_echo(tmp_path: Path, args: list[str], expected: str) -> None:
+    """Like CMake, cja -E echo prints its arguments separated by spaces."""
+    result = subprocess.run(
+        [sys.executable, "-m", "cja", "-E", *args],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == expected
+
+
 def test_unused_d_variable_warning(tmp_path: Path) -> None:
     """Unused -D variables should produce a warning at the end of configure."""
     source_dir = tmp_path / "hello"
