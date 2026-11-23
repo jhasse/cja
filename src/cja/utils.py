@@ -535,6 +535,15 @@ def strip_generator_expressions(
             return ""
         if content == "SEMICOLON":
             return ";"
+        if content == "COMMA":
+            return ","
+        if content.startswith("JOIN:"):
+            # $<JOIN:list,glue>: everything after the first comma is the glue
+            args = split_top_level(content[len("JOIN:") :], ",", maxsplit=1)
+            if len(args) != 2:
+                return ""
+            items = [item for item in expand_text(args[0]).split(";") if item]
+            return expand_text(args[1]).join(items)
         if content.startswith("BOOL:"):
             arg = expand_text(content[len("BOOL:") :])
             return "1" if is_truthy(arg) else "0"

@@ -178,6 +178,30 @@ def test_strip_generator_expressions_multiline_content() -> None:
     assert "-Waggregate-return" in result
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("$<JOIN:a;b;c,+>", "a+b+c"),
+        ("-I$<JOIN:inc;other, -I>", "-Iinc -Iother"),
+        # The glue is everything after the first comma
+        ("$<JOIN:a;b,,>", "a,b"),
+        ("$<JOIN:a;b,$<COMMA>>", "a,b"),
+        ("$<JOIN:a;b,>", "ab"),
+        # Like in any list, empty elements are dropped
+        ("$<JOIN:a;;c,->", "a-c"),
+        ("$<JOIN:,->", ""),
+        ("$<JOIN:$<TARGET_PROPERTY:tgt,FILES>,$<SEMICOLON>>", "a.md;b.md"),
+    ],
+)
+def test_strip_generator_expressions_join(value: str, expected: str) -> None:
+    def target_property(target: str, prop: str) -> str | None:
+        return {("tgt", "FILES"): "a.md;b.md"}.get((target, prop))
+
+    assert (
+        strip_generator_expressions(value, target_property=target_property) == expected
+    )
+
+
 def test_status_marker_unicode_encoding() -> None:
     """Unicode-capable terminals should keep check/cross markers."""
     assert status_marker(True) == "✓"
