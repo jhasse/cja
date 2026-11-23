@@ -255,8 +255,7 @@ get_source_file_property(TOP_OF_SUB_IN_SUB sub/s.c DIRECTORY sub SUB_PROP)
 add_library(sublib STATIC s.c ${CMAKE_SOURCE_DIR}/shared.c)
 set_source_files_properties(s.c PROPERTIES COMPILE_DEFINITIONS SUB_DEF SUB_PROP sub)
 get_source_file_property(SUB ${CMAKE_SOURCE_DIR}/shared.c MY_PROP)
-get_source_file_property(SUB_OF_TOP ${CMAKE_SOURCE_DIR}/shared.c
-    DIRECTORY ${CMAKE_SOURCE_DIR} MY_PROP)
+get_source_file_property(SUB_OF_TOP ../shared.c DIRECTORY ${CMAKE_SOURCE_DIR} MY_PROP)
 set(SUB "${SUB}" PARENT_SCOPE)
 set(SUB_OF_TOP "${SUB_OF_TOP}" PARENT_SCOPE)
 """
@@ -289,3 +288,63 @@ set(SUB_OF_TOP "${SUB_OF_TOP}" PARENT_SCOPE)
         "sublib_shared": "-DFOR_SUB",
         "otherlib_shared": "",
     }
+
+
+def test_source_file_location_and_generated(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """LOCATION and GENERATED tell where a source file is and whether the
+    build makes it."""
+    from cja.generator import configure
+    from cja.utils import to_posix_path
+
+    tmp_path = tmp_path.resolve()
+    (tmp_path / "CMakeLists.txt").write_text(
+        """\
+cmake_minimum_required(VERSION 3.20)
+project(SourceLocationTest C)
+add_library(mylib STATIC lib.c)
+add_custom_command(OUTPUT gen.c COMMAND tool gen.c)
+set_source_files_properties(marked.c PROPERTIES GENERATED TRUE)
+add_subdirectory(sub)
+foreach(file lib.c unused.c gen.c ${CMAKE_CURRENT_BINARY_DIR}/gen.c marked.c missing.c)
+  get_source_file_property("GENERATED_${file}" ${file} GENERATED)
+  get_property("GENERATED_PROPERTY_${file}" SOURCE ${file} PROPERTY GENERATED)
+  get_source_file_property("LOCATION_${file}" ${file} LOCATION)
+  get_property("LOCATION_PROPERTY_${file}" SOURCE ${file} PROPERTY LOCATION)
+endforeach()
+"""
+    )
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "CMakeLists.txt").write_text(
+        "get_source_file_property(MARKED_IN_SUB ../marked.c GENERATED)\n"
+        'set(MARKED_IN_SUB "${MARKED_IN_SUB}" PARENT_SCOPE)\n'
+    )
+    for source in ("lib.c", "unused.c"):
+        (tmp_path / source).write_text("")
+
+    ctx = configure(tmp_path, "build")
+
+    source = to_posix_path(tmp_path)
+    binary = to_posix_path(tmp_path / "build")
+    expected = {
+        # file: (GENERATED, with get_property(), LOCATION)
+        "lib.c": ("0", "0", f"{source}/lib.c"),
+        # CMake only knows the files that were used for something
+        "unused.c": ("NOTFOUND", "0", f"{source}/unused.c"),
+        "gen.c": ("1", "1", f"{binary}/gen.c"),
+        f"{binary}/gen.c": ("1", "1", f"{binary}/gen.c"),
+        "marked.c": ("1", "1", f"{binary}/marked.c"),
+        "missing.c": ("NOTFOUND", "0", None),
+    }
+    for file, (generated, generated_property, location) in expected.items():
+        assert ctx.variables[f"GENERATED_{file}"] == generated, file
+        assert ctx.variables[f"GENERATED_PROPERTY_{file}"] == generated_property, file
+        assert ctx.variables[f"LOCATION_{file}"] == (location or "NOTFOUND"), file
+        assert ctx.variables.get(f"LOCATION_PROPERTY_{file}") == location, file
+    # Whether a file is generated doesn't depend on the directory.
+    assert ctx.variables["MARKED_IN_SUB"] == "1"
+    assert "Cannot find source file: missing.c" in capsys.readouterr().err
+
+    with pytest.raises(SystemExit):
+        configure(tmp_path, "build", strict=True)

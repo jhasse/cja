@@ -75,6 +75,7 @@ from .commands import (
     handle_unset,
     init_compiler_flag_cache_vars,
     init_project_cache_vars,
+    source_file_key,
     source_file_scopes,
 )
 from .config_utils import (
@@ -126,7 +127,6 @@ from .utils import (
     is_truthy,
     link_option_args,
     make_relative,
-    resolve_cmake_path,
     split_flags,
     split_unquoted_list_args,
     status_marker,
@@ -2891,14 +2891,11 @@ int main() {{
                     for scope, filename in (
                         (scope, f) for scope in scopes for f in files
                     ):
-                        expanded_filename = ctx.expand_variables(
-                            filename, strict, cmd.line
-                        )
                         # Like set_property(SOURCE), so that e.g. the
                         # forward slashes of file(GLOB) results on Windows
                         # match the paths the generator looks up
-                        expanded_filename = resolve_cmake_path(
-                            expanded_filename, ctx.current_source_dir
+                        expanded_filename = source_file_key(
+                            ctx, ctx.expand_variables(filename, strict, cmd.line)
                         )
                         file_props = scope.setdefault(
                             expanded_filename, SourceFileProperties()
