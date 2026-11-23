@@ -913,6 +913,29 @@ _TARGET_PROPERTY_SETTERS: dict[
 }
 
 
+def _set_property_value(
+    properties: dict[str, str],
+    name: str,
+    values: list[str],
+    append: bool = False,
+    append_string: bool = False,
+) -> None:
+    """Set a property like set_property() does.
+
+    Like in CMake, no values unset it, unless they're appended, which leaves
+    it alone. APPEND adds list elements and APPEND_STRING extends the string.
+    """
+    if not values:
+        if not append:
+            properties.pop(name, None)
+        return
+    value = ";".join(values)
+    existing = properties.get(name) if append else None
+    if existing:
+        value = existing + ("" if append_string else ";") + value
+    properties[name] = value
+
+
 def _set_target_property(
     ctx: BuildContext,
     cmd: Command,
@@ -923,10 +946,7 @@ def _set_target_property(
     append: bool = False,
     append_string: bool = False,
 ) -> None:
-    """Set (or append to) a property of a library, executable or custom target.
-
-    Like in CMake, no values unset the property, unless they're appended.
-    """
+    """Set (or append to) a property of a library, executable or custom target."""
     if append and not values:
         return
     field_name = TARGET_PROPERTY_FIELDS.get(prop_name)
@@ -940,14 +960,7 @@ def _set_target_property(
         setter = _TARGET_PROPERTY_SETTERS[prop_name.removeprefix("INTERFACE_")]
         setter(ctx, cmd, [target.name, visibility, *items], strict)
         return
-    if not values:
-        target.properties.pop(prop_name, None)
-        return
-    value = ";".join(values)
-    if append and prop_name in target.properties:
-        target.properties[prop_name] += ("" if append_string else ";") + value
-    else:
-        target.properties[prop_name] = value
+    _set_property_value(target.properties, prop_name, values, append, append_string)
 
 
 def handle_set_target_properties(
@@ -1091,17 +1104,9 @@ def handle_set_property(
     prop_values = args[prop_idx + 2 :]
 
     if scope_type == "GLOBAL":
-        # Global property
-        if prop_values:
-            value = " ".join(prop_values) if append_string else ";".join(prop_values)
-            if append_mode and prop_name in ctx.global_properties:
-                separator = "" if append_string else ";"
-                ctx.global_properties[prop_name] += separator + value
-            else:
-                ctx.global_properties[prop_name] = value
-        else:
-            # Empty value unsets the property
-            ctx.global_properties.pop(prop_name, None)
+        _set_property_value(
+            ctx.global_properties, prop_name, prop_values, append_mode, append_string
+        )
 
     elif scope_type == "TARGET":
         # Target property
@@ -1199,31 +1204,25 @@ def handle_set_property(
         dirs = scope_args if scope_args else [str(ctx.current_source_dir)]
         for d in dirs:
             abs_dir = resolve_cmake_path(d, ctx.current_source_dir)
-
-            if abs_dir not in ctx.directory_properties:
-                ctx.directory_properties[abs_dir] = {}
-
-            value = ";".join(prop_values)
-            if append_mode and prop_name in ctx.directory_properties[abs_dir]:
-                separator = "" if append_string else ";"
-                ctx.directory_properties[abs_dir][prop_name] += separator + value
-            else:
-                ctx.directory_properties[abs_dir][prop_name] = value
+            _set_property_value(
+                ctx.directory_properties.setdefault(abs_dir, {}),
+                prop_name,
+                prop_values,
+                append_mode,
+                append_string,
+            )
 
     elif scope_type == "TEST":
         test_names = scope_args
         if "DIRECTORY" in test_names:
             test_names = test_names[: test_names.index("DIRECTORY")]
-        value = ";".join(prop_values)
         for test_name in test_names:
             test = _find_test(ctx, cmd, test_name, "set_property(TEST)")
             if test is None:
                 continue
-            if append_mode and prop_name in test.properties:
-                separator = "" if append_string else ";"
-                test.properties[prop_name] += separator + value
-            else:
-                test.properties[prop_name] = value
+            _set_property_value(
+                test.properties, prop_name, prop_values, append_mode, append_string
+            )
 
     elif scope_type in ("CACHE", "INSTALL"):
         ctx.check_unsupported_args(cmd, [scope_type], strict)

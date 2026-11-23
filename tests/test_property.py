@@ -390,30 +390,32 @@ def test_set_property_empty_value_unsets() -> None:
 
 
 @pytest.mark.parametrize(
-    "add_target",
+    ("setup", "scope"),
     [
-        "add_library(tgt STATIC lib.c)",
-        "add_executable(tgt main.c)",
-        "add_library(tgt UNKNOWN IMPORTED)",
-        "add_custom_target(tgt)",
+        ("", "GLOBAL"),
+        ("", "DIRECTORY"),
+        ("add_test(NAME tst COMMAND cmd)", "TEST tst"),
+        ("add_library(tgt STATIC lib.c)", "TARGET tgt"),
+        ("add_executable(tgt main.c)", "TARGET tgt"),
+        ("add_library(tgt UNKNOWN IMPORTED)", "TARGET tgt"),
+        ("add_custom_target(tgt)", "TARGET tgt"),
     ],
 )
-def test_set_property_target_without_values(add_target: str) -> None:
-    """No values unset a target property, unless they're appended."""
+def test_set_property_without_values(setup: str, scope: str) -> None:
+    """No values unset a property, unless they're appended."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
     process_commands(
         parse(
-            f"{add_target}\n"
-            "set_property(TARGET tgt PROPERTY MY_PROP x)\n"
-            "set_property(TARGET tgt APPEND PROPERTY MY_PROP)\n"
-            "set_property(TARGET tgt APPEND PROPERTY OTHER_PROP)\n"
-            "get_target_property(APPENDED tgt MY_PROP)\n"
-            "get_property(OTHER_IS_SET TARGET tgt PROPERTY OTHER_PROP SET)\n"
-            "set_property(TARGET tgt PROPERTY MY_PROP)\n"
-            "get_target_property(UNSET tgt MY_PROP)\n"
-            "get_property(IS_SET TARGET tgt PROPERTY MY_PROP SET)\n"
-            'set_property(TARGET tgt PROPERTY MY_PROP "")\n'
-            "get_property(EMPTY_IS_SET TARGET tgt PROPERTY MY_PROP SET)\n"
+            f"{setup}\n"
+            f"set_property({scope} PROPERTY MY_PROP x)\n"
+            f"set_property({scope} APPEND PROPERTY MY_PROP)\n"
+            f"set_property({scope} APPEND PROPERTY OTHER_PROP)\n"
+            f"get_property(APPENDED {scope} PROPERTY MY_PROP)\n"
+            f"get_property(OTHER_IS_SET {scope} PROPERTY OTHER_PROP SET)\n"
+            f"set_property({scope} PROPERTY MY_PROP)\n"
+            f"get_property(IS_SET {scope} PROPERTY MY_PROP SET)\n"
+            f'set_property({scope} PROPERTY MY_PROP "")\n'
+            f"get_property(EMPTY_IS_SET {scope} PROPERTY MY_PROP SET)\n"
         ),
         ctx,
         strict=True,
@@ -421,9 +423,26 @@ def test_set_property_target_without_values(add_target: str) -> None:
 
     assert ctx.variables["APPENDED"] == "x"
     assert ctx.variables["OTHER_IS_SET"] == "0"
-    assert ctx.variables["UNSET"] == "UNSET-NOTFOUND"
     assert ctx.variables["IS_SET"] == "0"
     assert ctx.variables["EMPTY_IS_SET"] == "1"
+
+
+def test_set_property_append_string_multiple_values() -> None:
+    """APPEND_STRING appends the values as the list that they are."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    process_commands(
+        parse(
+            "set_property(GLOBAL PROPERTY MY_PROP a)\n"
+            "set_property(GLOBAL APPEND_STRING PROPERTY MY_PROP b c)\n"
+            'set_property(GLOBAL PROPERTY EMPTY_PROP "")\n'
+            "set_property(GLOBAL APPEND PROPERTY EMPTY_PROP d)\n"
+        ),
+        ctx,
+        strict=True,
+    )
+
+    assert ctx.global_properties["MY_PROP"] == "ab;c"
+    assert ctx.global_properties["EMPTY_PROP"] == "d"
 
 
 def test_get_cmake_property() -> None:
