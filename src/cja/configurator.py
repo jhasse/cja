@@ -2738,18 +2738,21 @@ int main() {{
                     ct_unsupported.append("COMMAND_EXPAND_LISTS")
                 ctx.check_unsupported_args(cmd, ct_unsupported, strict)
 
+                ct_properties: dict[str, str] = {}
+                if not ct_all or ctx.exclude_from_all:
+                    ct_properties["EXCLUDE_FROM_ALL"] = "TRUE"
                 ctx.custom_targets.append(
                     CustomTarget(
                         name=target_name,
                         commands=ct_commands,
                         depends=ct_depends,
-                        all=ct_all and not ctx.exclude_from_all,
                         working_directory=ct_working_directory,
                         verbatim=ct_verbatim,
                         uses_terminal=ct_uses_terminal,
                         comment=ct_comment,
                         defined_file=ctx.current_list_file,
                         defined_line=cmd.line,
+                        properties=ct_properties,
                     )
                 )
 

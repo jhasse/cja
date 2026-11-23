@@ -136,7 +136,6 @@ class CustomTarget:
     name: str
     commands: list[list[str]]
     depends: list[str]
-    all: bool = False
     working_directory: str | None = None
     verbatim: bool = False
     uses_terminal: bool = False
@@ -144,6 +143,8 @@ class CustomTarget:
     defined_file: Path | None = None
     defined_line: int = 0
     dependencies: list[str] = field(default_factory=list)
+    # EXCLUDE_FROM_ALL is set unless the target was added with ALL
+    properties: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -355,6 +356,9 @@ class BuildContext:
             if prop == "LOCATION" and imported.executable:
                 return imported.location(self.variables.get("CMAKE_BUILD_TYPE", ""))
             return imported.properties.get(prop)
+        custom = self.get_custom_target(name)
+        if custom is not None:
+            return "UTILITY" if prop == "TYPE" else custom.properties.get(prop)
         return None
 
     def is_imported_executable(self, name: str) -> bool:
@@ -368,13 +372,19 @@ class BuildContext:
                 return exe
         return None
 
+    def get_custom_target(self, name: str) -> CustomTarget | None:
+        for custom in self.custom_targets:
+            if custom.name == name:
+                return custom
+        return None
+
     def target_exists(self, name: str) -> bool:
         """Whether a target of any kind has this name, like if(TARGET)."""
         return (
             self.get_library(name) is not None
             or self.get_executable(name) is not None
             or name in self.imported_targets
-            or any(ct.name == name for ct in self.custom_targets)
+            or self.get_custom_target(name) is not None
         )
 
     def resolve_path(self, path: str) -> str:

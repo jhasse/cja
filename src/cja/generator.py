@@ -1725,7 +1725,7 @@ def generate_ninja(
                         combined.append(dep)
                 n.build([ct.name], "phony", combined)
 
-            if ct.all:
+            if not is_truthy(ct.properties.get("EXCLUDE_FROM_ALL", "")):
                 custom_target_all.append(ct.name)
             n.newline()
 

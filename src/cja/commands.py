@@ -20,6 +20,7 @@ from typing import NoReturn
 from .build_context import (
     BuildContext,
     ConfigureDependGlob,
+    CustomTarget,
     DeferredCall,
     find_matching_endfunction,
     find_matching_endmacro,
@@ -915,14 +916,14 @@ _TARGET_PROPERTY_SETTERS: dict[
 def _set_target_property(
     ctx: BuildContext,
     cmd: Command,
-    target: Library | Executable,
+    target: Library | Executable | CustomTarget,
     prop_name: str,
     values: list[str],
     strict: bool,
     append: bool = False,
     append_string: bool = False,
 ) -> None:
-    """Set (or append to) a property of a library or executable."""
+    """Set (or append to) a property of a library, executable or custom target."""
     field_name = TARGET_PROPERTY_FIELDS.get(prop_name)
     if field_name is not None and hasattr(target, field_name):
         # Like CMake, APPEND_STRING adds list elements to these, too.
@@ -963,7 +964,11 @@ def handle_set_target_properties(
         properties = dict(zip(prop_args[::2], prop_args[1::2]))
 
         for target_name in target_names:
-            target = ctx.get_library(target_name) or ctx.get_executable(target_name)
+            target = (
+                ctx.get_library(target_name)
+                or ctx.get_executable(target_name)
+                or ctx.get_custom_target(target_name)
+            )
             imported_target = ctx.imported_targets.get(target_name)
 
             for prop_name, prop_value in properties.items():
@@ -1103,7 +1108,7 @@ def handle_set_property(
                 )
                 continue
 
-            target = lib or exe
+            target = lib or exe or ctx.get_custom_target(target_name)
             if target is not None:
                 _set_target_property(
                     ctx,

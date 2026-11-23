@@ -29,7 +29,7 @@ def test_add_custom_target_minimal() -> None:
     assert ct.name == "my_target"
     assert ct.commands == []
     assert ct.depends == []
-    assert ct.all is False
+    assert ct.properties == {"EXCLUDE_FROM_ALL": "TRUE"}
 
 
 def test_add_custom_target_all() -> None:
@@ -48,7 +48,7 @@ def test_add_custom_target_all() -> None:
     assert len(ctx.custom_targets) == 1
     ct = ctx.custom_targets[0]
     assert ct.name == "my_target"
-    assert ct.all is True
+    assert ct.properties == {}
 
 
 def test_add_custom_target_with_command() -> None:
@@ -121,7 +121,7 @@ def test_add_custom_target_all_command_depends() -> None:
 
     ct = ctx.custom_targets[0]
     assert ct.name == "my_target"
-    assert ct.all is True
+    assert ct.properties == {}
     assert ct.commands == [["echo", "hello"]]
     assert ct.depends == ["input.txt"]
 
@@ -380,3 +380,62 @@ def test_add_custom_target_without_arguments_is_skipped() -> None:
     ]
     process_commands(commands, ctx)
     assert ctx.variables["AFTER"] == "1"
+
+
+def test_custom_target_properties(capsys) -> None:
+    """Properties of custom targets can be set and read like those of other targets."""
+    from cja.parser import parse
+
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    process_commands(
+        parse(
+            "add_custom_target(docs COMMAND echo docs)\n"
+            "add_custom_target(lint ALL COMMAND echo lint)\n"
+            "set_target_properties(docs lint PROPERTIES FOLDER tools FILES a.md)\n"
+            "set_property(TARGET docs APPEND PROPERTY FILES b.md c.md)\n"
+            "get_target_property(DOCS_TYPE docs TYPE)\n"
+            "get_target_property(DOCS_FILES docs FILES)\n"
+            "get_target_property(LINT_FILES lint FILES)\n"
+            "get_target_property(DOCS_EXCLUDED docs EXCLUDE_FROM_ALL)\n"
+            "get_target_property(LINT_EXCLUDED lint EXCLUDE_FROM_ALL)\n"
+            "get_property(DOCS_FOLDER TARGET docs PROPERTY FOLDER)\n"
+            "get_property(DOCS_HAS_LABELS TARGET docs PROPERTY LABELS SET)\n"
+            "add_library(mylib STATIC lib.c)\n"
+            "target_compile_definitions(mylib PRIVATE"
+            " FOLDER=$<TARGET_PROPERTY:docs,FOLDER>)\n"
+        ),
+        ctx,
+        strict=True,
+    )
+
+    assert ctx.variables["DOCS_TYPE"] == "UTILITY"
+    assert ctx.variables["DOCS_FILES"] == "a.md;b.md;c.md"
+    assert ctx.variables["LINT_FILES"] == "a.md"
+    assert ctx.variables["DOCS_EXCLUDED"] == "TRUE"
+    assert ctx.variables["LINT_EXCLUDED"] == "LINT_EXCLUDED-NOTFOUND"
+    assert ctx.variables["DOCS_FOLDER"] == "tools"
+    assert ctx.variables["DOCS_HAS_LABELS"] == "0"
+    lib = ctx.get_library("mylib")
+    assert lib is not None
+    assert lib.compile_definitions == ["FOLDER=tools"]
+    assert capsys.readouterr().err == ""
+
+
+def test_custom_target_exclude_from_all_property(tmp_path: Path) -> None:
+    """EXCLUDE_FROM_ALL decides whether the default build runs a custom target."""
+    from cja.generator import configure
+
+    (tmp_path / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.10)\n"
+        "project(CustomTargetExcludeTest NONE)\n"
+        "add_custom_target(opted_in COMMAND echo in)\n"
+        "add_custom_target(opted_out ALL COMMAND echo out)\n"
+        "add_custom_target(untouched ALL COMMAND echo untouched)\n"
+        "set_target_properties(opted_in PROPERTIES EXCLUDE_FROM_ALL FALSE)\n"
+        "set_property(TARGET opted_out PROPERTY EXCLUDE_FROM_ALL ON)\n"
+    )
+
+    configure(tmp_path, "build")
+
+    ninja_content = (tmp_path / "build.ninja").read_text()
+    assert "build all: phony opted_in untouched\n" in ninja_content
