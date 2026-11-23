@@ -75,6 +75,7 @@ from .commands import (
     handle_unset,
     init_compiler_flag_cache_vars,
     init_project_cache_vars,
+    source_file_scopes,
 )
 from .config_utils import (
     _render_basic_package_version_file,
@@ -2882,20 +2883,14 @@ int main() {{
             case "set_source_files_properties":
                 if "PROPERTIES" in args:
                     prop_idx = args.index("PROPERTIES")
-                    # Source file properties apply to all directories, so the
-                    # DIRECTORY and TARGET_DIRECTORY scopes aren't needed.
-                    scope_idx = min(
-                        (
-                            args.index(kw)
-                            for kw in ("DIRECTORY", "TARGET_DIRECTORY")
-                            if kw in args[:prop_idx]
-                        ),
-                        default=prop_idx,
+                    files, scopes = source_file_scopes(
+                        ctx, cmd, args[:prop_idx], strict
                     )
-                    files = args[:scope_idx]
                     props = args[prop_idx + 1 :]
 
-                    for filename in files:
+                    for scope, filename in (
+                        (scope, f) for scope in scopes for f in files
+                    ):
                         expanded_filename = ctx.expand_variables(
                             filename, strict, cmd.line
                         )
@@ -2905,13 +2900,9 @@ int main() {{
                         expanded_filename = resolve_cmake_path(
                             expanded_filename, ctx.current_source_dir
                         )
-
-                        if expanded_filename not in ctx.source_file_properties:
-                            ctx.source_file_properties[expanded_filename] = (
-                                SourceFileProperties()
-                            )
-
-                        file_props = ctx.source_file_properties[expanded_filename]
+                        file_props = scope.setdefault(
+                            expanded_filename, SourceFileProperties()
+                        )
 
                         # Parse properties in pairs
                         i = 0

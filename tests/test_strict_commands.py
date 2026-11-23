@@ -159,7 +159,11 @@ def test_ignored_keywords_are_not_values(tmp_path: Path) -> None:
     assert lib.link_libraries == ["foo"]
     assert ctx.executables == []
     assert "tool" in ctx.imported_targets
-    assert not any(Path(f).name == "sub" for f in ctx.source_file_properties)
+    assert not any(
+        Path(f).name == "sub"
+        for scope in ctx.source_file_properties.values()
+        for f in scope
+    )
     assert ctx.variables["r"] == "0"
 
 

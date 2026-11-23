@@ -184,4 +184,6 @@ def test_set_source_files_properties_directory(tmp_path: Path) -> None:
         " COMPILE_DEFINITIONS FOO)",
         strict=True,
     )
-    assert list(ctx.source_file_properties) == [str(tmp_path / "a.c")]
+    # Only for the targets of that directory
+    assert list(ctx.source_file_scope(tmp_path / "sub")) == [str(tmp_path / "a.c")]
+    assert not ctx.source_file_scope(tmp_path)

@@ -2505,7 +2505,9 @@ def generate_ninja(
 
                 # Check for source file properties
                 abs_source = str(ctx.source_dir / source)
-                file_props = ctx.source_file_properties.get(abs_source)
+                file_props = ctx.source_file_scope(
+                    lib.source_dir or ctx.source_dir
+                ).get(abs_source)
 
                 source_compile_flags = _language_compile_flags(
                     lib.name, lib_compile_flags, lib_compile_options_raw, source_language
@@ -2847,7 +2849,9 @@ def generate_ninja(
 
                 # Check for source file properties
                 abs_source = str(ctx.source_dir / source)
-                file_props = ctx.source_file_properties.get(abs_source)
+                file_props = ctx.source_file_scope(
+                    exe.source_dir or ctx.source_dir
+                ).get(abs_source)
 
                 source_compile_flags = _language_compile_flags(
                     exe.name, compile_flags, exe_compile_options_raw, source_language

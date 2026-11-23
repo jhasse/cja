@@ -242,8 +242,8 @@ def test_set_property_source() -> None:
     ]
     process_commands(commands, ctx)
     source_path = str(ctx.source_dir / "main.cpp")
-    assert source_path in ctx.source_file_properties
-    assert "DEBUG=1" in ctx.source_file_properties[source_path].compile_definitions
+    assert source_path in ctx.source_file_scope(ctx.source_dir)
+    assert "DEBUG=1" in ctx.source_file_scope(ctx.source_dir)[source_path].compile_definitions
 
 
 def test_set_property_source_append() -> None:
@@ -270,8 +270,8 @@ def test_set_property_source_append() -> None:
     ]
     process_commands(commands, ctx)
     source_path = str(ctx.source_dir / "main.cpp")
-    assert source_path in ctx.source_file_properties
-    props = ctx.source_file_properties[source_path].compile_definitions
+    assert source_path in ctx.source_file_scope(ctx.source_dir)
+    props = ctx.source_file_scope(ctx.source_dir)[source_path].compile_definitions
     assert "DEBUG=1" in props
     assert "VERBOSE=1" in props
 
@@ -313,10 +313,10 @@ def test_set_property_source_include_directories() -> None:
     ]
     process_commands(commands, ctx)
     source_path = str(ctx.source_dir / "main.cpp")
-    assert source_path in ctx.source_file_properties
+    assert source_path in ctx.source_file_scope(ctx.source_dir)
     assert any(
         "include" in d
-        for d in ctx.source_file_properties[source_path].include_directories
+        for d in ctx.source_file_scope(ctx.source_dir)[source_path].include_directories
     )
 
 
@@ -368,10 +368,10 @@ def test_set_property_multiple_sources() -> None:
     process_commands(commands, ctx)
     file1_path = str(ctx.source_dir / "file1.cpp")
     file2_path = str(ctx.source_dir / "file2.cpp")
-    assert file1_path in ctx.source_file_properties
-    assert file2_path in ctx.source_file_properties
-    assert "SHARED_DEF=1" in ctx.source_file_properties[file1_path].compile_definitions
-    assert "SHARED_DEF=1" in ctx.source_file_properties[file2_path].compile_definitions
+    assert file1_path in ctx.source_file_scope(ctx.source_dir)
+    assert file2_path in ctx.source_file_scope(ctx.source_dir)
+    assert "SHARED_DEF=1" in ctx.source_file_scope(ctx.source_dir)[file1_path].compile_definitions
+    assert "SHARED_DEF=1" in ctx.source_file_scope(ctx.source_dir)[file2_path].compile_definitions
 
 
 def test_set_property_empty_value_unsets() -> None:

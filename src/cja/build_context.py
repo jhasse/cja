@@ -224,9 +224,12 @@ class BuildContext:
     install_targets: list[InstallTarget] = field(
         default_factory=list
     )  # Installation targets
-    source_file_properties: dict[str, SourceFileProperties] = field(
+    # Properties of source files. Like in CMake, they're for the targets of
+    # one directory: by its key in directory_properties, then by the resolved
+    # path of the file.
+    source_file_properties: dict[str, dict[str, SourceFileProperties]] = field(
         default_factory=dict
-    )  # Properties for source files
+    )
     parent_scope_vars: dict[str, str | None] = field(
         default_factory=dict
     )  # For PARENT_SCOPE in functions
@@ -441,6 +444,11 @@ class BuildContext:
     def directory_key(self, source_dir: Path) -> str:
         """The key of a directory in directory_properties, like set_property() uses."""
         return resolve_cmake_path(str(source_dir), source_dir)
+
+    def source_file_scope(self, source_dir: Path) -> dict[str, SourceFileProperties]:
+        """The properties that source files have for the targets of a directory."""
+        key = self.directory_key(source_dir)
+        return self.source_file_properties.setdefault(key, {})
 
     def add_subdirectory(
         self, source_dir: Path, parent_dir: Path, exclude_from_all: bool, system: bool

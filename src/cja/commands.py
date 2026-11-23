@@ -1224,21 +1224,14 @@ def handle_set_property(
                 )
 
     elif scope_type == "SOURCE":
-        # Source file properties are global, so DIRECTORY and TARGET_DIRECTORY
-        # are implied.
-        for keyword in ("DIRECTORY", "TARGET_DIRECTORY"):
-            if keyword in scope_args:
-                scope_args = scope_args[: scope_args.index(keyword)]
-        for source_file in scope_args:
+        files, scopes = source_file_scopes(ctx, cmd, scope_args, strict)
+        for scope, source_file in ((scope, f) for scope in scopes for f in files):
             expanded_filename = ctx.expand_variables(source_file, strict, cmd.line)
+            # Also with DIRECTORY, relative to the current source directory
             expanded_filename = resolve_cmake_path(
                 expanded_filename, ctx.current_source_dir
             )
-
-            if expanded_filename not in ctx.source_file_properties:
-                ctx.source_file_properties[expanded_filename] = SourceFileProperties()
-
-            file_props = ctx.source_file_properties[expanded_filename]
+            file_props = scope.setdefault(expanded_filename, SourceFileProperties())
 
             if prop_name == "COMPILE_DEFINITIONS":
                 if append_mode:
@@ -1318,12 +1311,56 @@ def handle_set_property(
             sys.exit(1)
 
 
-def _source_file_property(ctx: BuildContext, filename: str, prop: str) -> str | None:
-    """A property of a source file, or None if it isn't set.
+def source_file_scopes(
+    ctx: BuildContext, cmd: Command, args: list[str], strict: bool
+) -> tuple[list[str], list[dict[str, SourceFileProperties]]]:
+    """Split the source files of a command from its directory options.
+
+    Returns the files and the properties of the directories that the command is
+    about, see BuildContext.source_file_scope(): the ones of DIRECTORY and of
+    the targets of TARGET_DIRECTORY, or else the current one.
+    """
+    files: list[str] = []
+    scopes: list[dict[str, SourceFileProperties]] = []
+    option = ""
+    for arg in args:
+        if arg in ("DIRECTORY", "TARGET_DIRECTORY"):
+            option = arg
+        elif not option:
+            files.append(arg)
+        elif option == "DIRECTORY":
+            key = resolve_cmake_path(arg, ctx.current_source_dir)
+            scopes.append(ctx.source_file_properties.setdefault(key, {}))
+        else:
+            target = (
+                ctx.get_library(arg)
+                or ctx.get_executable(arg)
+                or ctx.get_custom_target(arg)
+            )
+            if target is None or target.source_dir is None:
+                message = (
+                    f"{cmd.name} given non-existent target for TARGET_DIRECTORY {arg}"
+                )
+                if strict:
+                    ctx.print_error(message, cmd.line)
+                    sys.exit(1)
+                ctx.print_warning(message, cmd.line)
+                continue
+            scopes.append(ctx.source_file_scope(target.source_dir))
+    if not option:
+        scopes.append(ctx.source_file_scope(ctx.current_source_dir))
+    return files, scopes
+
+
+def _source_file_property(
+    scope: dict[str, SourceFileProperties], filename: str, prop: str
+) -> str | None:
+    """A property that a source file has in the scope of a directory, or None
+    if it isn't set.
 
     ``filename`` is the resolved path that the properties are stored under.
     """
-    file_props = ctx.source_file_properties.get(filename)
+    file_props = scope.get(filename)
     if file_props is None:
         return None
     lists = {
@@ -1350,7 +1387,6 @@ def handle_get_source_file_property(
     """Handle get_source_file_property() command."""
     # get_source_file_property(<variable> <file>
     #                          [DIRECTORY <dir> | TARGET_DIRECTORY <target>] <property>)
-    # Source file properties are global, so the directory isn't needed.
     if len(args) != 3 and not (
         len(args) == 5 and args[2] in ("DIRECTORY", "TARGET_DIRECTORY")
     ):
@@ -1360,8 +1396,9 @@ def handle_get_source_file_property(
             sys.exit(1)
         ctx.print_warning(message, cmd.line)
         return
-    filename = resolve_cmake_path(args[1], ctx.current_source_dir)
-    value = _source_file_property(ctx, filename, args[-1])
+    files, scopes = source_file_scopes(ctx, cmd, args[1:-1], strict)
+    filename = resolve_cmake_path(files[0], ctx.current_source_dir)
+    value = _source_file_property(scopes[0], filename, args[-1]) if scopes else None
     ctx.variables[args[0]] = "NOTFOUND" if value is None else value
 
 
@@ -1423,14 +1460,14 @@ def handle_get_property(
         value = ctx.target_property(scope_args[0], prop_name)
 
     elif scope_type == "SOURCE":
-        if not scope_args:
+        files, scopes = source_file_scopes(ctx, cmd, scope_args, strict)
+        if not files or not scopes:
             return
-        source_file = scope_args[0]
-        expanded_filename = ctx.expand_variables(source_file, strict, cmd.line)
+        expanded_filename = ctx.expand_variables(files[0], strict, cmd.line)
         expanded_filename = resolve_cmake_path(
             expanded_filename, ctx.current_source_dir
         )
-        value = _source_file_property(ctx, expanded_filename, prop_name)
+        value = _source_file_property(scopes[0], expanded_filename, prop_name)
 
     elif scope_type == "DIRECTORY":
         directory = scope_args[0] if scope_args else str(ctx.current_source_dir)

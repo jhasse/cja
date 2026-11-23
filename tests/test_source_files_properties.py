@@ -1,5 +1,6 @@
 """Tests for set_source_files_properties command."""
 
+import re
 from pathlib import Path
 
 import pytest
@@ -38,8 +39,8 @@ def test_set_source_files_properties(tmp_path: Path) -> None:
     process_commands(commands, ctx)
 
     abs_main = str(main_cpp)
-    assert abs_main in ctx.source_file_properties
-    props = ctx.source_file_properties[abs_main]
+    assert abs_main in ctx.source_file_scope(ctx.source_dir)
+    props = ctx.source_file_scope(ctx.source_dir)[abs_main]
     assert "SPECIAL_DEF" in props.compile_definitions
     assert "extra_inc" in props.include_directories
     assert "generated.h" in props.object_depends
@@ -85,8 +86,8 @@ def test_multiple_files_and_semicolons(tmp_path: Path) -> None:
 
     for f in ["file1.cpp", "file2.cpp"]:
         abs_f = str(tmp_path / f)
-        assert abs_f in ctx.source_file_properties
-        props = ctx.source_file_properties[abs_f]
+        assert abs_f in ctx.source_file_scope(ctx.source_dir)
+        props = ctx.source_file_scope(ctx.source_dir)[abs_f]
         assert "DEF1" in props.compile_definitions
         assert "DEF2" in props.compile_definitions
 
@@ -134,8 +135,8 @@ def test_object_depends_absolute_path(tmp_path: Path) -> None:
     process_commands(commands, ctx)
 
     abs_main = str(main_cpp)
-    assert abs_main in ctx.source_file_properties
-    props = ctx.source_file_properties[abs_main]
+    assert abs_main in ctx.source_file_scope(ctx.source_dir)
+    props = ctx.source_file_scope(ctx.source_dir)[abs_main]
 
     # It should be relative to source_dir if it's inside it
     assert "dep.h" in props.object_depends
@@ -222,3 +223,69 @@ def test_custom_source_file_properties() -> None:
         process_commands(
             parse("get_source_file_property(VAR a.c)\n"), ctx, strict=True
         )
+
+
+def test_source_file_properties_are_per_directory(tmp_path: Path) -> None:
+    """Like in CMake, source file properties are for the targets of the
+    directory that they're set in, or of the ones given."""
+    from cja.generator import configure
+
+    (tmp_path / "CMakeLists.txt").write_text(
+        """\
+cmake_minimum_required(VERSION 3.20)
+project(SourceScopeTest C)
+add_library(toplib STATIC shared.c sub/s.c)
+set_source_files_properties(shared.c sub/s.c PROPERTIES
+    COMPILE_DEFINITIONS TOP_DEF MY_PROP top)
+add_subdirectory(sub)
+add_subdirectory(other)
+set_source_files_properties(shared.c DIRECTORY sub PROPERTIES
+    COMPILE_DEFINITIONS FOR_SUB MY_PROP for_sub)
+set_property(SOURCE shared.c TARGET_DIRECTORY otherlib PROPERTY MY_PROP for_other)
+get_source_file_property(TOP shared.c MY_PROP)
+get_source_file_property(TOP_FOR_SUB shared.c DIRECTORY sub MY_PROP)
+get_property(TOP_FOR_OTHER SOURCE shared.c TARGET_DIRECTORY otherlib PROPERTY MY_PROP)
+get_source_file_property(TOP_OF_SUB sub/s.c SUB_PROP)
+get_source_file_property(TOP_OF_SUB_IN_SUB sub/s.c DIRECTORY sub SUB_PROP)
+"""
+    )
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "CMakeLists.txt").write_text(
+        """\
+add_library(sublib STATIC s.c ${CMAKE_SOURCE_DIR}/shared.c)
+set_source_files_properties(s.c PROPERTIES COMPILE_DEFINITIONS SUB_DEF SUB_PROP sub)
+get_source_file_property(SUB ${CMAKE_SOURCE_DIR}/shared.c MY_PROP)
+get_source_file_property(SUB_OF_TOP ${CMAKE_SOURCE_DIR}/shared.c
+    DIRECTORY ${CMAKE_SOURCE_DIR} MY_PROP)
+set(SUB "${SUB}" PARENT_SCOPE)
+set(SUB_OF_TOP "${SUB_OF_TOP}" PARENT_SCOPE)
+"""
+    )
+    (tmp_path / "other").mkdir()
+    (tmp_path / "other" / "CMakeLists.txt").write_text(
+        "add_library(otherlib STATIC ${CMAKE_SOURCE_DIR}/shared.c)\n"
+    )
+    for source in ("shared.c", "sub/s.c"):
+        (tmp_path / source).write_text("")
+
+    ctx = configure(tmp_path, "build", strict=True)
+
+    assert ctx.variables["TOP"] == "top"
+    assert ctx.variables["TOP_FOR_SUB"] == "for_sub"
+    assert ctx.variables["TOP_FOR_OTHER"] == "for_other"
+    assert ctx.variables["TOP_OF_SUB"] == "NOTFOUND"
+    assert ctx.variables["TOP_OF_SUB_IN_SUB"] == "sub"
+    assert ctx.variables["SUB"] == "NOTFOUND"
+    assert ctx.variables["SUB_OF_TOP"] == "top"
+
+    ninja_content = (tmp_path / "build.ninja").read_text()
+    flags = dict(
+        re.findall(r"^build \S*/(\w+)\.o: .*\n(?:  cflags = (.*))?", ninja_content, re.MULTILINE)
+    )
+    assert flags == {
+        "toplib_shared": "-DTOP_DEF",
+        "toplib_s": "-DTOP_DEF",
+        "sublib_s": "-DSUB_DEF",
+        "sublib_shared": "-DFOR_SUB",
+        "otherlib_shared": "",
+    }
