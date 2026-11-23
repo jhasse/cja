@@ -58,6 +58,7 @@ from .commands import (
     handle_option,
     handle_separate_arguments,
     handle_set,
+    handle_set_directory_properties,
     handle_set_property,
     handle_set_target_properties,
     handle_set_tests_properties,
@@ -889,16 +890,16 @@ def process_commands(
                         saved_vars = ctx.variables.copy()
                         saved_parent_scope_vars = ctx.parent_scope_vars
                         ctx.parent_scope_vars = {}
-                        saved_exclude_from_all = ctx.exclude_from_all
-                        if fc_exclude_from_all:
-                            ctx.exclude_directory_from_all(actual_src_dir)
                         ctx.directory_depth += 1
 
                         fc_binary_dir = binary_dir
                         fc_binary_dir.mkdir(parents=True, exist_ok=True)
 
-                        ctx.inherit_system_property(
-                            actual_src_dir, saved_current_source_dir, fc_system
+                        ctx.add_subdirectory(
+                            actual_src_dir,
+                            saved_current_source_dir,
+                            fc_exclude_from_all,
+                            fc_system,
                         )
                         ctx.current_source_dir = actual_src_dir
                         ctx.current_list_file = sub_cmakelists
@@ -919,12 +920,10 @@ def process_commands(
                             saved_parent_scope_vars: dict[
                                 str, str | None
                             ] = saved_parent_scope_vars,
-                            saved_exclude_from_all: bool = saved_exclude_from_all,
                         ) -> None:
                             cache_updates = ctx.cache_updates()
                             parent_scope_updates = ctx.parent_scope_vars
                             ctx.parent_scope_vars = saved_parent_scope_vars
-                            ctx.exclude_from_all = saved_exclude_from_all
                             ctx.directory_depth -= 1
                             ctx.current_source_dir = saved_current_source_dir
                             ctx.current_list_file = saved_current_list_file
@@ -1327,9 +1326,6 @@ def process_commands(
                         saved_vars = ctx.variables.copy()
                         saved_parent_scope_vars = ctx.parent_scope_vars
                         ctx.parent_scope_vars = {}
-                        saved_exclude_from_all = ctx.exclude_from_all
-                        if sub_exclude_from_all:
-                            ctx.exclude_directory_from_all(sub_source_dir)
                         ctx.directory_depth += 1
 
                         if len(args) >= 2:
@@ -1350,8 +1346,11 @@ def process_commands(
                             sub_binary_dir = Path(saved_binary_dir) / source_component
                         sub_binary_dir.mkdir(parents=True, exist_ok=True)
 
-                        ctx.inherit_system_property(
-                            sub_source_dir, saved_current_source_dir, sub_system
+                        ctx.add_subdirectory(
+                            sub_source_dir,
+                            saved_current_source_dir,
+                            sub_exclude_from_all,
+                            sub_system,
                         )
                         ctx.current_source_dir = sub_source_dir
                         ctx.current_list_file = sub_cmakelists
@@ -1372,12 +1371,10 @@ def process_commands(
                             saved_parent_scope_vars: dict[
                                 str, str | None
                             ] = saved_parent_scope_vars,
-                            saved_exclude_from_all: bool = saved_exclude_from_all,
                         ) -> None:
                             cache_updates = ctx.cache_updates()
                             parent_scope_updates = ctx.parent_scope_vars
                             ctx.parent_scope_vars = saved_parent_scope_vars
-                            ctx.exclude_from_all = saved_exclude_from_all
                             ctx.directory_depth -= 1
                             ctx.current_source_dir = saved_current_source_dir
                             ctx.current_list_file = saved_current_list_file
@@ -2762,7 +2759,6 @@ int main() {{
                         binary_dir=ctx.variables.get(
                             "CMAKE_CURRENT_BINARY_DIR", to_posix_path(ctx.build_dir)
                         ),
-                        directory_excluded=ctx.exclude_from_all,
                         properties=ct_properties,
                     )
                 )
@@ -2870,6 +2866,9 @@ int main() {{
                                 working_directory=test_working_directory,
                             )
                         )
+
+            case "set_directory_properties":
+                handle_set_directory_properties(ctx, cmd, args, strict)
 
             case "set_tests_properties":
                 handle_set_tests_properties(ctx, cmd, args)

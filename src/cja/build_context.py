@@ -145,10 +145,6 @@ class CustomTarget:
     # The directory the target was created in (its CMAKE_CURRENT_SOURCE_DIR)
     source_dir: Path | None = None
     binary_dir: str = ""
-    # In a directory that the default build leaves out, like one added with
-    # add_subdirectory(... EXCLUDE_FROM_ALL). The EXCLUDE_FROM_ALL property of
-    # the target takes precedence, if it's set.
-    directory_excluded: bool = False
     dependencies: list[str] = field(default_factory=list)
     # EXCLUDE_FROM_ALL is set unless the target was added with ALL
     properties: dict[str, str] = field(default_factory=dict)
@@ -247,9 +243,9 @@ class BuildContext:
     # The include_directories(SYSTEM) of each directory, keyed like the
     # INCLUDE_DIRECTORIES in directory_properties
     directory_system_include_dirs: dict[str, list[str]] = field(default_factory=dict)
-    # Inside an add_subdirectory(... EXCLUDE_FROM_ALL), so the default build
-    # leaves out new targets, unless their EXCLUDE_FROM_ALL property is set
-    exclude_from_all: bool = False
+    # The directory that each directory was added from, by their keys in
+    # directory_properties; the top-level directory has none
+    directory_parents: dict[str, str] = field(default_factory=dict)
     # How many add_subdirectory()/FetchContent levels below the top-level
     # directory we are, so "cja run" can prefer the shallowest executable
     directory_depth: int = 0
@@ -446,15 +442,38 @@ class BuildContext:
         """The key of a directory in directory_properties, like set_property() uses."""
         return resolve_cmake_path(str(source_dir), source_dir)
 
-    def exclude_directory_from_all(self, source_dir: Path) -> None:
-        """Leave a directory that's about to be entered out of the default build.
+    def add_subdirectory(
+        self, source_dir: Path, parent_dir: Path, exclude_from_all: bool, system: bool
+    ) -> None:
+        """Record a directory that's about to be entered from parent_dir.
 
-        Like CMake, that sets its EXCLUDE_FROM_ALL property, but not the one of
-        its targets and subdirectories, which are left out as well.
+        ``exclude_from_all`` and ``system`` are the options that
+        add_subdirectory() and FetchContent have for it.
         """
-        self.exclude_from_all = True
         key = self.directory_key(source_dir)
-        self.directory_properties.setdefault(key, {})["EXCLUDE_FROM_ALL"] = "TRUE"
+        self.directory_parents[key] = self.directory_key(parent_dir)
+        if exclude_from_all:
+            # Like in CMake, only the directory gets the property, see
+            # directory_excluded_from_all()
+            self.directory_properties.setdefault(key, {})["EXCLUDE_FROM_ALL"] = "TRUE"
+        self.inherit_system_property(source_dir, parent_dir, system)
+
+    def directory_excluded_from_all(self, source_dir: Path) -> bool:
+        """Whether the default build leaves out the targets of a directory.
+
+        Like in CMake, that's the case if it or a directory that it was added
+        from has the EXCLUDE_FROM_ALL property, whenever that was set. The
+        property of the top-level directory doesn't matter.
+        """
+        key = self.directory_key(source_dir)
+        seen: set[str] = set()
+        while key in self.directory_parents and key not in seen:
+            seen.add(key)
+            properties = self.directory_properties.get(key, {})
+            if is_truthy(properties.get("EXCLUDE_FROM_ALL", "")):
+                return True
+            key = self.directory_parents[key]
+        return False
 
     def inherit_system_property(
         self, source_dir: Path, parent_dir: Path, system: bool

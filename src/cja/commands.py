@@ -1103,6 +1103,29 @@ def handle_set_tests_properties(
             test.properties[props[i]] = props[i + 1]
 
 
+def handle_set_directory_properties(
+    ctx: BuildContext,
+    cmd: Command,
+    args: list[str],
+    strict: bool,
+) -> None:
+    """Handle set_directory_properties() command."""
+    # set_directory_properties(PROPERTIES <prop1> <value1> [<prop2> <value2>] ...)
+    message = ""
+    if not args:
+        message = "set_directory_properties called with incorrect number of arguments"
+    elif len(args) % 2 == 0:
+        message = "set_directory_properties Wrong number of arguments"
+    if message:
+        if strict:
+            ctx.print_error(message, cmd.line)
+            sys.exit(1)
+        ctx.print_warning(message, cmd.line)
+        return
+    key = ctx.directory_key(ctx.current_source_dir)
+    ctx.directory_properties.setdefault(key, {}).update(zip(args[1::2], args[2::2]))
+
+
 def handle_set_property(
     ctx: BuildContext,
     cmd: Command,
@@ -1901,7 +1924,6 @@ def handle_add_library(
                 binary_dir=ctx.variables.get(
                     "CMAKE_CURRENT_BINARY_DIR", to_posix_path(ctx.build_dir)
                 ),
-                directory_excluded=ctx.exclude_from_all,
             )
         )
 
@@ -1959,7 +1981,6 @@ def handle_add_executable(
                 binary_dir=ctx.variables.get(
                     "CMAKE_CURRENT_BINARY_DIR", to_posix_path(ctx.build_dir)
                 ),
-                directory_excluded=ctx.exclude_from_all,
                 directory_depth=ctx.directory_depth,
             )
         )

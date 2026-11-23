@@ -16,10 +16,6 @@ class Library:
     # The directory the target was created in (its CMAKE_CURRENT_SOURCE_DIR)
     source_dir: Path | None = None
     binary_dir: str = ""
-    # In a directory that the default build leaves out, like one added with
-    # add_subdirectory(... EXCLUDE_FROM_ALL). The EXCLUDE_FROM_ALL property of
-    # the target takes precedence, if it's set.
-    directory_excluded: bool = False
     compile_features: list[str] = field(default_factory=list)  # PRIVATE features
     public_compile_features: list[str] = field(default_factory=list)  # PUBLIC features
     include_directories: list[str] = field(default_factory=list)  # PRIVATE includes
@@ -66,10 +62,6 @@ class Executable:
     # The directory the target was created in (its CMAKE_CURRENT_SOURCE_DIR)
     source_dir: Path | None = None
     binary_dir: str = ""
-    # In a directory that the default build leaves out, like one added with
-    # add_subdirectory(... EXCLUDE_FROM_ALL). The EXCLUDE_FROM_ALL property of
-    # the target takes precedence, if it's set.
-    directory_excluded: bool = False
     directory_depth: int = 0
     link_libraries: list[str] = field(default_factory=list)
     compile_features: list[str] = field(default_factory=list)

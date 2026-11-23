@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from cja.generator import BuildContext, process_commands
 from cja.parser import Command
 
@@ -46,3 +48,29 @@ set(SUB_PARENT "${hasParent}" PARENT_SCOPE)
 
     process_commands(commands, ctx)
     assert ctx.variables["SUB_PARENT"] == str(tmp_path)
+
+
+def test_set_directory_properties(tmp_path: Path) -> None:
+    """set_directory_properties() sets properties of the current directory."""
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    commands = [
+        Command(
+            name="set_directory_properties",
+            args=["PROPERTIES", "FIRST", "1", "SECOND", "x;y"],
+            is_quoted=[False, False, False, False, True],
+            line=1,
+        ),
+        Command(name="get_directory_property", args=["FIRST", "FIRST"], line=2),
+        Command(
+            name="get_property",
+            args=["SECOND", "DIRECTORY", "PROPERTY", "SECOND"],
+            line=3,
+        ),
+    ]
+    process_commands(commands, ctx, strict=True)
+    assert ctx.variables["FIRST"] == "1"
+    assert ctx.variables["SECOND"] == "x;y"
+
+    odd = Command(name="set_directory_properties", args=["PROPERTIES", "A"], line=4)
+    with pytest.raises(SystemExit):
+        process_commands([odd], ctx, strict=True)

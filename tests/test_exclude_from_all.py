@@ -146,3 +146,51 @@ add_subdirectory(sub sub_build EXCLUDE_FROM_ALL)
     all_targets = _all_targets(tmp_path)
     assert f"$builddir/app{EXE_EXT}" in all_targets
     assert f"$builddir/sub_build/sub_exe{EXE_EXT}" not in all_targets
+
+
+def test_directory_exclude_from_all_property(tmp_path: Path) -> None:
+    """The EXCLUDE_FROM_ALL property of a directory can be set by hand, also
+    after its targets were added."""
+    (tmp_path / "CMakeLists.txt").write_text(
+        """
+add_executable(app main.c)
+add_subdirectory(by_parent)
+set_property(DIRECTORY by_parent PROPERTY EXCLUDE_FROM_ALL ON)
+add_subdirectory(by_itself)
+add_subdirectory(reset EXCLUDE_FROM_ALL)
+set_property(DIRECTORY reset PROPERTY EXCLUDE_FROM_ALL OFF)
+"""
+    )
+    (tmp_path / "main.c").write_text("int main() { return 0; }")
+    subdirectories = {
+        "by_parent": """
+add_executable(parent_exe main.c)
+add_executable(parent_included main.c)
+set_target_properties(parent_included PROPERTIES EXCLUDE_FROM_ALL OFF)
+add_custom_target(parent_custom ALL COMMAND echo hi)
+add_subdirectory(nested)
+""",
+        "by_parent/nested": "add_library(nested_lib lib.c)",
+        "by_itself": """
+add_executable(itself_exe main.c)
+set_directory_properties(PROPERTIES EXCLUDE_FROM_ALL ON)
+""",
+        "reset": "add_executable(reset_exe main.c)",
+    }
+    for name, cmake in subdirectories.items():
+        directory = tmp_path / name
+        directory.mkdir()
+        (directory / "CMakeLists.txt").write_text(cmake)
+        (directory / "main.c").write_text("int main() { return 0; }")
+        (directory / "lib.c").write_text("int f(void) { return 0; }")
+
+    configure(tmp_path, "build")
+
+    all_targets = _all_targets(tmp_path)
+    assert f"$builddir/app{EXE_EXT}" in all_targets
+    assert f"$builddir/by_parent/parent_exe{EXE_EXT}" not in all_targets
+    assert f"$builddir/by_parent/parent_included{EXE_EXT}" in all_targets
+    assert "parent_custom" not in all_targets
+    assert f"$builddir/by_parent/nested/libnested_lib{LIB_EXT}" not in all_targets
+    assert f"$builddir/by_itself/itself_exe{EXE_EXT}" not in all_targets
+    assert f"$builddir/reset/reset_exe{EXE_EXT}" in all_targets
