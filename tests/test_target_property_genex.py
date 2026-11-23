@@ -115,3 +115,68 @@ def test_target_property_in_post_build_command(tmp_path: Path) -> None:
     )
 
     assert "tool --kind=app" in ninja_content
+
+
+def _libs(ninja_content: str, output_suffix: str) -> list[str]:
+    """The libs of the build edge whose output ends with output_suffix."""
+    unwrapped = re.sub(r"\$\n *", "", ninja_content)
+    match = re.search(
+        rf"^build \S*{re.escape(output_suffix)}: .*\n(?:  libs = (.*))?",
+        unwrapped,
+        re.MULTILINE,
+    )
+    assert match, f"no build edge for {output_suffix}"
+    return to_posix_path(match.group(1) or "").split()
+
+
+def test_target_property_in_link_libraries(tmp_path: Path) -> None:
+    """What a library makes the targets using it link to is about each of them."""
+    ninja_content = _configure(
+        tmp_path,
+        "add_executable(other main.c)\n"
+        "target_link_libraries(other PRIVATE mylib)\n"
+        "set_property(TARGET app PROPERTY EXTRA_LIBS m dl)\n"
+        "target_link_libraries(mylib\n"
+        "    INTERFACE $<TARGET_PROPERTY:EXTRA_LIBS>\n"
+        "    PUBLIC $<$<STREQUAL:$<TARGET_PROPERTY:KIND>,app>:rt>)\n"
+        "target_link_libraries(app PRIVATE $<TARGET_PROPERTY:KIND>_private)\n",
+    )
+
+    assert sorted(_libs(ninja_content, "/app")) == [
+        "-lapp_private",
+        "-ldl",
+        "-lm",
+        "-lrt",
+    ]
+    assert _libs(ninja_content, "/other") == []
+
+
+def test_target_property_in_link_directories(tmp_path: Path) -> None:
+    ninja_content = _configure(
+        tmp_path,
+        "add_executable(other main.c)\n"
+        "target_link_libraries(other PRIVATE mylib)\n"
+        "set_property(TARGET other PROPERTY KIND other)\n"
+        "target_link_directories(mylib INTERFACE\n"
+        "    ${CMAKE_CURRENT_SOURCE_DIR}/$<TARGET_PROPERTY:KIND>/lib\n"
+        "    $<$<BOOL:$<TARGET_PROPERTY:NO_SUCH_PROPERTY>>:unset>)\n",
+    )
+
+    assert _libs(ninja_content, "/app") == ["-Lapp/lib"]
+    assert _libs(ninja_content, "/other") == ["-Lother/lib"]
+
+
+def test_target_property_in_relative_link_directories(tmp_path: Path) -> None:
+    """A relative directory is about the directory of the library that has it,
+    also if it's evaluated for the target using it."""
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "CMakeLists.txt").write_text(
+        "add_library(sublib INTERFACE)\n"
+        "target_link_directories(sublib INTERFACE lib/$<TARGET_PROPERTY:KIND>)\n"
+    )
+    ninja_content = _configure(
+        tmp_path,
+        "add_subdirectory(sub)\ntarget_link_libraries(app PRIVATE sublib)\n",
+    )
+
+    assert _libs(ninja_content, "/app") == ["-Lsub/lib/app"]

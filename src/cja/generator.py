@@ -1838,11 +1838,23 @@ def generate_ninja(
             n.newline()
 
         # Helper to expand link libraries recursively
-        def expand_link_libraries(initial: list[str]) -> list[str]:
-            """Link items plus their transitive public dependencies, for usage requirements."""
+        def link_items(target_name: str, items: list[str]) -> list[str]:
+            """The link items of a library as the target linking to it gets them.
+
+            That target is what $<TARGET_PROPERTY:prop> in them is about.
+            """
+            return [
+                item
+                for raw in items
+                for item in _evaluate_list_for_target(ctx, raw, target_name)
+            ]
+
+        def expand_link_libraries(target_name: str, initial: list[str]) -> list[str]:
+            """Link items of a target plus their transitive public dependencies,
+            for usage requirements."""
             expanded: list[str] = []
             seen: set[str] = set()
-            queue = list(initial)
+            queue = link_items(target_name, initial)
             while queue:
                 name = queue.pop(0)
                 if name in seen:
@@ -1851,15 +1863,20 @@ def generate_ninja(
                 expanded.append(name)
                 lib = ctx.get_library(name)
                 if lib:
-                    queue.extend(d for d in lib.public_link_libraries if d not in seen)
+                    queue.extend(
+                        d
+                        for d in link_items(target_name, lib.public_link_libraries)
+                        if d not in seen
+                    )
                 elif name in ctx.imported_targets:
                     queue.extend(
                         d for d in ctx.imported_targets[name].link_targets if d not in seen
                     )
             return expanded
 
-        def order_link_libraries(initial: list[str]) -> list[str]:
-            """Order link items so each static library precedes its dependencies.
+        def order_link_libraries(target_name: str, initial: list[str]) -> list[str]:
+            """Order the link items of a target so each static library precedes
+            its dependencies.
 
             Like CMake, the declared order is kept where dependencies allow and
             libraries with circular dependencies are listed twice.
@@ -1879,7 +1896,11 @@ def generate_ninja(
                     names = lib.link_libraries + lib.public_link_libraries
                 else:
                     names = lib.public_link_libraries
-                return list(dict.fromkeys(canonical(dep) for dep in names))
+                return list(
+                    dict.fromkeys(
+                        canonical(dep) for dep in link_items(target_name, names)
+                    )
+                )
 
             # Tarjan's algorithm: emits strongly connected components with
             # dependencies first. Visiting in reverse keeps the declared order
@@ -1910,6 +1931,7 @@ def generate_ninja(
                             break
                     components.append(component)
 
+            initial = link_items(target_name, initial)
             for name in reversed(list(dict.fromkeys(canonical(n) for n in initial))):
                 if name not in index:
                     visit(name)
@@ -1929,13 +1951,18 @@ def generate_ninja(
             link_flags: list[str] = []
 
             # Propagate link directories from dependencies
-            link_directories = list(target.link_directories)
+            raw_link_directories = list(target.link_directories)
             for lib_name in expanded_link_libraries:
                 linked_lib = ctx.get_library(lib_name)
                 if linked_lib:
-                    for link_dir in linked_lib.public_link_directories:
-                        if link_dir not in link_directories:
-                            link_directories.append(link_dir)
+                    raw_link_directories.extend(linked_lib.public_link_directories)
+            link_directories = list(
+                dict.fromkeys(
+                    link_dir
+                    for raw in raw_link_directories
+                    for link_dir in _evaluate_list_for_target(ctx, raw, target.name)
+                )
+            )
 
             for link_dir in link_directories:
                 link_flags.append(
@@ -2212,7 +2239,9 @@ def generate_ninja(
             headers = [
                 h for h in target.properties.get("PRECOMPILE_HEADERS", "").split(";") if h
             ]
-            for dep_name in expand_link_libraries(target.link_libraries):
+            for dep_name in expand_link_libraries(
+                target.name, target.link_libraries
+            ):
                 dep_lib = ctx.get_library(dep_name)
                 if dep_lib:
                     headers.extend(
@@ -2357,7 +2386,9 @@ def generate_ninja(
 
             # Propagate flags from dependencies
             # For compilation, we only follow public dependencies
-            expanded_lib_link_libraries = expand_link_libraries(lib.link_libraries)
+            expanded_lib_link_libraries = expand_link_libraries(
+                lib.name, lib.link_libraries
+            )
             lib_system_dirs = _system_include_directories(
                 ctx,
                 lib.name,
@@ -2606,7 +2637,7 @@ def generate_ninja(
 
         for lib, lib_name, link_rule, objects, order_only, runtime_flag in shared_links:
             lib_link_inputs, lib_link_flags = link_libraries_inputs_and_flags(
-                lib, order_link_libraries(lib.link_libraries)
+                lib, order_link_libraries(lib.name, lib.link_libraries)
             )
             objects = [*objects, *_target_objects(lib, lib_link_inputs)]
             if runtime_flag:
@@ -2643,9 +2674,13 @@ def generate_ninja(
             objects: list[str] = []
             uses_cxx = False
             # For compile flags, we only follow public dependencies
-            expanded_compile_libraries = expand_link_libraries(exe.link_libraries)
+            expanded_compile_libraries = expand_link_libraries(
+                exe.name, exe.link_libraries
+            )
             # For linking, static libraries propagate their private dependencies
-            expanded_link_libraries = order_link_libraries(exe.link_libraries)
+            expanded_link_libraries = order_link_libraries(
+                exe.name, exe.link_libraries
+            )
 
             # Collect cflags from global options, compile definitions, compile features, include dirs, linked libraries, and imported targets
             target_dir = exe.source_dir or ctx.source_dir

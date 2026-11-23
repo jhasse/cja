@@ -390,32 +390,28 @@ def handle_target_link_libraries(
             else:
                 # It's a library name (may be a semicolon-separated list from
                 # a CMake variable expansion like "${LIBS_PRIVATE}")
+                raw = arg
+                interface: str | None = arg
                 if "$<" in arg:
-                    arg = strip_generator_expressions(
-                        arg,
-                        ctx.variables,
-                        target_property=ctx.target_property,
-                        current_target=target_name if visibility == "PRIVATE" else None,
-                    )
-                    if not arg:
-                        continue
-
+                    arg, interface = _usage_requirement(ctx, raw, target_name)
                 parts = [p for p in arg.split(";") if p]
-                for part in parts:
-                    lib = ctx.get_library(target_name)
-                    if lib:
-                        if visibility == "PUBLIC":
-                            lib.link_libraries.append(part)
-                            lib.public_link_libraries.append(part)
-                        elif visibility == "INTERFACE":
-                            lib.public_link_libraries.append(part)
-                        else:
-                            lib.link_libraries.append(part)
-                    else:
-                        exe = ctx.get_executable(target_name)
-                        if exe:
-                            exe.link_libraries.append(part)
-                        elif target_name in ctx.imported_targets:
+                lib = ctx.get_library(target_name)
+                if lib:
+                    if visibility != "INTERFACE":
+                        lib.link_libraries.extend(parts)
+                    if visibility != "PRIVATE":
+                        # The generator evaluates what depends on the target
+                        # that links to this library.
+                        lib.public_link_libraries.extend(
+                            [raw] if interface is None else parts
+                        )
+                    continue
+                exe = ctx.get_executable(target_name)
+                if exe:
+                    exe.link_libraries.extend(parts)
+                elif target_name in ctx.imported_targets:
+                    for part in (interface or "").split(";"):
+                        if part:
                             _link_imported_target(
                                 ctx, ctx.imported_targets[target_name], [part]
                             )
@@ -446,29 +442,26 @@ def handle_target_link_directories(
                 pass
             else:
                 # Expand variables and resolve relative paths
-                expanded = ctx.expand_variables(arg, strict, cmd.line)
-                expanded = strip_generator_expressions(
-                    expanded,
-                    ctx.variables,
-                    target_property=ctx.target_property,
-                    current_target=target_name if visibility == "PRIVATE" else None,
-                )
+                raw = ctx.expand_variables(arg, strict, cmd.line)
+                expanded, interface = _usage_requirement(ctx, raw, target_name)
                 if "$<" in expanded:
                     ctx.print_warning(
                         f"generator expressions in target_link_directories are not yet supported: {arg}",
                         cmd.line,
                     )
-
-                if not expanded:
-                    continue
-                expanded = resolve_cmake_path(expanded, ctx.current_source_dir)
-                if visibility == "PUBLIC":
-                    public_dirs.append(expanded)
-                    target_dirs.append(expanded)
-                elif visibility == "INTERFACE":
-                    public_dirs.append(expanded)
-                else:
-                    target_dirs.append(expanded)
+                directories = (
+                    [resolve_cmake_path(expanded, ctx.current_source_dir)]
+                    if expanded
+                    else []
+                )
+                if visibility != "INTERFACE":
+                    target_dirs.extend(directories)
+                if visibility != "PRIVATE":
+                    public_dirs.extend(
+                        [_unevaluated_directory(ctx, raw)]
+                        if interface is None
+                        else directories
+                    )
         # Add directories to library or executable
         lib = ctx.get_library(target_name)
         if lib:
