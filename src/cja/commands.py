@@ -74,15 +74,32 @@ def _resolve_sources(ctx: BuildContext, source: str) -> list[str]:
     ]
 
 
+def _requirement_of_any_target(ctx: BuildContext, value: str) -> str | None:
+    """Evaluate the generator expressions in a requirement that several
+    targets are built with.
+
+    Returns None if it depends on the target, because of a
+    $<TARGET_PROPERTY:prop>, which is about the one being built: it's kept as
+    it is then, for the generator to evaluate it for each of them.
+    """
+    try:
+        return strip_generator_expressions(
+            value,
+            ctx.variables,
+            target_property=ctx.target_property,
+            require_current_target=True,
+        )
+    except HeadTargetNeeded:
+        return None
+
+
 def _usage_requirement(
     ctx: BuildContext, value: str, target_name: str
 ) -> tuple[str, str | None]:
     """Evaluate the generator expressions in a usage requirement of a target.
 
     Returns what the target itself gets from it and what the targets using it
-    get. The latter is None if it depends on them, because of a
-    $<TARGET_PROPERTY:prop>, which is about the target being built: it's kept
-    as it is then, for the generator to evaluate it for each of them.
+    get, see _requirement_of_any_target().
     """
     own = strip_generator_expressions(
         value,
@@ -90,16 +107,7 @@ def _usage_requirement(
         target_property=ctx.target_property,
         current_target=target_name,
     )
-    try:
-        interface = strip_generator_expressions(
-            value,
-            ctx.variables,
-            target_property=ctx.target_property,
-            require_current_target=True,
-        )
-    except HeadTargetNeeded:
-        return own, None
-    return own, interface
+    return own, _requirement_of_any_target(ctx, value)
 
 
 def _unevaluated_directory(ctx: BuildContext, value: str) -> str:
@@ -238,7 +246,7 @@ def _collect_directory_include_dirs(ctx: BuildContext) -> list[str]:
             continue
         value = props.get("INCLUDE_DIRECTORIES")
         if value:
-            include_dirs.extend([p for p in value.split(";") if p])
+            include_dirs.extend([p for p in split_unquoted_list_args(value) if p])
     return include_dirs
 
 
@@ -315,10 +323,12 @@ def handle_include_directories(
     for arg in args:
         if arg in ("BEFORE", "AFTER", "SYSTEM"):
             continue
-        expanded = ctx.expand_variables(arg, strict, cmd.line)
-        expanded = strip_generator_expressions(
-            expanded, ctx.variables, target_property=ctx.target_property
-        )
+        raw = ctx.expand_variables(arg, strict, cmd.line)
+        expanded = _requirement_of_any_target(ctx, raw)
+        if expanded is None:
+            # It's about each target of the directory.
+            dirs.append(_unevaluated_directory(ctx, raw))
+            continue
         if "$<" in expanded:
             ctx.print_warning(
                 f"generator expressions in include_directories are not yet supported: {arg}",

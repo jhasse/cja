@@ -180,3 +180,20 @@ def test_target_property_in_relative_link_directories(tmp_path: Path) -> None:
     )
 
     assert _libs(ninja_content, "/app") == ["-Lsub/lib/app"]
+
+
+def test_target_property_in_directory_include_directories(tmp_path: Path) -> None:
+    """include_directories() is about each target of the directory."""
+    ninja_content = _configure(
+        tmp_path,
+        "include_directories(inc/$<TARGET_PROPERTY:KIND>\n"
+        "    $<$<BOOL:$<TARGET_PROPERTY:NO_SUCH_PROPERTY>>:unset>)\n"
+        "add_library(late STATIC lib.c)\n"
+        "set_property(TARGET late PROPERTY KIND late)\n"
+        "get_directory_property(DIRECTORY_INCLUDES INCLUDE_DIRECTORIES)\n"
+        'message("includes: ${DIRECTORY_INCLUDES}")\n',
+    )
+
+    assert _cflags(ninja_content, "mylib_lib.o") == ["-Iinc/lib"]
+    assert _cflags(ninja_content, "app_main.o") == ["-Iinc/app"]
+    assert _cflags(ninja_content, "late_lib.o") == ["-Iinc/late"]
