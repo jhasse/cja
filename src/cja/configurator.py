@@ -54,6 +54,7 @@ from .commands import (
     handle_math,
     handle_message,
     handle_option,
+    handle_separate_arguments,
     handle_set,
     handle_set_property,
     handle_set_target_properties,
@@ -2260,6 +2261,9 @@ int main() {{
 
             case "get_filename_component":
                 handle_get_filename_component(ctx, cmd, args, strict)
+
+            case "separate_arguments":
+                handle_separate_arguments(ctx, cmd, args, strict)
 
             case "get_target_property":
                 if len(args) >= 3:

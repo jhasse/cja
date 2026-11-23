@@ -1512,6 +1512,144 @@ def _split_program_from_args(command: str) -> tuple[str, str]:
     return "", ""
 
 
+def _parse_unix_command_line(command: str) -> tuple[list[str], int]:
+    """Split a command line like CMake does for separate_arguments(UNIX_COMMAND).
+
+    Whitespace separates the arguments, unless it's in single or double quotes,
+    and a backslash makes the next character a literal one, anywhere. Returns
+    the arguments and the index that the first one ends at.
+    """
+    args: list[str] = []
+    ends: list[int] = []
+    current: list[str] = []
+    in_argument = in_escape = in_single = in_double = False
+    for index, char in enumerate(command):
+        if in_escape:
+            in_argument = True
+            in_escape = False
+            current.append(char)
+        elif char == "\\":
+            in_escape = True
+        elif char == "'" and not in_double:
+            in_single = not in_single
+            in_argument = True
+        elif char == '"' and not in_single:
+            in_double = not in_double
+            in_argument = True
+        elif not char.isspace() or in_single or in_double:
+            in_argument = True
+            current.append(char)
+        elif in_argument:
+            args.append("".join(current))
+            ends.append(index)
+            current = []
+            in_argument = False
+    if in_argument:
+        args.append("".join(current))
+        ends.append(len(command))
+    return args, ends[0] if ends else 0
+
+
+def _parse_windows_command_line(command: str) -> tuple[list[str], int]:
+    """Split a command line like CMake does for separate_arguments(WINDOWS_COMMAND).
+
+    These are the rules of the Microsoft C runtime: whitespace separates the
+    arguments, unless it's in double quotes, and backslashes are literal ones
+    unless they precede a double quote, which an odd number of them escapes.
+    Returns the arguments and the index that the first one ends at.
+    """
+    args: list[str] = []
+    ends: list[int] = []
+    current: list[str] = []
+    in_argument = in_quotes = False
+    backslashes = 0
+    for index, char in enumerate(command):
+        if char == "\\":
+            backslashes += 1
+            in_argument = True
+            continue
+        if char == '"':
+            current.append("\\" * (backslashes // 2))
+            if backslashes % 2:
+                current.append('"')
+            else:
+                in_quotes = not in_quotes
+            in_argument = True
+        else:
+            current.append("\\" * backslashes)
+            if not char.isspace() or in_quotes:
+                in_argument = True
+                current.append(char)
+            elif in_argument:
+                args.append("".join(current))
+                ends.append(index)
+                current = []
+                in_argument = False
+        backslashes = 0
+    current.append("\\" * backslashes)
+    if in_argument:
+        args.append("".join(current))
+        ends.append(len(command))
+    return args, ends[0] if ends else 0
+
+
+def handle_separate_arguments(
+    ctx: BuildContext,
+    cmd: Command,
+    args: list[str],
+    strict: bool,
+) -> None:
+    """Handle separate_arguments() command."""
+    message = ""
+    modes = ("UNIX_COMMAND", "WINDOWS_COMMAND", "NATIVE_COMMAND")
+    if not args:
+        message = "separate_arguments must be given at least one argument."
+    elif len(args) == 1:
+        # separate_arguments(<variable>): the spaces in it separate list elements
+        value = ctx.variables.get(args[0])
+        if value is not None and value != UNDEFINED_VAR_SENTINEL:
+            ctx.variables[args[0]] = value.replace(" ", ";")
+        return
+    elif args[1] not in modes:
+        message = (
+            "separate_arguments missing required option: 'UNIX_COMMAND' or "
+            "'WINDOWS_COMMAND' or 'NATIVE_COMMAND'"
+        )
+    # separate_arguments(<variable> <mode> [PROGRAM [SEPARATE_ARGS]] <args>)
+    rest = args[2:]
+    program = rest[:1] == ["PROGRAM"]
+    if program:
+        rest = rest[1:]
+    separate_args = program and rest[:1] == ["SEPARATE_ARGS"]
+    if separate_args:
+        rest = rest[1:]
+    if not message and len(rest) > 1:
+        message = "separate_arguments given unexpected argument(s)"
+    if message:
+        if strict:
+            ctx.print_error(message, cmd.line)
+            sys.exit(1)
+        ctx.print_warning(message, cmd.line)
+        return
+
+    command = rest[0] if rest else ""
+    windows = args[1] == "WINDOWS_COMMAND" or (
+        args[1] == "NATIVE_COMMAND" and sys.platform == "win32"
+    )
+    parse = _parse_windows_command_line if windows else _parse_unix_command_line
+    values, program_end = parse(command)
+    if program and values:
+        # The program is looked up, and its arguments are kept as they are.
+        found = shutil.which(values[0])
+        if found is None:
+            values = []
+        elif separate_args:
+            values[0] = to_posix_path(found)
+        else:
+            values = [to_posix_path(found), command[program_end:]]
+    ctx.variables[args[0]] = ";".join(value.replace(";", "\\;") for value in values)
+
+
 def handle_get_filename_component(
     ctx: BuildContext,
     cmd: Command,
