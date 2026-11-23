@@ -48,6 +48,7 @@ from .commands import (
     handle_get_directory_property,
     handle_get_filename_component,
     handle_get_property,
+    handle_get_source_file_property,
     handle_get_test_property,
     handle_include_directories,
     handle_list,
@@ -2876,6 +2877,9 @@ int main() {{
             case "get_test_property":
                 handle_get_test_property(ctx, cmd, args, strict)
 
+            case "get_source_file_property":
+                handle_get_source_file_property(ctx, cmd, args, strict)
+
             case "set_source_files_properties":
                 if "PROPERTIES" in args:
                     prop_idx = args.index("PROPERTIES")
@@ -2952,6 +2956,10 @@ int main() {{
                                 elif prop_name == "SKIP_PRECOMPILE_HEADERS":
                                     file_props.skip_precompile_headers = is_truthy(
                                         ";".join(expanded_values)
+                                    )
+                                else:
+                                    file_props.properties[prop_name] = ";".join(
+                                        expanded_values
                                     )
                             else:
                                 ctx.print_warning(

@@ -1246,10 +1246,13 @@ def handle_set_property(
                     file_props.compile_flags = value
             elif prop_name == "SKIP_PRECOMPILE_HEADERS":
                 file_props.skip_precompile_headers = is_truthy(";".join(prop_values))
-            elif strict:
-                ctx.print_warning(
-                    f"set_property(SOURCE): property '{prop_name}' not yet supported",
-                    cmd.line,
+            else:
+                _set_property_value(
+                    file_props.properties,
+                    prop_name,
+                    prop_values,
+                    append_mode,
+                    append_string,
                 )
 
     elif scope_type == "DIRECTORY":
@@ -1287,6 +1290,53 @@ def handle_set_property(
                 cmd.line,
             )
             sys.exit(1)
+
+
+def _source_file_property(ctx: BuildContext, filename: str, prop: str) -> str | None:
+    """A property of a source file, or None if it isn't set.
+
+    ``filename`` is the resolved path that the properties are stored under.
+    """
+    file_props = ctx.source_file_properties.get(filename)
+    if file_props is None:
+        return None
+    lists = {
+        "COMPILE_DEFINITIONS": file_props.compile_definitions,
+        "COMPILE_OPTIONS": file_props.compile_options,
+        "INCLUDE_DIRECTORIES": file_props.include_directories,
+        "OBJECT_DEPENDS": file_props.object_depends,
+    }
+    if prop in lists:
+        return ";".join(lists[prop]) or None
+    if prop == "COMPILE_FLAGS":
+        return file_props.compile_flags or None
+    if prop == "SKIP_PRECOMPILE_HEADERS":
+        return "ON" if file_props.skip_precompile_headers else None
+    return file_props.properties.get(prop)
+
+
+def handle_get_source_file_property(
+    ctx: BuildContext,
+    cmd: Command,
+    args: list[str],
+    strict: bool,
+) -> None:
+    """Handle get_source_file_property() command."""
+    # get_source_file_property(<variable> <file>
+    #                          [DIRECTORY <dir> | TARGET_DIRECTORY <target>] <property>)
+    # Source file properties are global, so the directory isn't needed.
+    if len(args) != 3 and not (
+        len(args) == 5 and args[2] in ("DIRECTORY", "TARGET_DIRECTORY")
+    ):
+        message = "get_source_file_property called with incorrect number of arguments"
+        if strict:
+            ctx.print_error(message, cmd.line)
+            sys.exit(1)
+        ctx.print_warning(message, cmd.line)
+        return
+    filename = resolve_cmake_path(args[1], ctx.current_source_dir)
+    value = _source_file_property(ctx, filename, args[-1])
+    ctx.variables[args[0]] = "NOTFOUND" if value is None else value
 
 
 def handle_get_property(
@@ -1354,17 +1404,7 @@ def handle_get_property(
         expanded_filename = resolve_cmake_path(
             expanded_filename, ctx.current_source_dir
         )
-        if expanded_filename in ctx.source_file_properties:
-            file_props = ctx.source_file_properties[expanded_filename]
-            if prop_name == "COMPILE_DEFINITIONS":
-                value = ";".join(file_props.compile_definitions)
-            elif prop_name == "INCLUDE_DIRECTORIES":
-                value = ";".join(file_props.include_directories)
-            elif prop_name == "OBJECT_DEPENDS":
-                value = ";".join(file_props.object_depends)
-            elif prop_name == "SKIP_PRECOMPILE_HEADERS":
-                value = "ON" if file_props.skip_precompile_headers else ""
-        value = value or None
+        value = _source_file_property(ctx, expanded_filename, prop_name)
 
     elif scope_type == "DIRECTORY":
         directory = scope_args[0] if scope_args else str(ctx.current_source_dir)

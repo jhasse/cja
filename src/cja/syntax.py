@@ -95,6 +95,8 @@ class SourceFileProperties:
     compile_options: list[str] = field(default_factory=list)
     compile_flags: str = ""  # Legacy COMPILE_FLAGS, a command-line string
     skip_precompile_headers: bool = False
+    # Every other property, as set
+    properties: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass

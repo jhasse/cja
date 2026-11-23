@@ -2,8 +2,10 @@
 
 from pathlib import Path
 
+import pytest
+
 from cja.generator import BuildContext, generate_ninja, process_commands
-from cja.parser import Command
+from cja.parser import Command, parse
 
 
 def test_set_source_files_properties(tmp_path: Path) -> None:
@@ -175,3 +177,48 @@ def test_absolute_path_with_forward_slashes(tmp_path: Path) -> None:
     generate_ninja(ctx, ninja_path, "build")
 
     assert "-DNOMINMAX" in ninja_path.read_text()
+
+
+def test_custom_source_file_properties() -> None:
+    """Properties that cja doesn't use are kept and can be read again."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    process_commands(
+        parse(
+            "set_property(SOURCE a.c PROPERTY MY_PROP x y)\n"
+            "set_property(SOURCE a.c APPEND PROPERTY MY_PROP z)\n"
+            'set_source_files_properties(a.c b.c PROPERTIES OTHER "o;p" LANGUAGE C)\n'
+            "set_source_files_properties(a.c PROPERTIES\n"
+            '    COMPILE_DEFINITIONS "A=1;B=2" COMPILE_OPTIONS "-Wall;-Wextra")\n'
+            "get_property(MY_PROP SOURCE a.c PROPERTY MY_PROP)\n"
+            "get_property(OTHER_IS_SET SOURCE b.c PROPERTY OTHER SET)\n"
+            "get_property(UNSET_IS_SET SOURCE b.c PROPERTY MY_PROP SET)\n"
+            "get_source_file_property(MY_PROP_OF_FILE a.c MY_PROP)\n"
+            "get_source_file_property(OTHER b.c OTHER)\n"
+            "get_source_file_property(LANGUAGE b.c DIRECTORY . LANGUAGE)\n"
+            "get_source_file_property(DEFINITIONS a.c COMPILE_DEFINITIONS)\n"
+            "get_source_file_property(OPTIONS a.c COMPILE_OPTIONS)\n"
+            "get_source_file_property(UNSET b.c MY_PROP)\n"
+            "get_source_file_property(NO_FILE c.c MY_PROP)\n"
+            "set_property(SOURCE a.c PROPERTY MY_PROP)\n"
+            "get_source_file_property(REMOVED a.c MY_PROP)\n"
+        ),
+        ctx,
+        strict=True,
+    )
+
+    assert ctx.variables["MY_PROP"] == "x;y;z"
+    assert ctx.variables["OTHER_IS_SET"] == "1"
+    assert ctx.variables["UNSET_IS_SET"] == "0"
+    assert ctx.variables["MY_PROP_OF_FILE"] == "x;y;z"
+    assert ctx.variables["OTHER"] == "o;p"
+    assert ctx.variables["LANGUAGE"] == "C"
+    assert ctx.variables["DEFINITIONS"] == "A=1;B=2"
+    assert ctx.variables["OPTIONS"] == "-Wall;-Wextra"
+    assert ctx.variables["UNSET"] == "NOTFOUND"
+    assert ctx.variables["NO_FILE"] == "NOTFOUND"
+    assert ctx.variables["REMOVED"] == "NOTFOUND"
+
+    with pytest.raises(SystemExit):
+        process_commands(
+            parse("get_source_file_property(VAR a.c)\n"), ctx, strict=True
+        )
