@@ -249,12 +249,7 @@ def check_target_exists(
     if not args:
         return
     name = args[0]
-    if (
-        ctx.get_library(name)
-        or ctx.get_executable(name)
-        or name in ctx.imported_targets
-        or any(ct.name == name for ct in ctx.custom_targets)
-    ):
+    if ctx.target_exists(name):
         return
     message = f'{cmd.name} called on unknown target "{name}"'
     if strict:

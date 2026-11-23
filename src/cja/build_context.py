@@ -361,6 +361,15 @@ class BuildContext:
                 return exe
         return None
 
+    def target_exists(self, name: str) -> bool:
+        """Whether a target of any kind has this name, like if(TARGET)."""
+        return (
+            self.get_library(name) is not None
+            or self.get_executable(name) is not None
+            or name in self.imported_targets
+            or any(ct.name == name for ct in self.custom_targets)
+        )
+
     def resolve_path(self, path: str) -> str:
         """Resolve a path against current_source_dir and make it relative to source_dir."""
         resolved = resolve_cmake_path(path, self.current_source_dir)

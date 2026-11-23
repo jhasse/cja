@@ -340,6 +340,24 @@ class TestIfCommand:
         process_commands(commands, ctx, strict=True)
         assert "BAD" not in ctx.variables
 
+    def test_if_target_operator_with_custom_target(self) -> None:
+        ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+        process_commands(
+            parse(
+                "if(TARGET docs)\n"
+                "  set(BEFORE 1)\n"
+                "endif()\n"
+                "add_custom_target(docs COMMAND echo hi)\n"
+                "if(TARGET docs)\n"
+                "  set(AFTER 1)\n"
+                "endif()\n"
+            ),
+            ctx,
+            strict=True,
+        )
+        assert "BEFORE" not in ctx.variables
+        assert ctx.variables["AFTER"] == "1"
+
 
 class TestEnvVariable:
     """Tests for $ENV{VAR} expansion and if(DEFINED ENV{VAR})."""

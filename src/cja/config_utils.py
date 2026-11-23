@@ -41,19 +41,11 @@ def condition_holds(ctx: BuildContext, command: Command, strict: bool) -> bool:
 
 def expanded_condition_holds(ctx: BuildContext, args: list[str]) -> bool:
     """Evaluate a condition whose arguments are already expanded and unquoted."""
-
-    def target_exists(name: str) -> bool:
-        return (
-            ctx.get_library(name) is not None
-            or ctx.get_executable(name) is not None
-            or name in ctx.imported_targets
-        )
-
     return evaluate_condition(
         args,
         ctx.variables,
         cache=ctx.cache_values,
-        target_exists=target_exists,
+        target_exists=ctx.target_exists,
         command_exists=lambda name: name in ctx.functions or name in ctx.macros,
         test_exists=lambda name: any(test.name == name for test in ctx.tests),
     )
