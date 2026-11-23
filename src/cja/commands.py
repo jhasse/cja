@@ -1,3 +1,4 @@
+import contextlib
 import glob as py_glob
 import hashlib
 import json
@@ -3728,17 +3729,25 @@ def handle_file(
                     matched_files.extend(to_posix_path(m) for m in matched)
             ctx.variables[var_name] = ";".join(matched_files)
 
-    elif subcommand == "REMOVE_RECURSE":
+    elif subcommand in ("REMOVE", "REMOVE_RECURSE"):
+        # file(REMOVE [<files>...])
         # file(REMOVE_RECURSE [<files>...])
         for arg in args[1:]:
             filename = ctx.expand_variables(arg, strict, cmd.line)
-            if not Path(filename).is_absolute():
-                filename = str(ctx.current_source_dir / filename)
+            if not filename:
+                # Would otherwise name the current source directory itself.
+                ctx.print_warning(f"Ignoring empty file name in {subcommand}.", cmd.line)
+                continue
             p = Path(filename)
-            if p.exists():
-                if p.is_dir():
+            if not p.is_absolute():
+                p = ctx.current_source_dir / p
+            if p.is_dir() and not p.is_symlink():
+                # REMOVE leaves directories alone, like CMake does.
+                if subcommand == "REMOVE_RECURSE":
                     shutil.rmtree(p)
-                else:
+            else:
+                # CMake doesn't report files that can't be removed either.
+                with contextlib.suppress(OSError):
                     p.unlink()
 
     elif subcommand in ("TO_CMAKE_PATH", "TO_NATIVE_PATH"):

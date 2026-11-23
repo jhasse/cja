@@ -448,6 +448,64 @@ def test_file_touch_creates_parent_dirs(tmp_path: Path) -> None:
     assert target.exists()
 
 
+def test_file_remove(tmp_path: Path) -> None:
+    """file(REMOVE) deletes files, but leaves directories and missing files alone."""
+    source_dir = tmp_path / "src"
+    (source_dir / "dir").mkdir(parents=True)
+    (source_dir / "relative.txt").touch()
+    (source_dir / "dir" / "inner.txt").touch()
+    absolute = tmp_path / "absolute.txt"
+    absolute.touch()
+    ctx = BuildContext(source_dir=source_dir, build_dir=tmp_path / "build")
+
+    commands = [
+        Command(
+            name="file",
+            args=["REMOVE", "relative.txt", str(absolute), "missing.txt", "dir"],
+            line=1,
+        ),
+    ]
+    process_commands(commands, ctx, strict=True)
+
+    assert not (source_dir / "relative.txt").exists()
+    assert not absolute.exists()
+    assert (source_dir / "dir" / "inner.txt").exists()
+
+
+@pytest.mark.parametrize("subcommand", ["REMOVE", "REMOVE_RECURSE"])
+def test_file_remove_symlinks(tmp_path: Path, subcommand: str) -> None:
+    """file(REMOVE) and file(REMOVE_RECURSE) delete symlinks, not what they point to."""
+    (tmp_path / "dir").mkdir()
+    (tmp_path / "dir" / "inner.txt").touch()
+    try:
+        (tmp_path / "dirlink").symlink_to("dir", target_is_directory=True)
+        (tmp_path / "dangling").symlink_to("missing.txt")
+    except OSError:
+        pytest.skip("creating symlinks isn't permitted")
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+
+    commands = [Command(name="file", args=[subcommand, "dirlink", "dangling"], line=1)]
+    process_commands(commands, ctx, strict=True)
+
+    assert not (tmp_path / "dirlink").is_symlink()
+    assert not (tmp_path / "dangling").is_symlink()
+    assert (tmp_path / "dir" / "inner.txt").exists()
+
+
+@pytest.mark.parametrize("subcommand", ["REMOVE", "REMOVE_RECURSE"])
+def test_file_remove_ignores_empty_name(
+    tmp_path: Path, subcommand: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An empty file name must not be taken for the current source directory."""
+    (tmp_path / "keep.txt").touch()
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+
+    process_commands([Command(name="file", args=[subcommand, ""], line=1)], ctx)
+
+    assert (tmp_path / "keep.txt").exists()
+    assert f"Ignoring empty file name in {subcommand}." in capsys.readouterr().err
+
+
 def test_file_generate_with_config_genex(tmp_path: Path) -> None:
     """file(GENERATE) resolves $<LOWER_CASE:$<CONFIG>> and copies INPUT to OUTPUT.
 
