@@ -888,7 +888,7 @@ def process_commands(
                         ctx.parent_scope_vars = {}
                         saved_exclude_from_all = ctx.exclude_from_all
                         if fc_exclude_from_all:
-                            ctx.exclude_from_all = True
+                            ctx.exclude_directory_from_all(actual_src_dir)
                         ctx.directory_depth += 1
 
                         fc_binary_dir = binary_dir
@@ -1326,7 +1326,7 @@ def process_commands(
                         ctx.parent_scope_vars = {}
                         saved_exclude_from_all = ctx.exclude_from_all
                         if sub_exclude_from_all:
-                            ctx.exclude_from_all = True
+                            ctx.exclude_directory_from_all(sub_source_dir)
                         ctx.directory_depth += 1
 
                         if len(args) >= 2:
@@ -2739,7 +2739,7 @@ int main() {{
                 ctx.check_unsupported_args(cmd, ct_unsupported, strict)
 
                 ct_properties: dict[str, str] = {}
-                if not ct_all or ctx.exclude_from_all:
+                if not ct_all:
                     ct_properties["EXCLUDE_FROM_ALL"] = "TRUE"
                 ctx.custom_targets.append(
                     CustomTarget(
@@ -2756,6 +2756,7 @@ int main() {{
                         binary_dir=ctx.variables.get(
                             "CMAKE_CURRENT_BINARY_DIR", to_posix_path(ctx.build_dir)
                         ),
+                        directory_excluded=ctx.exclude_from_all,
                         properties=ct_properties,
                     )
                 )

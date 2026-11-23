@@ -18,6 +18,7 @@ from termcolor import colored
 from .build_context import (
     CMAKE_ROOT,
     BuildContext,
+    CustomTarget,
 )
 from .commands import evaluate_glob, glob_watch_dirs
 from .configurator import process_commands
@@ -760,6 +761,18 @@ def _keep_highest_std_flag(flags: list[str], lang: str) -> list[str]:
             continue
         kept.append(flag)
     return kept
+
+
+def _in_default_build(target: Library | Executable | CustomTarget) -> bool:
+    """Whether the default build has a target.
+
+    Like in CMake, its EXCLUDE_FROM_ALL property decides that if it's set, and
+    otherwise whether the directory that it was created in is excluded.
+    """
+    excluded = target.properties.get("EXCLUDE_FROM_ALL")
+    if excluded is None:
+        return not target.directory_excluded
+    return not is_truthy(excluded)
 
 
 def _format_compile_definition_flag(definition: str) -> str:
@@ -1739,7 +1752,7 @@ def generate_ninja(
                         combined.append(dep)
                 n.build([ct.name], "phony", combined)
 
-            if not is_truthy(ct.properties.get("EXCLUDE_FROM_ALL", "")):
+            if _in_default_build(ct):
                 custom_target_all.append(ct.name)
             n.newline()
 
@@ -2528,7 +2541,7 @@ def generate_ninja(
             for lib in ctx.libraries
             if not lib.is_alias
             and lib.name in lib_outputs
-            and not is_truthy(lib.properties.get("EXCLUDE_FROM_ALL", ""))
+            and _in_default_build(lib)
         ]
         default_targets.extend(custom_target_all)
 
@@ -2872,7 +2885,7 @@ def generate_ninja(
             n.newline()
 
             exe_outputs[exe.name] = exe_name
-            in_all = not is_truthy(exe.properties.get("EXCLUDE_FROM_ALL", ""))
+            in_all = _in_default_build(exe)
             if in_all:
                 default_targets.append(exe_name)
 

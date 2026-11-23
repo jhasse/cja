@@ -80,6 +80,12 @@ def test_add_subdirectory_exclude_from_all(tmp_path: Path) -> None:
 add_executable(app main.c)
 add_subdirectory(sub EXCLUDE_FROM_ALL)
 add_executable(app2 main.c)
+foreach(target sub_exe sub_included sub_custom nested_lib)
+  get_target_property(${target}_EXCLUDED ${target} EXCLUDE_FROM_ALL)
+endforeach()
+get_property(SUB_EXCLUDED DIRECTORY sub PROPERTY EXCLUDE_FROM_ALL)
+get_property(NESTED_EXCLUDED DIRECTORY sub/nested PROPERTY EXCLUDE_FROM_ALL SET)
+get_property(TOP_EXCLUDED DIRECTORY PROPERTY EXCLUDE_FROM_ALL SET)
 """
     )
     (tmp_path / "main.c").write_text("int main() { return 0; }")
@@ -100,7 +106,16 @@ add_subdirectory(nested)
     (nested / "CMakeLists.txt").write_text("add_library(nested_lib lib.c)")
     (nested / "lib.c").write_text("int f(void) { return 0; }")
 
-    configure(tmp_path, "build")
+    ctx = configure(tmp_path, "build")
+
+    # Like in CMake, only the directory has the property, not what's in it.
+    assert ctx.variables["SUB_EXCLUDED"] == "TRUE"
+    assert ctx.variables["NESTED_EXCLUDED"] == "0"
+    assert ctx.variables["TOP_EXCLUDED"] == "0"
+    assert ctx.variables["sub_exe_EXCLUDED"] == "sub_exe_EXCLUDED-NOTFOUND"
+    assert ctx.variables["sub_included_EXCLUDED"] == "FALSE"
+    assert ctx.variables["sub_custom_EXCLUDED"] == "sub_custom_EXCLUDED-NOTFOUND"
+    assert ctx.variables["nested_lib_EXCLUDED"] == "nested_lib_EXCLUDED-NOTFOUND"
 
     all_targets = _all_targets(tmp_path)
     assert f"$builddir/app{EXE_EXT}" in all_targets

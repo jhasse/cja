@@ -233,8 +233,6 @@ def _default_target_properties(ctx: BuildContext) -> dict[str, str]:
         output_dir = ctx.variables.get(f"CMAKE_{kind}_OUTPUT_DIRECTORY", "")
         if output_dir and output_dir != UNDEFINED_VAR_SENTINEL:
             properties[f"{kind}_OUTPUT_DIRECTORY"] = output_dir
-    if ctx.exclude_from_all:
-        properties["EXCLUDE_FROM_ALL"] = "TRUE"
     no_system_from_imported = ctx.variables.get("CMAKE_NO_SYSTEM_FROM_IMPORTED", "")
     if no_system_from_imported and no_system_from_imported != UNDEFINED_VAR_SENTINEL:
         properties["NO_SYSTEM_FROM_IMPORTED"] = no_system_from_imported
@@ -1669,6 +1667,7 @@ def handle_add_library(
                 binary_dir=ctx.variables.get(
                     "CMAKE_CURRENT_BINARY_DIR", to_posix_path(ctx.build_dir)
                 ),
+                directory_excluded=ctx.exclude_from_all,
             )
         )
 
@@ -1726,6 +1725,7 @@ def handle_add_executable(
                 binary_dir=ctx.variables.get(
                     "CMAKE_CURRENT_BINARY_DIR", to_posix_path(ctx.build_dir)
                 ),
+                directory_excluded=ctx.exclude_from_all,
                 directory_depth=ctx.directory_depth,
             )
         )

@@ -145,6 +145,10 @@ class CustomTarget:
     # The directory the target was created in (its CMAKE_CURRENT_SOURCE_DIR)
     source_dir: Path | None = None
     binary_dir: str = ""
+    # In a directory that the default build leaves out, like one added with
+    # add_subdirectory(... EXCLUDE_FROM_ALL). The EXCLUDE_FROM_ALL property of
+    # the target takes precedence, if it's set.
+    directory_excluded: bool = False
     dependencies: list[str] = field(default_factory=list)
     # EXCLUDE_FROM_ALL is set unless the target was added with ALL
     properties: dict[str, str] = field(default_factory=dict)
@@ -243,8 +247,8 @@ class BuildContext:
     # The include_directories(SYSTEM) of each directory, keyed like the
     # INCLUDE_DIRECTORIES in directory_properties
     directory_system_include_dirs: dict[str, list[str]] = field(default_factory=dict)
-    # Inside an add_subdirectory(... EXCLUDE_FROM_ALL), so new targets start
-    # out excluded from "all"
+    # Inside an add_subdirectory(... EXCLUDE_FROM_ALL), so the default build
+    # leaves out new targets, unless their EXCLUDE_FROM_ALL property is set
     exclude_from_all: bool = False
     # How many add_subdirectory()/FetchContent levels below the top-level
     # directory we are, so "cja run" can prefer the shallowest executable
@@ -441,6 +445,16 @@ class BuildContext:
     def directory_key(self, source_dir: Path) -> str:
         """The key of a directory in directory_properties, like set_property() uses."""
         return resolve_cmake_path(str(source_dir), source_dir)
+
+    def exclude_directory_from_all(self, source_dir: Path) -> None:
+        """Leave a directory that's about to be entered out of the default build.
+
+        Like CMake, that sets its EXCLUDE_FROM_ALL property, but not the one of
+        its targets and subdirectories, which are left out as well.
+        """
+        self.exclude_from_all = True
+        key = self.directory_key(source_dir)
+        self.directory_properties.setdefault(key, {})["EXCLUDE_FROM_ALL"] = "TRUE"
 
     def inherit_system_property(
         self, source_dir: Path, parent_dir: Path, system: bool
