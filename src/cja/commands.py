@@ -1052,6 +1052,27 @@ def _find_test(
     return None
 
 
+def handle_get_test_property(
+    ctx: BuildContext,
+    cmd: Command,
+    args: list[str],
+    strict: bool,
+) -> None:
+    """Handle get_test_property() command."""
+    # get_test_property(<test> <property> [DIRECTORY <dir>] <variable>)
+    if len(args) != 3 and not (len(args) == 5 and args[2] == "DIRECTORY"):
+        message = "get_test_property called with incorrect number of arguments"
+        if strict:
+            ctx.print_error(message, cmd.line)
+            sys.exit(1)
+        ctx.print_warning(message, cmd.line)
+        return
+    # Like in CMake, a test that doesn't exist is no error here.
+    test = next((test for test in ctx.tests if test.name == args[0]), None)
+    value = test.properties.get(args[1]) if test else None
+    ctx.variables[args[-1]] = "NOTFOUND" if value is None else value
+
+
 def handle_set_tests_properties(
     ctx: BuildContext,
     cmd: Command,

@@ -445,6 +445,33 @@ def test_set_property_append_string_multiple_values() -> None:
     assert ctx.global_properties["EMPTY_PROP"] == "d"
 
 
+def test_get_test_property() -> None:
+    """get_test_property() stores NOTFOUND for what isn't set."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    process_commands(
+        parse(
+            "add_test(NAME tst COMMAND cmd)\n"
+            'set_tests_properties(tst PROPERTIES LABELS "a;b" EMPTY "")\n'
+            "get_test_property(tst LABELS LABELS)\n"
+            "get_test_property(tst LABELS DIRECTORY . LABELS_IN_DIRECTORY)\n"
+            "get_test_property(tst EMPTY EMPTY)\n"
+            "get_test_property(tst NO_SUCH_PROPERTY UNSET)\n"
+            "get_test_property(no_such_test LABELS NO_TEST)\n"
+        ),
+        ctx,
+        strict=True,
+    )
+
+    assert ctx.variables["LABELS"] == "a;b"
+    assert ctx.variables["LABELS_IN_DIRECTORY"] == "a;b"
+    assert ctx.variables["EMPTY"] == ""
+    assert ctx.variables["UNSET"] == "NOTFOUND"
+    assert ctx.variables["NO_TEST"] == "NOTFOUND"
+
+    with pytest.raises(SystemExit):
+        process_commands(parse("get_test_property(tst LABELS)\n"), ctx, strict=True)
+
+
 def test_get_cmake_property() -> None:
     """get_cmake_property() lists variables and reads global properties."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))

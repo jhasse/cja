@@ -48,6 +48,7 @@ from .commands import (
     handle_get_directory_property,
     handle_get_filename_component,
     handle_get_property,
+    handle_get_test_property,
     handle_include_directories,
     handle_list,
     handle_macro,
@@ -2871,6 +2872,9 @@ int main() {{
 
             case "set_tests_properties":
                 handle_set_tests_properties(ctx, cmd, args)
+
+            case "get_test_property":
+                handle_get_test_property(ctx, cmd, args, strict)
 
             case "set_source_files_properties":
                 if "PROPERTIES" in args:
