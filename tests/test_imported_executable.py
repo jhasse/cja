@@ -10,6 +10,7 @@ import pytest
 from cja.generator import BuildContext, configure, process_commands
 from cja.parser import Command
 from cja.targets import ImportedTarget
+from tests.helpers import cd_command, join_command_lines
 
 
 def _configure(tmp_path: Path, cmake: str, tools: str = "tools") -> tuple[Path, str]:
@@ -91,9 +92,13 @@ def test_imported_executable_in_custom_command(
     assert gen.splitlines()[0] == (
         f"build $builddir/gen.txt: custom_command {tool_node}"
     )
-    assert f"cmd = {tool.as_posix()} --out gen.txt" in gen
+    # Like in CMake, the commands run in the binary directory.
+    cd = cd_command("build")
+    command = join_command_lines(cd, f"{tool.as_posix()} --out gen.txt")
+    assert f"cmd = {command}" in gen
     genex = _build_statement(ninja, "$builddir/genex.txt")
-    assert f"cmd = {tool.as_posix()} {tool.parent.as_posix()}" in genex
+    command = join_command_lines(cd, f"{tool.as_posix()} {tool.parent.as_posix()}")
+    assert f"cmd = {command}" in genex
     run_line, run_cmd = _build_statement(ninja, "$builddir/run.stamp").split("\n", 1)
     assert run_line.endswith(f"|| {tool_node}")
     assert f"{tool.as_posix()} && " in run_cmd

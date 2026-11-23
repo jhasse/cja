@@ -173,7 +173,8 @@ def test_add_custom_target_working_directory_verbatim() -> None:
     process_commands(commands, ctx)
 
     ct = ctx.custom_targets[0]
-    assert ct.working_directory == "subdir"
+    # Like in CMake, relative to the binary directory
+    assert ct.working_directory == "build/subdir"
     assert ct.verbatim is True
 
 

@@ -225,11 +225,12 @@ add_custom_command(
     ninja_file = source_dir / "build.ninja"
     ninja_content = ninja_file.read_text()
 
-    # The command should cd to scripts and 'hello world' should be quoted if VERBATIM worked
+    # The command should cd to scripts in the binary directory, like in CMake,
+    # and 'hello world' should be quoted if VERBATIM worked
     # shlex.join(["echo", "hello world"]) -> 'echo "hello world"' or 'echo 'hello world''
+    cd = cd_command("build/scripts")
     assert any(
-        f"cmd = {join_command_lines(cd_command('scripts'), f'echo {q}hello world{q}')}"
-        in ninja_content
+        f"cmd = {join_command_lines(cd, f'echo {q}hello world{q}')}" in ninja_content
         for q in "'\""
     )
 
@@ -282,7 +283,9 @@ add_custom_command(
     ninja_file = source_dir / "build.ninja"
     ninja_content = ninja_file.read_text()
 
-    expected = join_command_lines("echo first > out.txt", "echo second >> out.txt")
+    expected = join_command_lines(
+        cd_command("build"), "echo first > out.txt", "echo second >> out.txt"
+    )
     assert f"cmd = {expected}" in ninja_content
 
 
@@ -841,9 +844,52 @@ add_custom_command(TARGET app POST_BUILD COMMAND tool --post=$<TARGET_PROPERTY:d
     configure(tmp_path, "build")
 
     ninja_content = (tmp_path / "build.ninja").read_text()
+    command = join_command_lines(
+        cd_command("build"), "tool --type=UTILITY --files=a.md;b.md"
+    )
     assert (
-        "build $builddir/out.txt: custom_command a.md b.md\n"
-        "  cmd = tool --type=UTILITY --files=a.md;b.md\n"
+        f"build $builddir/out.txt: custom_command a.md b.md\n  cmd = {command}\n"
     ) in ninja_content
     assert "tool --name=docs" in ninja_content
     assert re.search(r"tool \S?--post=a\.md;b\.md", ninja_content)
+
+
+def test_custom_commands_run_in_binary_directory(tmp_path: Path) -> None:
+    """Like in CMake, commands run in the binary directory of where they were
+    added, which a relative WORKING_DIRECTORY is about, too."""
+    import subprocess
+
+    from cja.generator import configure
+
+    (tmp_path / "CMakeLists.txt").write_text("""\
+cmake_minimum_required(VERSION 3.10)
+project(WorkingDirectoryTest C)
+
+add_custom_command(OUTPUT gen.txt COMMAND ${CMAKE_COMMAND} -E touch gen.txt)
+add_custom_target(gen ALL COMMAND ${CMAKE_COMMAND} -E touch target.txt DEPENDS gen.txt)
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/rel)
+add_custom_target(rel ALL
+    COMMAND ${CMAKE_COMMAND} -E touch in_rel.txt WORKING_DIRECTORY rel)
+add_executable(app main.c)
+add_custom_command(TARGET app POST_BUILD COMMAND ${CMAKE_COMMAND} -E touch post.txt)
+add_subdirectory(sub)
+""")
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "CMakeLists.txt").write_text("""\
+add_custom_command(OUTPUT subgen.txt COMMAND ${CMAKE_COMMAND} -E touch subgen.txt)
+add_custom_target(subgen ALL DEPENDS subgen.txt)
+""")
+    (tmp_path / "main.c").write_text("int main(void) { return 0; }\n")
+
+    configure(tmp_path, "build")
+    subprocess.run(["ninja"], cwd=tmp_path, check=True, capture_output=True)
+
+    for created in (
+        "gen.txt",
+        "target.txt",
+        "rel/in_rel.txt",
+        "post.txt",
+        "sub/subgen.txt",
+    ):
+        assert (tmp_path / "build" / created).is_file(), created
+        assert not (tmp_path / created).exists(), created

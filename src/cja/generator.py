@@ -3024,10 +3024,16 @@ def generate_ninja(
             if exe.post_build_commands:
                 stamp_rel = f"CMakeFiles/{exe.name}.post_build"
                 stamp = f"$builddir/{stamp_rel}"
-                stamp_path = str(ctx.build_dir / stamp_rel)
+                stamp_path = str(ctx.build_dir.absolute() / stamp_rel)
                 cmake_cmd = ctx.variables["CMAKE_COMMAND"]
                 cmake_cmd_parts = ctx.cja_cmd or [cmake_cmd]
                 pb_cmd_parts: list[str] = []
+                # Like in CMake, the commands run in the target's binary directory.
+                pb_cd = _cd_command(
+                    exe.binary_dir or to_posix_path(ctx.build_dir), ctx.source_dir
+                )
+                if pb_cd:
+                    pb_cmd_parts.append(pb_cd)
                 for pb_cmd in exe.post_build_commands:
                     expanded_parts: list[str] = []
                     for a in pb_cmd:

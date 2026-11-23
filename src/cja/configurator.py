@@ -124,6 +124,7 @@ from .utils import (
     extract_archive,
     flatten_single_extracted_subdir,
     ipo_flag,
+    is_cmake_absolute_path,
     is_truthy,
     link_option_args,
     make_relative,
@@ -346,6 +347,26 @@ def _parse_source_check_args(args: list[str]) -> tuple[str, str, list[str]]:
             continue
         i += 1
     return code, result_var, fail_regexes
+
+
+def _custom_command_working_directory(
+    ctx: BuildContext, working_directory: str | None
+) -> str:
+    """The directory that the commands of add_custom_command() and
+    add_custom_target() run in.
+
+    Like in CMake, that's the current binary directory, which a relative
+    WORKING_DIRECTORY is about, too.
+    """
+    binary_dir = ctx.variables.get(
+        "CMAKE_CURRENT_BINARY_DIR", to_posix_path(ctx.build_dir)
+    )
+    if not working_directory:
+        return binary_dir
+    if working_directory.startswith("$") or is_cmake_absolute_path(working_directory):
+        # Absolute, or a generator expression or $builddir that stands for it
+        return working_directory
+    return to_posix_path(Path(binary_dir) / working_directory)
 
 
 def _add_custom_command_target(
@@ -2656,7 +2677,9 @@ int main() {{
                                 commands=command_list,
                                 depends=depends,
                                 main_dependency=main_dependency,
-                                working_directory=working_directory,
+                                working_directory=_custom_command_working_directory(
+                                    ctx, working_directory
+                                ),
                                 verbatim=verbatim,
                                 uses_terminal=uses_terminal,
                                 defined_file=ctx.current_list_file,
@@ -2750,7 +2773,9 @@ int main() {{
                         name=target_name,
                         commands=ct_commands,
                         depends=ct_depends,
-                        working_directory=ct_working_directory,
+                        working_directory=_custom_command_working_directory(
+                            ctx, ct_working_directory
+                        ),
                         verbatim=ct_verbatim,
                         uses_terminal=ct_uses_terminal,
                         comment=ct_comment,

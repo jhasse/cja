@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from cja.generator import configure
+from tests.helpers import cd_command, join_command_lines
 
 
 def test_custom_command_redirection(tmp_path: Path) -> None:
@@ -23,7 +24,9 @@ add_custom_command(
     ninja_content = ninja_file.read_text()
 
     # It should NOT be quoted
-    assert "cmd = echo foo > asd.txt" in ninja_content
+    # Like in CMake, the file is written to the binary directory.
+    command = join_command_lines(cd_command("build"), "echo foo > asd.txt")
+    assert f"cmd = {command}" in ninja_content
     assert "'>'" not in ninja_content
 
 
@@ -49,5 +52,7 @@ add_custom_command(
     # But CMake's VERBATIM is tricky.
     # If we want to fix the user's issue, we should probably NOT quote shell operators
     # even in VERBATIM mode if they are stand-alone tokens.
-    assert "cmd = echo foo > asd.txt" in ninja_content
+    # Like in CMake, the file is written to the binary directory.
+    command = join_command_lines(cd_command("build"), "echo foo > asd.txt")
+    assert f"cmd = {command}" in ninja_content
     assert "'>'" not in ninja_content
