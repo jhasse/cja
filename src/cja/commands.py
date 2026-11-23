@@ -319,17 +319,23 @@ def handle_include_directories(
         return
 
     ctx.check_unsupported_args(cmd, [arg for arg in args if arg == "BEFORE"], strict)
-    # Like in CMake, SYSTEM anywhere makes all the directories system ones.
-    system = "SYSTEM" in args
+    # Like in CMake, SYSTEM makes the directories after it system ones.
+    system = False
     dirs: list[str] = []
+    system_dirs: list[str] = []
     for arg in args:
-        if arg in ("BEFORE", "AFTER", "SYSTEM"):
+        if arg == "SYSTEM":
+            system = True
+            continue
+        if arg in ("BEFORE", "AFTER"):
             continue
         raw = ctx.expand_variables(arg, strict, cmd.line)
         expanded = _requirement_of_any_target(ctx, raw)
         if expanded is None:
             # It's about each target of the directory.
             dirs.append(_unevaluated_directory(ctx, raw))
+            if system:
+                system_dirs.append(dirs[-1])
             continue
         if "$<" in expanded:
             ctx.print_warning(
@@ -339,6 +345,8 @@ def handle_include_directories(
         if not expanded:
             continue
         dirs.append(resolve_cmake_path(expanded, ctx.current_source_dir))
+        if system:
+            system_dirs.append(dirs[-1])
 
     if not dirs:
         return
@@ -357,8 +365,8 @@ def handle_include_directories(
         )
     else:
         ctx.directory_properties[abs_dir]["INCLUDE_DIRECTORIES"] = ";".join(dirs)
-    if system:
-        ctx.directory_system_include_dirs.setdefault(abs_dir, []).extend(dirs)
+    if system_dirs:
+        ctx.directory_system_include_dirs.setdefault(abs_dir, []).extend(system_dirs)
 
     # Directory-level include dirs apply to all targets defined in this
     # directory, including ones created before this call (matching CMake's
@@ -369,7 +377,7 @@ def handle_include_directories(
             for d in dirs:
                 if d not in target.include_directories:
                     target.include_directories.append(d)
-                if system and d not in target.system_include_directories:
+                if d in system_dirs and d not in target.system_include_directories:
                     target.system_include_directories.append(d)
 
 

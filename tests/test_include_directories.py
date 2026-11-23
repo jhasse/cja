@@ -261,6 +261,22 @@ def test_include_directories_system(tmp_path: Path) -> None:
     assert include_flags(content, "late_main.o") == ["-Inormal", "-isystem sys"]
 
 
+def test_include_directories_system_after_directories(tmp_path: Path) -> None:
+    """Like in CMake, only the directories after SYSTEM are system ones."""
+    (tmp_path / "CMakeLists.txt").write_text(
+        "add_executable(early main.cpp)\n"
+        "include_directories(before SYSTEM after)\n"
+        "add_executable(late main.cpp)\n"
+    )
+    (tmp_path / "main.cpp").write_text("int main() { return 0; }\n")
+
+    configure(tmp_path, "build", strict=True)
+
+    content = (tmp_path / "build.ninja").read_text()
+    assert include_flags(content, "early_main.o") == ["-Ibefore", "-isystem after"]
+    assert include_flags(content, "late_main.o") == ["-Ibefore", "-isystem after"]
+
+
 def test_implicit_include_directories_are_not_system(tmp_path: Path) -> None:
     """Implicit include directories are left out, -isystem would reorder them."""
     implicit = tmp_path / "implicit"
