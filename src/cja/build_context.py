@@ -1,5 +1,6 @@
 import os
 import platform
+import posixpath
 import re
 import sys
 from collections.abc import Callable
@@ -20,6 +21,7 @@ from .targets import (
 )
 from .utils import (
     UNDEFINED_VAR_SENTINEL,
+    is_cmake_absolute_path,
     is_truthy,
     make_relative,
     resolve_cmake_path,
@@ -451,8 +453,46 @@ class BuildContext:
 
     def custom_command_output(self, path: str) -> str:
         """How the output of a custom command is kept: relative to the build
-        directory if it's in there, and else to the top-level source directory,
-        with a relative path being about the current source directory."""
+        directory if it's in there, and else to the top-level source directory.
+
+        Like in CMake, a relative path is about the current binary directory.
+        """
+        if not path.startswith("$") and not is_cmake_absolute_path(path):
+            binary_dir = self.variables.get("CMAKE_CURRENT_BINARY_DIR")
+            base = self._relative_to_build_dir(binary_dir) if binary_dir else "."
+            if base is not None:
+                return posixpath.normpath(posixpath.join(base, path))
+            path = to_posix_path(Path(str(binary_dir)) / path)
+        relative = make_relative(path, self.build_dir)
+        return self.resolve_path(path) if relative == path else relative
+
+    def _relative_to_build_dir(self, directory: str) -> str | None:
+        """A directory relative to the build directory, or None if it's elsewhere."""
+        if is_cmake_absolute_path(directory):
+            relative = make_relative(directory, self.build_dir)
+        else:
+            try:
+                relative = to_posix_path(os.path.relpath(directory, self.build_dir))
+            except ValueError:  # on another drive
+                return None
+        if is_cmake_absolute_path(relative) or relative.split("/")[0] == "..":
+            return None
+        return relative
+
+    def custom_command_dependency(self, path: str) -> str:
+        """How a file that a custom command depends on is kept, see
+        custom_command_output().
+
+        Like in CMake, a relative path is about the current source directory
+        if the file is there, and else about the current binary directory,
+        where it's usually generated.
+        """
+        if (
+            "$<" not in path
+            and not is_cmake_absolute_path(path)
+            and not (self.current_source_dir / path).exists()
+        ):
+            return self.custom_command_output(path)
         relative = make_relative(path, self.build_dir)
         return self.resolve_path(path) if relative == path else relative
 

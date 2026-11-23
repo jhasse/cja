@@ -1766,14 +1766,20 @@ def generate_ninja(
             for exe in ctx.executables
         }
 
+        # The outputs of all commands first, so that one can depend on the
+        # outputs of one that's added later
+        custom_command_nodes = [
+            (
+                _output_nodes(cc.outputs, cc.defined_file, cc.defined_line),
+                _output_nodes(cc.byproducts, cc.defined_file, cc.defined_line),
+            )
+            for cc in ctx.custom_commands
+        ]
+
         # Generate custom commands
-        for custom_cmd in ctx.custom_commands:
-            outputs = _output_nodes(
-                custom_cmd.outputs, custom_cmd.defined_file, custom_cmd.defined_line
-            )
-            byproducts = _output_nodes(
-                custom_cmd.byproducts, custom_cmd.defined_file, custom_cmd.defined_line
-            )
+        for custom_cmd, (outputs, byproducts) in zip(
+            ctx.custom_commands, custom_command_nodes, strict=True
+        ):
 
             # Process multiple commands
             cmd_parts: list[str] = [
@@ -2111,8 +2117,36 @@ def generate_ninja(
         except ValueError:
             _build_rel = None
 
-        def _resolve_source(source: str) -> tuple[str, str]:
-            """Return (compile_input, obj_key) for a target source.
+        def _target_binary_output(
+            source: str, target: Library | Executable
+        ) -> str | None:
+            """The custom command output in the binary directory of a target that
+            one of its sources stands for, if any.
+
+            Like in CMake, a relative source that isn't in the source directory
+            of the target is looked for in its binary directory, which can be
+            elsewhere, e.g. with add_subdirectory(<dir> <binary dir>).
+            """
+            if target.source_dir is None or not target.binary_dir:
+                return None
+            path = Path(source)
+            if not path.is_absolute():
+                if (ctx.source_dir / path).exists():
+                    return None
+                path = ctx.source_dir / path
+            try:
+                relative = path.relative_to(target.source_dir)
+            except ValueError:
+                return None
+            output = make_relative(
+                to_posix_path(Path(target.binary_dir) / relative), ctx.build_dir
+            )
+            return output if output in custom_command_outputs else None
+
+        def _resolve_source(
+            source: str, target: Library | Executable | None = None
+        ) -> tuple[str, str]:
+            """Return (compile_input, obj_key) for a source of a target.
 
             compile_input is the path used as the compile-rule input.
             obj_key is the path used to derive the obj subdir and basename so a
@@ -2124,6 +2158,9 @@ def generate_ninja(
                 stripped = source[len(_build_rel) + 1 :]
                 if stripped in custom_command_outputs:
                     return f"$builddir/{stripped}", stripped
+            output = None if target is None else _target_binary_output(source, target)
+            if output is not None:
+                return f"$builddir/{output}", source
             return source, source
 
         def _sources_with_interface_sources(
@@ -2204,7 +2241,9 @@ def generate_ninja(
                 if link_inputs is None or obj not in link_inputs
             ]
 
-        def _generated_source_deps(sources: list[str]) -> list[str]:
+        def _generated_source_deps(
+            target: Library | Executable, sources: list[str]
+        ) -> list[str]:
             """Ninja nodes for custom-command outputs listed among target sources.
 
             Generated headers (and other non-compiled outputs) still need to
@@ -2213,7 +2252,7 @@ def generate_ninja(
             """
             deps: list[str] = []
             for source in sources:
-                resolved, _ = _resolve_source(source)
+                resolved, _ = _resolve_source(source, target)
                 if resolved.startswith("$builddir/") and resolved not in deps:
                     deps.append(resolved)
             return deps
@@ -2503,7 +2542,7 @@ def generate_ninja(
             c_clang_tidy = lib.properties.get("C_CLANG_TIDY")
 
             lib_dep_order_only = _target_order_only(lib.dependencies)
-            lib_generated_deps = _generated_source_deps(lib_sources)
+            lib_generated_deps = _generated_source_deps(lib, lib_sources)
             lib_order_only = list(
                 dict.fromkeys([*lib_dep_order_only, *lib_generated_deps])
             )
@@ -2516,7 +2555,7 @@ def generate_ninja(
                 lib_order_only,
             )
 
-            resolved_sources = [_resolve_source(s) for s in compileable_sources]
+            resolved_sources = [_resolve_source(s, lib) for s in compileable_sources]
             obj_names = _object_paths(lib.name, [obj for _, obj in resolved_sources])
             for source, (actual_source, _), obj_name in zip(
                 compileable_sources, resolved_sources, obj_names
@@ -2564,10 +2603,7 @@ def generate_ninja(
                             source_compile_flags.append(opt)
                     source_compile_flags.extend(split_flags(file_props.compile_flags))
                     for d in file_props.object_depends:
-                        if d in custom_command_outputs:
-                            source_depends.append(f"$builddir/{d}")
-                        else:
-                            source_depends.append(d)
+                        source_depends.append(_resolve_source(d, lib)[0])
 
                 # Precompiled header flags go only to the compile edge, not to
                 # clang-tidy, which can't load a PCH built by another compiler.
@@ -2847,7 +2883,7 @@ def generate_ninja(
             c_clang_tidy = exe.properties.get("C_CLANG_TIDY")
 
             exe_dep_order_only = _target_order_only(exe.dependencies)
-            exe_generated_deps = _generated_source_deps(exe_sources)
+            exe_generated_deps = _generated_source_deps(exe, exe_sources)
             exe_order_only = list(
                 dict.fromkeys([*exe_dep_order_only, *exe_generated_deps])
             )
@@ -2860,7 +2896,7 @@ def generate_ninja(
                 exe_order_only,
             )
 
-            resolved_sources = [_resolve_source(s) for s in compileable_sources]
+            resolved_sources = [_resolve_source(s, exe) for s in compileable_sources]
             obj_names = _object_paths(exe.name, [obj for _, obj in resolved_sources])
             for source, (actual_source, _), obj_name in zip(
                 compileable_sources, resolved_sources, obj_names
@@ -2908,10 +2944,7 @@ def generate_ninja(
                             source_compile_flags.append(opt)
                     source_compile_flags.extend(split_flags(file_props.compile_flags))
                     for d in file_props.object_depends:
-                        if d in custom_command_outputs:
-                            source_depends.append(f"$builddir/{d}")
-                        else:
-                            source_depends.append(d)
+                        source_depends.append(_resolve_source(d, exe)[0])
 
                 # Precompiled header flags go only to the compile edge, not to
                 # clang-tidy, which can't load a PCH built by another compiler.
@@ -2973,9 +3006,7 @@ def generate_ninja(
             # On Windows, compile .rc files to .res and add to link inputs
             if rc_sources and platform.system() == "Windows":
                 for rc_source in rc_sources:
-                    actual_rc = rc_source
-                    if rc_source in custom_command_outputs:
-                        actual_rc = f"$builddir/{rc_source}"
+                    actual_rc, _ = _resolve_source(rc_source, exe)
                     rc_rel = Path(rc_source)
                     res_name = f"$builddir/{exe.name}_{rc_rel.stem}.res"
                     register_output(res_name, exe.defined_file, exe.defined_line)

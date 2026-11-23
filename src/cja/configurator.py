@@ -2663,16 +2663,9 @@ int main() {{
                                 if is_target:
                                     depends.append(arg)
                                 else:
-                                    rel = make_relative(arg, ctx.build_dir)
-                                    if rel == arg:
-                                        rel = ctx.resolve_path(arg)
-                                    depends.append(rel)
+                                    depends.append(ctx.custom_command_dependency(arg))
                             elif current_section == "MAIN_DEPENDENCY":
-                                # Make relative to build_dir or source_dir
-                                rel = make_relative(arg, ctx.build_dir)
-                                if rel == arg:
-                                    rel = ctx.resolve_path(arg)
-                                main_dependency = rel
+                                main_dependency = ctx.custom_command_dependency(arg)
                             elif current_section == "WORKING_DIRECTORY":
                                 working_directory = arg
                         arg_idx += 1
@@ -2762,10 +2755,7 @@ int main() {{
                             if is_target:
                                 ct_depends.append(arg)
                             else:
-                                rel = make_relative(arg, ctx.build_dir)
-                                if rel == arg:
-                                    rel = ctx.resolve_path(arg)
-                                ct_depends.append(rel)
+                                ct_depends.append(ctx.custom_command_dependency(arg))
                         elif ct_section == "WORKING_DIRECTORY":
                             ct_working_directory = arg
                         elif ct_section == "COMMENT":

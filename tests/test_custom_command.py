@@ -11,6 +11,7 @@ from cja.parser import Command
 from tests.helpers import cd_command, join_command_lines
 
 EXE_EXT = ".exe" if platform.system() == "Windows" else ""
+LIB_EXT = ".lib" if platform.system() == "Windows" else ".a"
 
 
 def test_add_custom_command_minimal() -> None:
@@ -1023,3 +1024,82 @@ add_custom_command(TARGET app POST_BUILD
         binary_dir / "last.txt",
     ):
         assert created.is_file(), created
+
+
+def _write_generating_directory(directory: Path) -> None:
+    """A directory whose library is built from a generated source, and whose
+    custom target depends on outputs, byproducts and a source file."""
+    directory.mkdir(parents=True)
+    (directory / "gen.c.in").write_text("int f(void) { return 0; }\n")
+    (directory / "in.txt").write_text("")
+    (directory / "CMakeLists.txt").write_text("""\
+add_custom_command(OUTPUT gen.c
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/gen.c.in gen.c)
+add_library(generated STATIC gen.c)
+# Depends on the output of a command that is added later
+add_custom_command(OUTPUT second.txt DEPENDS first.txt by.txt
+    COMMAND ${CMAKE_COMMAND} -E touch second.txt)
+add_custom_command(OUTPUT first.txt BYPRODUCTS by.txt DEPENDS in.txt
+    COMMAND ${CMAKE_COMMAND} -E touch first.txt
+    COMMAND ${CMAKE_COMMAND} -E touch by.txt)
+add_custom_target(outputs ALL DEPENDS second.txt)
+get_source_file_property(GENERATED_LOCATION gen.c LOCATION)
+set(GENERATED_LOCATION "${GENERATED_LOCATION}" PARENT_SCOPE)
+""")
+
+
+def test_custom_command_outputs_in_other_binary_directory(tmp_path: Path) -> None:
+    """Like in CMake, relative outputs are in the binary directory of where
+    the command is added, also if that isn't the default one."""
+    import subprocess
+
+    from cja.generator import configure
+
+    tmp_path = tmp_path.resolve()
+    (tmp_path / "CMakeLists.txt").write_text("""\
+cmake_minimum_required(VERSION 3.10)
+project(OtherBinaryDirectoryTest C)
+add_subdirectory(sub other_build)
+""")
+    _write_generating_directory(tmp_path / "sub")
+
+    ctx = configure(tmp_path, "build", strict=True)
+    subprocess.run(["ninja"], cwd=tmp_path, check=True, capture_output=True)
+
+    binary_dir = tmp_path / "build" / "other_build"
+    assert ctx.variables["GENERATED_LOCATION"] == (binary_dir / "gen.c").as_posix()
+    for created in ("gen.c", f"libgenerated{LIB_EXT}", "first.txt", "by.txt"):
+        assert (binary_dir / created).is_file(), created
+    assert (binary_dir / "second.txt").is_file()
+    assert not (tmp_path / "build" / "sub" / "gen.c").exists()
+
+
+def test_custom_command_outputs_in_fetched_content(tmp_path: Path) -> None:
+    """The outputs of a fetched dependency are in its binary directory, while
+    its sources are elsewhere in the build directory."""
+    import subprocess
+    import tarfile
+
+    from cja.generator import configure
+
+    tmp_path = tmp_path.resolve()
+    _write_generating_directory(tmp_path / "dep")
+    tar_path = tmp_path / "dep.tar.gz"
+    with tarfile.open(tar_path, "w:gz") as tar:
+        tar.add(tmp_path / "dep", arcname="dep")
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "CMakeLists.txt").write_text(f"""\
+cmake_minimum_required(VERSION 3.10)
+project(FetchedOutputsTest C)
+include(FetchContent)
+FetchContent_Declare(dep URL file://{tar_path})
+FetchContent_MakeAvailable(dep)
+""")
+
+    configure(project, "build")
+    subprocess.run(["ninja"], cwd=project, check=True, capture_output=True)
+
+    binary_dir = project / "build" / "_deps" / "dep-build"
+    for created in ("gen.c", f"libgenerated{LIB_EXT}", "second.txt", "by.txt"):
+        assert (binary_dir / created).is_file(), created
