@@ -75,6 +75,8 @@ class Executable:
     properties: dict[str, str] = field(default_factory=dict)
     dependencies: list[str] = field(default_factory=list)
     post_build_commands: list[list[str]] = field(default_factory=list)
+    # The directory that each of the POST_BUILD commands runs in
+    post_build_working_directories: list[str] = field(default_factory=list)
     # Files that the POST_BUILD commands may write, kept like the outputs of
     # a custom command
     post_build_byproducts: list[str] = field(default_factory=list)

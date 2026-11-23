@@ -379,6 +379,7 @@ def _add_custom_command_target(
     acc_when = args[2]  # POST_BUILD, PRE_BUILD, or PRE_LINK
     acc_commands: list[list[str]] = []
     acc_byproducts: list[str] = []
+    acc_working_directory: str | None = None
     acc_section: str | None = None
     acc_unsupported: list[str] = []
     acc_expand_lists = False
@@ -410,7 +411,7 @@ def _add_custom_command_target(
             elif acc_section == "BYPRODUCTS" and expanded_acc:
                 acc_byproducts.append(ctx.custom_command_output(expanded_acc))
             elif acc_section == "WORKING_DIRECTORY" and expanded_acc:
-                acc_unsupported.append(acc_section)
+                acc_working_directory = expanded_acc
     if acc_expand_lists and any(
         ";" in a for c in acc_commands for a in c
     ):
@@ -430,6 +431,12 @@ def _add_custom_command_target(
         if acc_when == "POST_BUILD":
             acc_target_obj.post_build_commands.extend(acc_commands)
             if acc_target_exe is not None:
+                working_directory = _custom_command_working_directory(
+                    ctx, acc_working_directory
+                )
+                acc_target_exe.post_build_working_directories.extend(
+                    [working_directory] * len(acc_commands)
+                )
                 acc_target_exe.post_build_byproducts.extend(acc_byproducts)
         elif acc_when == "PRE_BUILD":
             acc_target_obj.pre_build_commands.extend(acc_commands)

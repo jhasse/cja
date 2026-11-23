@@ -37,14 +37,6 @@ def configure(tmp_path: Path, source: str, strict: bool = False) -> BuildContext
             "add_custom_command(): PRE_LINK",
         ),
         (
-            (
-                "add_executable(app main.c)\n"
-                "add_custom_command(TARGET app POST_BUILD COMMAND echo hi"
-                " WORKING_DIRECTORY /tmp BYPRODUCTS out.txt)"
-            ),
-            "add_custom_command(): WORKING_DIRECTORY",
-        ),
-        (
             "execute_process(COMMAND echo a OUTPUT_FILE out.txt)",
             "execute_process(): OUTPUT_FILE",
         ),

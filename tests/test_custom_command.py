@@ -973,3 +973,53 @@ add_custom_command(TARGET app POST_BUILD COMMAND app --flag {verbatim})
     # cmd.exe's echo keeps the quotes
     echoed = (tmp_path / "build" / "echoed.txt").read_text().strip().strip('"')
     assert echoed == "a b"
+
+
+def test_post_build_working_directory(tmp_path: Path) -> None:
+    """Like in CMake, each POST_BUILD command runs in its WORKING_DIRECTORY,
+    which a relative path is about the binary directory for, and else in the
+    binary directory."""
+    import subprocess
+
+    from cja.generator import configure
+
+    (tmp_path / "CMakeLists.txt").write_text("""\
+cmake_minimum_required(VERSION 3.10)
+project(PostBuildWorkingDirectoryTest C)
+add_subdirectory(sub)
+""")
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "assets").mkdir()
+    (tmp_path / "sub" / "CMakeLists.txt").write_text("""\
+add_executable(app main.c)
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/rel)
+add_custom_command(TARGET app POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E touch first.txt)
+add_custom_command(TARGET app POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E touch relative.txt
+    COMMAND ${CMAKE_COMMAND} -E touch relative2.txt
+    WORKING_DIRECTORY rel)
+add_custom_command(TARGET app POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E touch absolute.txt
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/assets)
+add_custom_command(TARGET app POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E touch target_dir.txt
+    WORKING_DIRECTORY $<TARGET_FILE_DIR:app>/rel)
+add_custom_command(TARGET app POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E touch last.txt)
+""")
+    (tmp_path / "sub" / "main.c").write_text("int main(void) { return 0; }\n")
+
+    configure(tmp_path, "build", strict=True)
+    subprocess.run(["ninja"], cwd=tmp_path, check=True, capture_output=True)
+
+    binary_dir = tmp_path / "build" / "sub"
+    for created in (
+        binary_dir / "first.txt",
+        binary_dir / "rel" / "relative.txt",
+        binary_dir / "rel" / "relative2.txt",
+        tmp_path / "sub" / "assets" / "absolute.txt",
+        binary_dir / "rel" / "target_dir.txt",
+        binary_dir / "last.txt",
+    ):
+        assert created.is_file(), created

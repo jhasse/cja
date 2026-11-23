@@ -1026,13 +1026,15 @@ def _move_system_includes_last(
     flags[:] = [f for f in flags if f not in system_flags] + list(moved)
 
 
-def _cd_command(working_dir: str, source_dir: Path) -> str | None:
+def _cd_command(working_dir: str, source_dir: Path | None) -> str | None:
     """Return the ``cd <dir>`` command line for a custom command working directory.
 
     Ninja runs from the source root. Absolute paths under that tree are rewritten
     as source-relative paths (e.g. ``/proj/build/generated`` → ``build/generated``).
     Paths already using ``$builddir`` are left unchanged. When the working
     directory is the source root itself, None is returned as no ``cd`` is needed.
+    Without ``source_dir``, as a previous command changed the directory already,
+    absolute paths are kept as they are.
     On Windows it's ``cd /D`` like in CMake, so that the drive changes, too.
     """
     if not working_dir:
@@ -1040,7 +1042,7 @@ def _cd_command(working_dir: str, source_dir: Path) -> str | None:
     target = working_dir
     is_builddir = working_dir == "$builddir" or working_dir.startswith("$builddir/")
     wd = Path(working_dir)
-    if not is_builddir and wd.is_absolute():
+    if source_dir is not None and not is_builddir and wd.is_absolute():
         try:
             source_resolved = source_dir.resolve()
             wd_resolved = wd.resolve()
@@ -3058,13 +3060,27 @@ def generate_ninja(
                 stamp_path = str(ctx.build_dir.absolute() / stamp_rel)
                 cmake_cmd_parts = ctx.cja_cmd or [ctx.variables["CMAKE_COMMAND"]]
                 pb_cmd_parts: list[str] = []
-                # Like in CMake, the commands run in the target's binary directory.
-                pb_cd = _cd_command(
-                    exe.binary_dir or to_posix_path(ctx.build_dir), ctx.source_dir
-                )
-                if pb_cd:
-                    pb_cmd_parts.append(pb_cd)
-                for pb_cmd in exe.post_build_commands:
+                pb_directory: str | None = None
+                pb_changed_directory = False
+                for pb_cmd, pb_working_directory in zip(
+                    exe.post_build_commands,
+                    exe.post_build_working_directories,
+                    strict=True,
+                ):
+                    # Like in CMake, each command runs in its WORKING_DIRECTORY,
+                    # which is the binary directory of the target by default.
+                    pb_working_directory = _absolute_target_file(
+                        _expand_genex(pb_working_directory)
+                    )
+                    if pb_working_directory != pb_directory:
+                        pb_directory = pb_working_directory
+                        pb_cd = _cd_command(
+                            pb_directory,
+                            None if pb_changed_directory else ctx.source_dir,
+                        )
+                        if pb_cd:
+                            pb_cmd_parts.append(pb_cd)
+                            pb_changed_directory = True
                     # Like other custom commands, so that shell operators like
                     # ">" work and $<TARGET_FILE:...> is absolute, e.g. for
                     # gtest/doctest_discover_tests() that run the executable in
