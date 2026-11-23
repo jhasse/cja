@@ -744,16 +744,22 @@ def link_option_args(
     return args
 
 
-def split_unquoted_list_args(value: str) -> list[str]:
-    """Split list arguments on semicolons outside generator expressions."""
+def _split_list(value: str, *, genex: bool) -> list[str]:
+    """Split a list like CMake's cmExpandList(), keeping empty elements.
+
+    A semicolon doesn't separate elements if it's escaped as ``\\;``, which
+    becomes a plain one, or inside square brackets. With ``genex``, it doesn't
+    either inside generator expressions.
+    """
     if ";" not in value:
         return [value]
     result: list[str] = []
     current: list[str] = []
     genex_depth = 0
+    square_nesting = 0
     i = 0
     while i < len(value):
-        if value.startswith("$<", i):
+        if genex and value.startswith("$<", i):
             genex_depth += 1
             current.append("$<")
             i += 2
@@ -761,10 +767,15 @@ def split_unquoted_list_args(value: str) -> list[str]:
         ch = value[i]
         if ch == ">" and genex_depth > 0:
             genex_depth -= 1
-            current.append(ch)
-            i += 1
+        elif ch == "\\" and value.startswith(";", i + 1):
+            current.append(";")
+            i += 2
             continue
-        if ch == ";" and genex_depth == 0:
+        elif ch == "[":
+            square_nesting += 1
+        elif ch == "]":
+            square_nesting -= 1
+        elif ch == ";" and genex_depth == 0 and square_nesting == 0:
             result.append("".join(current))
             current = []
             i += 1
@@ -773,3 +784,15 @@ def split_unquoted_list_args(value: str) -> list[str]:
         i += 1
     result.append("".join(current))
     return result
+
+
+def split_unquoted_list_args(value: str) -> list[str]:
+    """Split list arguments like CMake, but not on semicolons inside generator
+    expressions, see _split_list()."""
+    return _split_list(value, genex=True)
+
+
+def expand_list(value: str) -> list[str]:
+    """The elements of a list like the list() command sees them, including
+    empty ones, see _split_list()."""
+    return _split_list(value, genex=False) if value else []

@@ -12,6 +12,7 @@ from .utils import (
     UNDEFINED_VAR_SENTINEL,
     cmake_regex_to_python,
     compare_versions,
+    expand_list,
     is_off,
     is_on,
 )
@@ -348,7 +349,7 @@ def evaluate_condition(
                     items = variables.get(right)
                     if items is None or items == UNDEFINED_VAR_SENTINEL:
                         return False
-                    return left_val in items.split(";")
+                    return left_val in expand_list(items)
                 if op == "MATCHES":
                     match = re.search(cmake_regex_to_python(right_val), left_val)
                     if match:

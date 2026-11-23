@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from cja.generator import BuildContext, process_commands
-from cja.parser import Command
+from cja.parser import Command, parse
 
 
 def test_list_length() -> None:
@@ -307,3 +307,63 @@ def test_list_multiple_operations() -> None:
     process_commands(commands, ctx)
     assert ctx.variables["MY_LIST"] == "a;b;c"
     assert ctx.variables["LEN"] == "3"
+
+
+def test_list_escaped_semicolons_and_brackets() -> None:
+    r"""Like in CMake, "\;" and semicolons in square brackets don't divide a list."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    process_commands(
+        parse(
+            r"""
+set(A "semi\;colon" "plain" "x\;y")
+list(LENGTH A LENGTH)
+list(GET A 0 FIRST)
+list(GET A 2 THIRD)
+set(COPY ${A})
+set(REVERSED "${A}")
+list(REVERSE REVERSED)
+set(APPENDED "${A}")
+list(APPEND APPENDED more)
+list(JOIN A "+" JOINED)
+list(FIND A "semi;colon" FOUND)
+foreach(item IN LISTS A)
+  list(APPEND ITEMS "<${item}>")
+endforeach()
+foreach(item ${A})
+  list(APPEND ARGUMENTS "<${item}>")
+endforeach()
+if("semi;colon" IN_LIST A)
+  set(IN_LIST TRUE)
+endif()
+set(UNQUOTED a\;b)
+set(BRACKETS "a[b;c]d;e")
+list(LENGTH BRACKETS BRACKETS_LENGTH)
+function(count)
+  set(ARGC ${ARGC} PARENT_SCOPE)
+  set(ARGV0 "${ARGV0}" PARENT_SCOPE)
+endfunction()
+count(${A})
+"""
+        ),
+        ctx,
+        strict=True,
+    )
+
+    assert ctx.variables["A"] == r"semi\;colon;plain;x\;y"
+    assert ctx.variables["LENGTH"] == "3"
+    assert ctx.variables["FIRST"] == "semi;colon"
+    assert ctx.variables["THIRD"] == "x;y"
+    # Like in CMake, the elements of arguments lose their escapes, and so do
+    # the results of list() except for APPEND and PREPEND.
+    assert ctx.variables["COPY"] == "semi;colon;plain;x;y"
+    assert ctx.variables["REVERSED"] == "x;y;plain;semi;colon"
+    assert ctx.variables["APPENDED"] == r"semi\;colon;plain;x\;y;more"
+    assert ctx.variables["JOINED"] == "semi;colon+plain+x;y"
+    assert ctx.variables["FOUND"] == "0"
+    assert ctx.variables["ITEMS"] == "<semi;colon>;<plain>;<x;y>"
+    assert ctx.variables["ARGUMENTS"] == "<semi;colon>;<plain>;<x;y>"
+    assert ctx.variables["IN_LIST"] == "TRUE"
+    assert ctx.variables["UNQUOTED"] == "a;b"
+    assert ctx.variables["BRACKETS_LENGTH"] == "2"
+    assert ctx.variables["ARGC"] == "3"
+    assert ctx.variables["ARGV0"] == "semi;colon"

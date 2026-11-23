@@ -440,3 +440,20 @@ def test_custom_target_exclude_from_all_property(tmp_path: Path) -> None:
 
     ninja_content = (tmp_path / "build.ninja").read_text()
     assert "build all: phony opted_in untouched\n" in ninja_content
+
+
+def test_custom_target_escaped_semicolon_in_list(tmp_path: Path) -> None:
+    r"""Like in CMake, an element "a\;b" of a list is one argument "a;b"."""
+    from cja.generator import _quote_ninja_cmd_part, configure
+
+    (tmp_path / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.10)\n"
+        "project(EscapedSemicolonTest NONE)\n"
+        r'set(ARGS "a\;b" c)' "\n"
+        "add_custom_target(escaped COMMAND echo ${ARGS} VERBATIM)\n"
+    )
+
+    configure(tmp_path, "build")
+
+    ninja_content = (tmp_path / "build.ninja").read_text()
+    assert f"echo {_quote_ninja_cmd_part('a;b')} c " in ninja_content

@@ -8,7 +8,7 @@ from .build_context import (
 )
 from .parser import Command
 from .syntax import evaluate_condition, find_else_or_elseif
-from .utils import split_unquoted_list_args
+from .utils import expand_list, split_unquoted_list_args
 
 
 def _condition_args(ctx: BuildContext, command: Command, strict: bool) -> list[str]:
@@ -134,10 +134,7 @@ def build_foreach_info(
             if value in ("LISTS", "ITEMS") and mode != "ITEMS":
                 mode = value
             elif mode == "LISTS":
-                # CMake lists are ";"-separated, so split on ";" (not whitespace).
-                list_val = ctx.variables.get(value, "")
-                if list_val:
-                    items.extend(list_val.split(";"))
+                items.extend(expand_list(ctx.variables.get(value, "")))
             elif mode == "ITEMS":
                 items.append(value)
     else:

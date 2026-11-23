@@ -38,6 +38,10 @@ def unescape_quoted_argument(text: str) -> str:
                 val += "\\$"
             elif text[j + 1] == "\n":
                 pass  # Line continuation
+            elif text[j + 1] == ";":
+                # Like in CMake, it stays as it is, so that a list doesn't
+                # get divided there.
+                val += "\\;"
             elif text[j + 1] == "\\" and text[j + 2 : j + 3] == "$":
                 # "\\${VAR}" is a backslash followed by VAR's value
                 val += LITERAL_BACKSLASH_MARKER
