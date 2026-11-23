@@ -459,6 +459,10 @@ def target_objects_target(source: str) -> str | None:
     return match.group(1) if match else None
 
 
+class HeadTargetNeeded(Exception):
+    """A generator expression is about the target being built, which isn't known."""
+
+
 def strip_generator_expressions(
     value: str,
     variables: dict[str, str] | None = None,
@@ -467,11 +471,17 @@ def strip_generator_expressions(
     compile_language: str | None = None,
     target_property: Callable[[str, str], str | None] | None = None,
     target_objects: Callable[[str], str] | None = None,
+    current_target: str | None = None,
+    require_current_target: bool = False,
 ) -> str:
     """Strip or evaluate common CMake generator expressions.
 
     ``target_property`` looks up ``$<TARGET_PROPERTY:tgt,prop>``; without it
-    (or for the current target's ``$<TARGET_PROPERTY:prop>``) that is empty.
+    that is empty.
+
+    ``current_target`` is the target being built, which ``$<TARGET_PROPERTY:prop>``
+    is about. Without one that is empty too, or with ``require_current_target``
+    it raises HeadTargetNeeded, for evaluating the expression once it's known.
 
     ``target_objects`` gives what ``$<TARGET_OBJECTS:tgt>`` becomes; without
     it that is empty too.
@@ -603,6 +613,12 @@ def strip_generator_expressions(
             return ""
         if content.startswith("TARGET_PROPERTY:"):
             prop_args = split_top_level(content[len("TARGET_PROPERTY:") :], ",")
+            if len(prop_args) == 1:
+                if current_target is None:
+                    if require_current_target:
+                        raise HeadTargetNeeded
+                    return ""
+                prop_args.insert(0, current_target)
             if target_property is None or len(prop_args) != 2:
                 return ""
             value = target_property(
@@ -683,17 +699,31 @@ def strip_generator_expressions(
     return result
 
 
-def link_option_args(options: list[str], variables: dict[str, str]) -> list[str]:
+def link_option_args(
+    options: list[str],
+    variables: dict[str, str],
+    target_property: Callable[[str, str], str | None] | None = None,
+    current_target: str | None = None,
+) -> list[str]:
     """Turn LINK_OPTIONS entries into link command arguments, like CMake.
 
     Lists are split, ``SHELL:`` groups are split shell-like, ``LINKER:`` items
     are passed to the linker with ``-Wl,`` and repeated options are dropped
     (except within ``SHELL:`` groups).
+
+    ``target_property`` and ``current_target`` are for the generator
+    expressions in them, like for strip_generator_expressions().
     """
     args: list[str] = []
     seen: set[str] = set()
     for option in options:
-        for item in strip_generator_expressions(option, variables).split(";"):
+        evaluated = strip_generator_expressions(
+            option,
+            variables,
+            target_property=target_property,
+            current_target=current_target,
+        )
+        for item in evaluated.split(";"):
             linker = item.startswith("LINKER:")
             if linker:
                 item = item.removeprefix("LINKER:")

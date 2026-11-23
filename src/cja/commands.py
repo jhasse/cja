@@ -36,6 +36,7 @@ from .syntax import (
 from .targets import TARGET_PROPERTY_FIELDS, Executable, ImportedTarget, Library
 from .utils import (
     UNDEFINED_VAR_SENTINEL,
+    HeadTargetNeeded,
     cmake_regex_to_python,
     default_archiver,
     find_linker,
@@ -71,6 +72,45 @@ def _resolve_sources(ctx: BuildContext, source: str) -> list[str]:
         for item in normalized.split(";")
         if item and item.strip()
     ]
+
+
+def _usage_requirement(
+    ctx: BuildContext, value: str, target_name: str
+) -> tuple[str, str | None]:
+    """Evaluate the generator expressions in a usage requirement of a target.
+
+    Returns what the target itself gets from it and what the targets using it
+    get. The latter is None if it depends on them, because of a
+    $<TARGET_PROPERTY:prop>, which is about the target being built: it's kept
+    as it is then, for the generator to evaluate it for each of them.
+    """
+    own = strip_generator_expressions(
+        value,
+        ctx.variables,
+        target_property=ctx.target_property,
+        current_target=target_name,
+    )
+    try:
+        interface = strip_generator_expressions(
+            value,
+            ctx.variables,
+            target_property=ctx.target_property,
+            require_current_target=True,
+        )
+    except HeadTargetNeeded:
+        return own, None
+    return own, interface
+
+
+def _unevaluated_directory(ctx: BuildContext, value: str) -> str:
+    """A directory with generator expressions that are evaluated later.
+
+    Like in CMake, it's relative to the current source directory unless it
+    starts with a generator expression.
+    """
+    if value.startswith("$<"):
+        return value
+    return resolve_cmake_path(value, ctx.current_source_dir)
 
 
 def _is_supported_include_dir_genex(value: str) -> bool:
@@ -352,7 +392,10 @@ def handle_target_link_libraries(
                 # a CMake variable expansion like "${LIBS_PRIVATE}")
                 if "$<" in arg:
                     arg = strip_generator_expressions(
-                        arg, ctx.variables, target_property=ctx.target_property
+                        arg,
+                        ctx.variables,
+                        target_property=ctx.target_property,
+                        current_target=target_name if visibility == "PRIVATE" else None,
                     )
                     if not arg:
                         continue
@@ -405,7 +448,10 @@ def handle_target_link_directories(
                 # Expand variables and resolve relative paths
                 expanded = ctx.expand_variables(arg, strict, cmd.line)
                 expanded = strip_generator_expressions(
-                    expanded, ctx.variables, target_property=ctx.target_property
+                    expanded,
+                    ctx.variables,
+                    target_property=ctx.target_property,
+                    current_target=target_name if visibility == "PRIVATE" else None,
                 )
                 if "$<" in expanded:
                     ctx.print_warning(
@@ -565,10 +611,8 @@ def handle_target_include_directories(
                 visibility = "PRIVATE"
             else:
                 # Expand variables and resolve relative paths
-                expanded = ctx.expand_variables(arg, strict, cmd.line)
-                expanded = strip_generator_expressions(
-                    expanded, ctx.variables, target_property=ctx.target_property
-                )
+                raw = ctx.expand_variables(arg, strict, cmd.line)
+                expanded, interface = _usage_requirement(ctx, raw, target_name)
                 if "$<" in expanded and not _is_supported_include_dir_genex(
                     expanded
                 ):
@@ -576,8 +620,7 @@ def handle_target_include_directories(
                         f"generator expressions in target_include_directories are not yet supported: {arg}",
                         cmd.line,
                     )
-                if not expanded:
-                    continue
+                pieces: list[str] = []
                 for piece in expanded.split(";"):
                     piece = piece.strip()
                     if not piece:
@@ -585,13 +628,15 @@ def handle_target_include_directories(
                     piece = resolve_cmake_path(piece, ctx.current_source_dir)
                     if Path(piece).is_absolute():
                         piece = str(Path(piece).resolve())
-                    if visibility == "PUBLIC":
-                        public_dirs.append(piece)
-                        target_dirs.append(piece)
-                    elif visibility == "INTERFACE":
-                        public_dirs.append(piece)
-                    else:
-                        target_dirs.append(piece)
+                    pieces.append(piece)
+                if visibility != "INTERFACE":
+                    target_dirs.extend(pieces)
+                if visibility != "PRIVATE":
+                    public_dirs.extend(
+                        [_unevaluated_directory(ctx, raw)]
+                        if interface is None
+                        else pieces
+                    )
         # Add directories to library or executable
         lib = ctx.get_library(target_name)
         if lib:
@@ -633,18 +678,13 @@ def handle_target_compile_definitions(
                 visibility = "PRIVATE"
             else:
                 # Expand variables and resolve relative paths
-                expanded = ctx.expand_variables(arg, strict, cmd.line)
-                expanded = strip_generator_expressions(
-                    expanded, ctx.variables, target_property=ctx.target_property
-                )
+                raw = ctx.expand_variables(arg, strict, cmd.line)
+                expanded, interface = _usage_requirement(ctx, raw, target_name)
                 if "$<" in expanded:
                     ctx.print_warning(
                         f"generator expressions in target_compile_definitions are not yet supported: {arg}",
                         cmd.line,
                     )
-
-                if not expanded:
-                    continue
                 # CMake treats compile definitions as a list. After genex stripping,
                 # definitions may arrive as semicolon-separated or space-separated
                 # values (e.g. "$<...:A B>"), so split into individual definitions.
@@ -654,15 +694,10 @@ def handle_target_compile_definitions(
                     for d in part.split()
                     if d
                 ]
-                if not definitions:
-                    continue
-                if visibility == "PUBLIC":
-                    public_defs.extend(definitions)
+                if visibility != "INTERFACE":
                     target_defs.extend(definitions)
-                elif visibility == "INTERFACE":
-                    public_defs.extend(definitions)
-                else:
-                    target_defs.extend(definitions)
+                if visibility != "PRIVATE":
+                    public_defs.extend([raw] if interface is None else definitions)
         # Add definitions to library or executable
         lib = ctx.get_library(target_name)
         if lib:

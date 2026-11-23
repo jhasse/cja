@@ -782,6 +782,61 @@ def _format_compile_definition_flag(definition: str) -> str:
     return f"-D{escaped}"
 
 
+def _evaluate_for_target(
+    ctx: BuildContext,
+    value: str,
+    target_name: str,
+    variables: dict[str, str] | None = None,
+    compile_language: str | None = None,
+) -> str:
+    """Evaluate the generator expressions in something that a target is built with.
+
+    ``target_name`` is that target, which ``$<TARGET_PROPERTY:prop>`` is about:
+    for a usage requirement it's the target using it, not the one it's from.
+    """
+    return strip_generator_expressions(
+        value,
+        variables,
+        compile_language=compile_language,
+        target_property=ctx.target_property,
+        current_target=target_name,
+    )
+
+
+def _evaluate_list_for_target(
+    ctx: BuildContext, value: str, target_name: str
+) -> list[str]:
+    """The elements that a usage requirement stands for.
+
+    That's itself, unless it has generator expressions: those may evaluate to
+    a list or to nothing, see _evaluate_for_target().
+    """
+    if "$<" not in value:
+        return [value]
+    evaluated = _evaluate_for_target(ctx, value, target_name, ctx.variables)
+    return [item for item in evaluated.split(";") if item]
+
+
+def _compile_definition_flags(
+    ctx: BuildContext, definition: str, target_name: str
+) -> list[str]:
+    """The -D flags for a compile definition that a target is built with."""
+    return [
+        _format_compile_definition_flag(d)
+        for d in _evaluate_list_for_target(ctx, definition, target_name)
+    ]
+
+
+def _include_directory_flags(
+    ctx: BuildContext, include_directory: str, target_name: str
+) -> list[str]:
+    """The -I flags for an include directory that a target is built with."""
+    return [
+        _include_flag(d, ctx.source_dir)
+        for d in _evaluate_list_for_target(ctx, include_directory, target_name)
+    ]
+
+
 def framework_link_flags(lib_path: str) -> list[str] | None:
     """Return macOS framework link flags if lib_path refers to a framework."""
     if platform.system() != "Darwin":
@@ -815,7 +870,7 @@ def _quote_if_spaced(part: str) -> str:
 
 
 def _dependency_link_options(
-    ctx: BuildContext, own_options: list[str], dependencies: list[str]
+    ctx: BuildContext, target_name: str, own_options: list[str], dependencies: list[str]
 ) -> list[str]:
     """A target's link options followed by the INTERFACE ones of its dependencies."""
     options = list(own_options)
@@ -827,7 +882,10 @@ def _dependency_link_options(
             seen.add(id(lib.public_link_options))
             options.extend(lib.public_link_options)
     return [
-        _quote_if_spaced(part) for part in link_option_args(options, ctx.variables)
+        _quote_if_spaced(part)
+        for part in link_option_args(
+            options, ctx.variables, ctx.target_property, target_name
+        )
     ]
 
 
@@ -855,16 +913,20 @@ def _is_system_dependency(
 
 
 def _system_include_directories(
-    ctx: BuildContext, own: list[str], dependencies: list[str], consumer: dict[str, str]
+    ctx: BuildContext,
+    target_name: str,
+    own: list[str],
+    dependencies: list[str],
+    consumer: dict[str, str],
 ) -> set[str]:
     """Return the include directories that a target gets as system ones.
 
     Like in CMake, these are its own SYSTEM_INCLUDE_DIRECTORIES, the
     INTERFACE_SYSTEM_INCLUDE_DIRECTORIES of its dependencies and all
     INTERFACE_INCLUDE_DIRECTORIES of system dependencies (see
-    _is_system_dependency).  ``consumer`` are the target's properties.  The
-    ones of imported targets that only carry flags are added by
-    _add_imported_cflags().
+    _is_system_dependency).  ``consumer`` are the properties of the target
+    called ``target_name``.  The ones of imported targets that only carry flags
+    are added by _add_imported_cflags().
     """
     dirs = list(own)
     for name in dependencies:
@@ -874,7 +936,12 @@ def _system_include_directories(
             imported = is_truthy(lib.properties.get("IMPORTED", ""))
             if _is_system_dependency(lib.properties, imported, consumer):
                 dirs.extend(lib.public_include_directories)
-    return {inc for d in dirs if (inc := strip_generator_expressions(d))}
+    return {
+        inc
+        for d in dirs
+        for inc in _evaluate_list_for_target(ctx, d, target_name)
+        if inc
+    }
 
 
 def _add_imported_cflags(
@@ -1861,7 +1928,9 @@ def generate_ninja(
                     _quote_if_spaced(f"-L{_ninja_flag_path(link_dir, ctx.source_dir)}")
                 )
             link_flags.extend(
-                _dependency_link_options(ctx, target.link_options, expanded_link_libraries)
+                _dependency_link_options(
+                    ctx, target.name, target.link_options, expanded_link_libraries
+                )
             )
             link_flags.extend(split_flags(target.properties.get("LINK_FLAGS", "")))
             for lib_name in expanded_link_libraries:
@@ -2076,16 +2145,17 @@ def generate_ninja(
             return deps
 
         def _language_compile_flags(
-            base_flags: list[str], raw_options: list[str], language: str
+            target_name: str,
+            base_flags: list[str],
+            raw_options: list[str],
+            language: str,
         ) -> list[str]:
             """Target compile flags for sources of the given language."""
             flags = list(base_flags)
             own_options: set[str] = set()
             for option in raw_options:
-                opt = strip_generator_expressions(
-                    option,
-                    ctx.variables,
-                    compile_language=language,
+                opt = _evaluate_for_target(
+                    ctx, option, target_name, ctx.variables, language
                 )
                 for sub_opt in opt.split(";"):
                     sub_opt = sub_opt.strip()
@@ -2192,7 +2262,9 @@ def generate_ninja(
                 header_node = f"$builddir/{header_rel}"
                 pch_node = f"{header_node}.gch"
                 register_output(pch_node, target.defined_file, target.defined_line)
-                pch_flags = _language_compile_flags(base_flags, raw_options, language)
+                pch_flags = _language_compile_flags(
+                    target.name, base_flags, raw_options, language
+                )
                 n.build(
                     pch_node,
                     "cxx_pch" if language == "CXX" else "cc_pch",
@@ -2240,15 +2312,16 @@ def generate_ninja(
             if is_truthy(pic) and not is_truthy(ctx.variables.get("WIN32", "")):
                 lib_compile_flags.append("-fPIC")
             for option in dir_compile_options:
-                opt = strip_generator_expressions(option)
+                opt = _evaluate_for_target(ctx, option, lib.name)
                 if opt:
                     lib_compile_flags.append(opt)
-            for definition in _collect_directory_property_chain(
-                target_dir, "COMPILE_DEFINITIONS"
-            ):
-                lib_compile_flags.append(_format_compile_definition_flag(definition))
-            for definition in lib.compile_definitions:
-                lib_compile_flags.append(_format_compile_definition_flag(definition))
+            for definition in [
+                *_collect_directory_property_chain(target_dir, "COMPILE_DEFINITIONS"),
+                *lib.compile_definitions,
+            ]:
+                lib_compile_flags.extend(
+                    _compile_definition_flags(ctx, definition, lib.name)
+                )
             # Raw compile_options are kept for per-source evaluation so that
             # $<COMPILE_LANGUAGE:...> can be evaluated against each source's
             # language.  The target-level strip drops language-gated options.
@@ -2258,7 +2331,7 @@ def generate_ninja(
                 *_visibility_options(lib.properties),
             ]
             for option in lib.compile_options:
-                opt = strip_generator_expressions(option)
+                opt = _evaluate_for_target(ctx, option, lib.name)
                 if opt:
                     lib_compile_flags.append(opt)
             lib_compile_flags.extend(split_flags(lib.properties.get("COMPILE_FLAGS", "")))
@@ -2268,14 +2341,16 @@ def generate_ninja(
                     lib_compile_flags.append(flag)
             lib_compile_flags.extend(target_std_flags(lib.properties, ctx.variables))
             for inc_dir in lib.include_directories:
-                inc = strip_generator_expressions(inc_dir)
-                lib_compile_flags.append(_include_flag(inc, ctx.source_dir))
+                lib_compile_flags.extend(
+                    _include_directory_flags(ctx, inc_dir, lib.name)
+                )
 
             # Propagate flags from dependencies
             # For compilation, we only follow public dependencies
             expanded_lib_link_libraries = expand_link_libraries(lib.link_libraries)
             lib_system_dirs = _system_include_directories(
                 ctx,
+                lib.name,
                 lib.system_include_directories,
                 expanded_lib_link_libraries,
                 lib.properties,
@@ -2289,18 +2364,25 @@ def generate_ninja(
                         )
                         if flag and flag not in lib_compile_flags:
                             lib_compile_flags.append(flag)
-                    for inc_dir in dep_lib.public_include_directories:
-                        inc = strip_generator_expressions(inc_dir)
-                        inc_flag = _include_flag(inc, ctx.source_dir)
-                        if inc_flag not in lib_compile_flags:
-                            lib_compile_flags.append(inc_flag)
-                    for definition in dep_lib.public_compile_definitions:
-                        def_flag = _format_compile_definition_flag(definition)
-                        if def_flag not in lib_compile_flags:
-                            lib_compile_flags.append(def_flag)
+                    for flag in [
+                        *(
+                            flag
+                            for inc_dir in dep_lib.public_include_directories
+                            for flag in _include_directory_flags(ctx, inc_dir, lib.name)
+                        ),
+                        *(
+                            flag
+                            for definition in dep_lib.public_compile_definitions
+                            for flag in _compile_definition_flags(
+                                ctx, definition, lib.name
+                            )
+                        ),
+                    ]:
+                        if flag not in lib_compile_flags:
+                            lib_compile_flags.append(flag)
                     for option in dep_lib.public_compile_options:
                         lib_compile_options_raw.append(option)
-                        opt = strip_generator_expressions(option)
+                        opt = _evaluate_for_target(ctx, option, lib.name)
                         if opt and opt not in lib_compile_flags:
                             lib_compile_flags.append(opt)
                 if dep_name in ctx.imported_targets:
@@ -2385,22 +2467,22 @@ def generate_ninja(
                 file_props = ctx.source_file_properties.get(abs_source)
 
                 source_compile_flags = _language_compile_flags(
-                    lib_compile_flags, lib_compile_options_raw, source_language
+                    lib.name, lib_compile_flags, lib_compile_options_raw, source_language
                 )
                 source_depends = []
 
                 if file_props:
                     for definition in file_props.compile_definitions:
-                        source_compile_flags.append(
-                            _format_compile_definition_flag(definition)
+                        source_compile_flags.extend(
+                            _compile_definition_flags(ctx, definition, lib.name)
                         )
                     for inc_dir in file_props.include_directories:
                         source_compile_flags.append(
                             _include_flag(inc_dir, ctx.source_dir)
                         )
                     for option in file_props.compile_options:
-                        opt = strip_generator_expressions(
-                            option, ctx.variables, compile_language=source_language
+                        opt = _evaluate_for_target(
+                            ctx, option, lib.name, ctx.variables, source_language
                         )
                         if opt:
                             source_compile_flags.append(opt)
@@ -2565,15 +2647,16 @@ def generate_ninja(
             if runtime_flag:
                 compile_flags.append(runtime_flag)
             for option in dir_compile_options:
-                opt = strip_generator_expressions(option)
+                opt = _evaluate_for_target(ctx, option, exe.name)
                 if opt:
                     compile_flags.append(opt)
-            for definition in _collect_directory_property_chain(
-                target_dir, "COMPILE_DEFINITIONS"
-            ):
-                compile_flags.append(_format_compile_definition_flag(definition))
-            for definition in exe.compile_definitions:
-                compile_flags.append(_format_compile_definition_flag(definition))
+            for definition in [
+                *_collect_directory_property_chain(target_dir, "COMPILE_DEFINITIONS"),
+                *exe.compile_definitions,
+            ]:
+                compile_flags.extend(
+                    _compile_definition_flags(ctx, definition, exe.name)
+                )
             # Keep raw compile_options so $<COMPILE_LANGUAGE:...> can be
             # evaluated per source.  The target-level strip drops them.
             exe_compile_options_raw: list[str] = [
@@ -2582,7 +2665,7 @@ def generate_ninja(
                 *_visibility_options(exe.properties),
             ]
             for option in exe.compile_options:
-                opt = strip_generator_expressions(option)
+                opt = _evaluate_for_target(ctx, option, exe.name)
                 if opt:
                     compile_flags.append(opt)
             compile_flags.extend(split_flags(exe.properties.get("COMPILE_FLAGS", "")))
@@ -2592,11 +2675,11 @@ def generate_ninja(
                     compile_flags.append(flag)
             compile_flags.extend(target_std_flags(exe.properties, ctx.variables))
             for inc_dir in exe.include_directories:
-                inc = strip_generator_expressions(inc_dir)
-                compile_flags.append(_include_flag(inc, ctx.source_dir))
+                compile_flags.extend(_include_directory_flags(ctx, inc_dir, exe.name))
 
             exe_system_dirs = _system_include_directories(
                 ctx,
+                exe.name,
                 exe.system_include_directories,
                 expanded_compile_libraries,
                 exe.properties,
@@ -2614,18 +2697,21 @@ def generate_ninja(
                             compile_flags.append(flag)
                     # Check for public include directories from linked libraries
                     for inc_dir in linked_lib.public_include_directories:
-                        inc = strip_generator_expressions(inc_dir)
-                        inc_flag = _include_flag(inc, ctx.source_dir)
-                        if inc_flag not in compile_flags:
-                            compile_flags.append(inc_flag)
+                        for inc_flag in _include_directory_flags(
+                            ctx, inc_dir, exe.name
+                        ):
+                            if inc_flag not in compile_flags:
+                                compile_flags.append(inc_flag)
                     # Check for public compile definitions from linked libraries
                     for definition in linked_lib.public_compile_definitions:
-                        def_flag = _format_compile_definition_flag(definition)
-                        if def_flag not in compile_flags:
-                            compile_flags.append(def_flag)
+                        for def_flag in _compile_definition_flags(
+                            ctx, definition, exe.name
+                        ):
+                            if def_flag not in compile_flags:
+                                compile_flags.append(def_flag)
                     for option in linked_lib.public_compile_options:
                         exe_compile_options_raw.append(option)
-                        opt = strip_generator_expressions(option)
+                        opt = _evaluate_for_target(ctx, option, exe.name)
                         if opt and opt not in compile_flags:
                             compile_flags.append(opt)
                 # Check for cflags from imported targets
@@ -2723,22 +2809,22 @@ def generate_ninja(
                 file_props = ctx.source_file_properties.get(abs_source)
 
                 source_compile_flags = _language_compile_flags(
-                    compile_flags, exe_compile_options_raw, source_language
+                    exe.name, compile_flags, exe_compile_options_raw, source_language
                 )
                 source_depends = []
 
                 if file_props:
                     for definition in file_props.compile_definitions:
-                        source_compile_flags.append(
-                            _format_compile_definition_flag(definition)
+                        source_compile_flags.extend(
+                            _compile_definition_flags(ctx, definition, exe.name)
                         )
                     for inc_dir in file_props.include_directories:
                         source_compile_flags.append(
                             _include_flag(inc_dir, ctx.source_dir)
                         )
                     for option in file_props.compile_options:
-                        opt = strip_generator_expressions(
-                            option, ctx.variables, compile_language=source_language
+                        opt = _evaluate_for_target(
+                            ctx, option, exe.name, ctx.variables, source_language
                         )
                         if opt:
                             source_compile_flags.append(opt)
@@ -2909,6 +2995,7 @@ def generate_ninja(
                             target_file_dirs_abs,
                             target_files_abs,
                             target_property=ctx.target_property,
+                            current_target=exe.name,
                         )
                         if expanded == cmake_cmd:
                             # CMAKE_COMMAND may be a multi-word command like
