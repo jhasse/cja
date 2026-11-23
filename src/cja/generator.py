@@ -817,6 +817,16 @@ def _evaluate_list_for_target(
     return [item for item in evaluated.split(";") if item]
 
 
+def _compile_option_flags(ctx: BuildContext, option: str, target_name: str) -> list[str]:
+    """The flags of a compile option that a target is built with in any language.
+
+    It may be a list. What depends on the language or the configuration is
+    left out here and added by _language_compile_flags().
+    """
+    evaluated = _evaluate_for_target(ctx, option, target_name)
+    return [flag for part in evaluated.split(";") if (flag := part.strip())]
+
+
 def _compile_definition_flags(
     ctx: BuildContext, definition: str, target_name: str
 ) -> list[str]:
@@ -2312,9 +2322,7 @@ def generate_ninja(
             if is_truthy(pic) and not is_truthy(ctx.variables.get("WIN32", "")):
                 lib_compile_flags.append("-fPIC")
             for option in dir_compile_options:
-                opt = _evaluate_for_target(ctx, option, lib.name)
-                if opt:
-                    lib_compile_flags.append(opt)
+                lib_compile_flags.extend(_compile_option_flags(ctx, option, lib.name))
             for definition in [
                 *_collect_directory_property_chain(target_dir, "COMPILE_DEFINITIONS"),
                 *lib.compile_definitions,
@@ -2331,9 +2339,7 @@ def generate_ninja(
                 *_visibility_options(lib.properties),
             ]
             for option in lib.compile_options:
-                opt = _evaluate_for_target(ctx, option, lib.name)
-                if opt:
-                    lib_compile_flags.append(opt)
+                lib_compile_flags.extend(_compile_option_flags(ctx, option, lib.name))
             lib_compile_flags.extend(split_flags(lib.properties.get("COMPILE_FLAGS", "")))
             for feature in lib.compile_features:
                 flag = compile_feature_to_flag(feature, lib.properties, ctx.variables)
@@ -2382,9 +2388,9 @@ def generate_ninja(
                             lib_compile_flags.append(flag)
                     for option in dep_lib.public_compile_options:
                         lib_compile_options_raw.append(option)
-                        opt = _evaluate_for_target(ctx, option, lib.name)
-                        if opt and opt not in lib_compile_flags:
-                            lib_compile_flags.append(opt)
+                        for opt in _compile_option_flags(ctx, option, lib.name):
+                            if opt not in lib_compile_flags:
+                                lib_compile_flags.append(opt)
                 if dep_name in ctx.imported_targets:
                     imported = ctx.imported_targets[dep_name]
                     _add_imported_cflags(
@@ -2647,9 +2653,7 @@ def generate_ninja(
             if runtime_flag:
                 compile_flags.append(runtime_flag)
             for option in dir_compile_options:
-                opt = _evaluate_for_target(ctx, option, exe.name)
-                if opt:
-                    compile_flags.append(opt)
+                compile_flags.extend(_compile_option_flags(ctx, option, exe.name))
             for definition in [
                 *_collect_directory_property_chain(target_dir, "COMPILE_DEFINITIONS"),
                 *exe.compile_definitions,
@@ -2665,9 +2669,7 @@ def generate_ninja(
                 *_visibility_options(exe.properties),
             ]
             for option in exe.compile_options:
-                opt = _evaluate_for_target(ctx, option, exe.name)
-                if opt:
-                    compile_flags.append(opt)
+                compile_flags.extend(_compile_option_flags(ctx, option, exe.name))
             compile_flags.extend(split_flags(exe.properties.get("COMPILE_FLAGS", "")))
             for feature in exe.compile_features:
                 flag = compile_feature_to_flag(feature, exe.properties, ctx.variables)
@@ -2711,9 +2713,9 @@ def generate_ninja(
                                 compile_flags.append(def_flag)
                     for option in linked_lib.public_compile_options:
                         exe_compile_options_raw.append(option)
-                        opt = _evaluate_for_target(ctx, option, exe.name)
-                        if opt and opt not in compile_flags:
-                            compile_flags.append(opt)
+                        for opt in _compile_option_flags(ctx, option, exe.name):
+                            if opt not in compile_flags:
+                                compile_flags.append(opt)
                 # Check for cflags from imported targets
                 if lib_name in ctx.imported_targets:
                     imported = ctx.imported_targets[lib_name]

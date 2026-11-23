@@ -123,6 +123,25 @@ def test_target_compile_options_compile_language(tmp_path: Path) -> None:
     assert "-fno-strict-aliasing" not in asm_block
 
 
+def test_target_compile_options_lists(tmp_path: Path) -> None:
+    """An option that is a list, or evaluates to one, is several flags."""
+    from cja.generator import configure
+
+    (tmp_path / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.10)\n"
+        "project(OptionListTest C)\n"
+        "add_library(mylib STATIC lib.c)\n"
+        "target_compile_options(mylib PRIVATE\n"
+        '    "-DQUOTED1;-DQUOTED2" "$<JOIN:-DJOINED1;-DJOINED2,;>")\n'
+    )
+    (tmp_path / "lib.c").write_text("int f(void) { return 0; }\n")
+
+    configure(tmp_path, "build")
+
+    ninja_content = (tmp_path / "build.ninja").read_text()
+    assert "cflags = -DQUOTED1 -DQUOTED2 -DJOINED1 -DJOINED2\n" in ninja_content
+
+
 def test_target_compile_options_multiline_genex(tmp_path: Path) -> None:
     """Multi-line genex flag blocks expand to space-separated flags per source."""
     ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
