@@ -2,8 +2,10 @@
 
 from pathlib import Path
 
+import pytest
+
 from cja.generator import BuildContext, process_commands
-from cja.parser import Command
+from cja.parser import Command, parse
 
 
 def test_set_property_global() -> None:
@@ -385,6 +387,43 @@ def test_set_property_empty_value_unsets() -> None:
     ]
     process_commands(commands, ctx)
     assert "MY_PROP" not in ctx.global_properties
+
+
+@pytest.mark.parametrize(
+    "add_target",
+    [
+        "add_library(tgt STATIC lib.c)",
+        "add_executable(tgt main.c)",
+        "add_library(tgt UNKNOWN IMPORTED)",
+        "add_custom_target(tgt)",
+    ],
+)
+def test_set_property_target_without_values(add_target: str) -> None:
+    """No values unset a target property, unless they're appended."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    process_commands(
+        parse(
+            f"{add_target}\n"
+            "set_property(TARGET tgt PROPERTY MY_PROP x)\n"
+            "set_property(TARGET tgt APPEND PROPERTY MY_PROP)\n"
+            "set_property(TARGET tgt APPEND PROPERTY OTHER_PROP)\n"
+            "get_target_property(APPENDED tgt MY_PROP)\n"
+            "get_property(OTHER_IS_SET TARGET tgt PROPERTY OTHER_PROP SET)\n"
+            "set_property(TARGET tgt PROPERTY MY_PROP)\n"
+            "get_target_property(UNSET tgt MY_PROP)\n"
+            "get_property(IS_SET TARGET tgt PROPERTY MY_PROP SET)\n"
+            'set_property(TARGET tgt PROPERTY MY_PROP "")\n'
+            "get_property(EMPTY_IS_SET TARGET tgt PROPERTY MY_PROP SET)\n"
+        ),
+        ctx,
+        strict=True,
+    )
+
+    assert ctx.variables["APPENDED"] == "x"
+    assert ctx.variables["OTHER_IS_SET"] == "0"
+    assert ctx.variables["UNSET"] == "UNSET-NOTFOUND"
+    assert ctx.variables["IS_SET"] == "0"
+    assert ctx.variables["EMPTY_IS_SET"] == "1"
 
 
 def test_get_cmake_property() -> None:

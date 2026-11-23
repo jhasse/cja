@@ -923,7 +923,12 @@ def _set_target_property(
     append: bool = False,
     append_string: bool = False,
 ) -> None:
-    """Set (or append to) a property of a library, executable or custom target."""
+    """Set (or append to) a property of a library, executable or custom target.
+
+    Like in CMake, no values unset the property, unless they're appended.
+    """
+    if append and not values:
+        return
     field_name = TARGET_PROPERTY_FIELDS.get(prop_name)
     if field_name is not None and hasattr(target, field_name):
         # Like CMake, APPEND_STRING adds list elements to these, too.
@@ -934,6 +939,9 @@ def _set_target_property(
         visibility = "INTERFACE" if prop_name.startswith("INTERFACE_") else "PRIVATE"
         setter = _TARGET_PROPERTY_SETTERS[prop_name.removeprefix("INTERFACE_")]
         setter(ctx, cmd, [target.name, visibility, *items], strict)
+        return
+    if not values:
+        target.properties.pop(prop_name, None)
         return
     value = ";".join(values)
     if append and prop_name in target.properties:
@@ -1103,9 +1111,13 @@ def handle_set_property(
             imported_target = ctx.imported_targets.get(target_name)
 
             if imported_target is not None and lib is None and exe is None:
-                _apply_imported_target_property(
-                    ctx, imported_target, prop_name, ";".join(prop_values)
-                )
+                if prop_values:
+                    _apply_imported_target_property(
+                        ctx, imported_target, prop_name, ";".join(prop_values)
+                    )
+                elif not append_mode:
+                    # The flags it was folded into stay, though.
+                    imported_target.properties.pop(prop_name, None)
                 continue
 
             target = lib or exe or ctx.get_custom_target(target_name)
