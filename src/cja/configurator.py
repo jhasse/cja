@@ -393,7 +393,7 @@ def _add_custom_command_target(
     """Handle add_custom_command(TARGET <name> POST_BUILD|PRE_BUILD|PRE_LINK ...)."""
     if len(args) < 3:
         return
-    acc_target_name = ctx.expand_variables(args[1], strict, cmd.line)
+    acc_target_name = args[1]
     target_error = _build_event_target_error(ctx, acc_target_name)
     if target_error is not None:
         if strict:
@@ -432,7 +432,7 @@ def _add_custom_command_target(
             # Legacy CMake keyword; ignored.
             pass
         else:
-            expanded_acc = ctx.expand_variables(acc_arg, strict, cmd.line)
+            expanded_acc = acc_arg
             if acc_section == "COMMAND" and acc_commands:
                 acc_commands[-1].append(expanded_acc)
             elif acc_section == "BYPRODUCTS" and expanded_acc:
@@ -2666,7 +2666,6 @@ int main() {{
                         ):
                             current_section = arg  # values for these are ignored
                         else:
-                            arg = ctx.expand_variables(arg, strict, cmd.line)
                             if not arg:
                                 arg_idx += 1
                                 continue
@@ -2730,7 +2729,7 @@ int main() {{
                         sys.exit(1)
                     frame.pc += 1
                     continue
-                target_name = ctx.expand_variables(args[0], strict, cmd.line)
+                target_name = args[0]
                 ct_commands: list[list[str]] = []
                 ct_depends: list[str] = []
                 ct_byproducts: list[str] = []
@@ -2765,7 +2764,6 @@ int main() {{
                     elif arg in ("SOURCES", "BYPRODUCTS", "JOB_POOL", "JOB_SERVER_AWARE"):
                         ct_section = arg
                     else:
-                        arg = ctx.expand_variables(arg, strict, cmd.line)
                         if not arg:
                             ct_idx += 1
                             continue

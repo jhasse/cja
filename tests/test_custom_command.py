@@ -1220,3 +1220,39 @@ add_custom_target(dollar ALL DEPENDS {"app" if event else "dollar.txt"})
     subprocess.run(["ninja"], cwd=tmp_path, check=True, capture_output=True)
 
     assert (tmp_path / "build" / "dollar.txt").read_text().strip() == "dol$lar"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "add_custom_command(OUTPUT literal.txt",
+        "add_custom_target(literal ALL",
+        "add_custom_command(TARGET app POST_BUILD",
+    ],
+)
+def test_custom_command_arguments_are_expanded_once(
+    tmp_path: Path, command: str
+) -> None:
+    """Like in CMake, the "${...}" of "\\${...}" and of a bracket argument
+    reach the command as they are, instead of being expanded again."""
+    import subprocess
+
+    from cja.generator import configure
+
+    (tmp_path / "CMakeLists.txt").write_text(f"""\\
+cmake_minimum_required(VERSION 3.10)
+project(ExpandedOnceTest C)
+set(VAR value)
+add_executable(app main.c)
+{command}
+    COMMAND echo "\\${{VAR}}" [[b${{VAR}}]] ${{VAR}} > literal.txt VERBATIM)
+add_custom_target(all_literal ALL DEPENDS
+    {"literal.txt" if "OUTPUT" in command else "app"})
+""")
+    (tmp_path / "main.c").write_text("int main(void) { return 0; }\n")
+
+    configure(tmp_path, "build")
+    subprocess.run(["ninja"], cwd=tmp_path, check=True, capture_output=True)
+
+    literal = (tmp_path / "build" / "literal.txt").read_text().split()
+    assert literal == ["${VAR}", "b${VAR}", "value"]
