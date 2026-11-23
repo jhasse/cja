@@ -814,3 +814,36 @@ def test_custom_command_lines_run_without_shell_on_windows(
         )
     assert generator._join_command_lines(["python gen.py"]) == "python gen.py"
     assert generator._cd_command(str(tmp_path), tmp_path) is None
+
+
+def test_custom_command_target_property_genex(tmp_path: Path) -> None:
+    """$<TARGET_PROPERTY:...> is evaluated in the command lines and
+    dependencies of custom commands and targets."""
+    from cja.generator import configure
+
+    (tmp_path / "CMakeLists.txt").write_text("""\
+cmake_minimum_required(VERSION 3.10)
+project(TargetPropertyGenexTest C)
+
+add_custom_target(docs)
+set_property(TARGET docs PROPERTY FILES a.md b.md)
+add_custom_command(
+    OUTPUT out.txt
+    COMMAND tool --type=$<TARGET_PROPERTY:docs,TYPE> --files=$<TARGET_PROPERTY:docs,FILES>
+    DEPENDS $<TARGET_PROPERTY:docs,FILES> $<TARGET_PROPERTY:docs,NO_SUCH_PROPERTY>
+)
+add_custom_target(gen ALL COMMAND tool --name=$<TARGET_PROPERTY:docs,NAME> DEPENDS out.txt)
+add_executable(app main.c)
+add_custom_command(TARGET app POST_BUILD COMMAND tool --post=$<TARGET_PROPERTY:docs,FILES>)
+""")
+    (tmp_path / "main.c").write_text("int main() { return 0; }\n")
+
+    configure(tmp_path, "build")
+
+    ninja_content = (tmp_path / "build.ninja").read_text()
+    assert (
+        "build $builddir/out.txt: custom_command a.md b.md\n"
+        "  cmd = tool --type=UTILITY --files=a.md;b.md\n"
+    ) in ninja_content
+    assert "tool --name=docs" in ninja_content
+    assert re.search(r"tool \S?--post=a\.md;b\.md", ninja_content)

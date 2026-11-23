@@ -1553,7 +1553,11 @@ def generate_ninja(
 
         def _expand_genex(arg: str) -> str:
             return strip_generator_expressions(
-                arg, ctx.variables, target_file_dirs, target_files
+                arg,
+                ctx.variables,
+                target_file_dirs,
+                target_files,
+                target_property=ctx.target_property,
             )
 
         def _resolve_dependency(dep: str) -> str:
@@ -1603,7 +1607,11 @@ def generate_ninja(
             """Format one COMMAND argv, substituting target names with their files."""
             expanded = [
                 strip_generator_expressions(
-                    c, ctx.variables, target_file_dirs_abs, target_files_abs
+                    c,
+                    ctx.variables,
+                    target_file_dirs_abs,
+                    target_files_abs,
+                    target_property=ctx.target_property,
                 )
                 for c in command
             ]
@@ -1646,7 +1654,13 @@ def generate_ninja(
                 for command in custom_cmd.commands
             ]
 
-            depends = [_resolve_dependency(dep) for dep in custom_cmd.depends]
+            depends = [
+                _resolve_dependency(d)
+                for dep in custom_cmd.depends
+                # A generator expression may stand for a list, or for nothing.
+                for d in _expand_genex(dep).split(";")
+                if d
+            ]
             main_dep = custom_cmd.main_dependency
             if main_dep:
                 depends.insert(0, _resolve_dependency(main_dep))
@@ -2877,7 +2891,11 @@ def generate_ninja(
                         # gtest/doctest_discover_tests() that run the executable
                         # in another WORKING_DIRECTORY
                         expanded = strip_generator_expressions(
-                            a, ctx.variables, target_file_dirs_abs, target_files_abs
+                            a,
+                            ctx.variables,
+                            target_file_dirs_abs,
+                            target_files_abs,
+                            target_property=ctx.target_property,
                         )
                         if expanded == cmake_cmd:
                             # CMAKE_COMMAND may be a multi-word command like
