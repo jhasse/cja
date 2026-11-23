@@ -1697,8 +1697,14 @@ def generate_ninja(
         }
         target_files_abs = {k: _absolute_target_file(v) for k, v in target_files.items()}
 
-        def _format_command(command: list[str], *, verbatim: bool) -> str:
-            """Format one COMMAND argv, substituting target names with their files."""
+        def _format_command(
+            command: list[str], *, verbatim: bool, current_target: str | None = None
+        ) -> str:
+            """Format one COMMAND argv, substituting target names with their files.
+
+            ``current_target`` is the target that a build event like POST_BUILD
+            belongs to, which $<TARGET_PROPERTY:prop> is about.
+            """
             expanded = [
                 strip_generator_expressions(
                     c,
@@ -1706,6 +1712,7 @@ def generate_ninja(
                     target_file_dirs_abs,
                     target_files_abs,
                     target_property=ctx.target_property,
+                    current_target=current_target,
                 )
                 for c in command
             ]
@@ -3049,8 +3056,7 @@ def generate_ninja(
                 stamp_rel = f"CMakeFiles/{exe.name}.post_build"
                 stamp = f"$builddir/{stamp_rel}"
                 stamp_path = str(ctx.build_dir.absolute() / stamp_rel)
-                cmake_cmd = ctx.variables["CMAKE_COMMAND"]
-                cmake_cmd_parts = ctx.cja_cmd or [cmake_cmd]
+                cmake_cmd_parts = ctx.cja_cmd or [ctx.variables["CMAKE_COMMAND"]]
                 pb_cmd_parts: list[str] = []
                 # Like in CMake, the commands run in the target's binary directory.
                 pb_cd = _cd_command(
@@ -3059,27 +3065,13 @@ def generate_ninja(
                 if pb_cd:
                     pb_cmd_parts.append(pb_cd)
                 for pb_cmd in exe.post_build_commands:
-                    expanded_parts: list[str] = []
-                    for a in pb_cmd:
-                        # Absolute like in other custom commands, e.g. for
-                        # gtest/doctest_discover_tests() that run the executable
-                        # in another WORKING_DIRECTORY
-                        expanded = strip_generator_expressions(
-                            a,
-                            ctx.variables,
-                            target_file_dirs_abs,
-                            target_files_abs,
-                            target_property=ctx.target_property,
-                            current_target=exe.name,
-                        )
-                        if expanded == cmake_cmd:
-                            # CMAKE_COMMAND may be a multi-word command like
-                            # "python3 -m cja"; expand it into separate tokens
-                            expanded_parts.extend(cmake_cmd_parts)
-                        else:
-                            expanded_parts.append(expanded)
+                    # Like other custom commands, so that shell operators like
+                    # ">" work and $<TARGET_FILE:...> is absolute, e.g. for
+                    # gtest/doctest_discover_tests() that run the executable in
+                    # another WORKING_DIRECTORY. The arguments are always
+                    # quoted, as CMake escapes spaces also without VERBATIM.
                     pb_cmd_parts.append(
-                        " ".join(_quote_ninja_cmd_part(p) for p in expanded_parts)
+                        _format_command(pb_cmd, verbatim=True, current_target=exe.name)
                     )
                 # Touch the stamp so ninja skips this step when nothing has changed
                 cmake_cmd_quoted = " ".join(_quote_ninja_cmd_part(p) for p in cmake_cmd_parts)

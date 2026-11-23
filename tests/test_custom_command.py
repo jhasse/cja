@@ -945,3 +945,31 @@ endforeach()
     subprocess.run(["ninja"], cwd=tmp_path, check=True, capture_output=True)
     for created in ("by.txt", "user.txt", "target_by.txt", "post_by.txt"):
         assert (tmp_path / "build" / created).is_file(), created
+
+
+@pytest.mark.parametrize("verbatim", ["", "VERBATIM"])
+def test_post_build_shell_operators(tmp_path: Path, verbatim: str) -> None:
+    """Like in CMake, shell operators in POST_BUILD commands aren't quoted,
+    also with VERBATIM, and a target name runs that target."""
+    import subprocess
+
+    from cja.generator import configure
+
+    (tmp_path / "CMakeLists.txt").write_text(f"""\
+cmake_minimum_required(VERSION 3.10)
+project(PostBuildShellTest C)
+add_executable(app main.c)
+add_custom_command(TARGET app POST_BUILD COMMAND echo "a b" > echoed.txt {verbatim})
+add_custom_command(TARGET app POST_BUILD COMMAND app --flag {verbatim})
+""")
+    (tmp_path / "main.c").write_text("int main(void) { return 0; }\n")
+
+    configure(tmp_path, "build")
+
+    unwrapped = re.sub(r"\$\n *", "", (tmp_path / "build.ninja").read_text())
+    app = (tmp_path / "build" / f"app{EXE_EXT}").as_posix()
+    assert f"{app} --flag" in unwrapped
+    subprocess.run(["ninja"], cwd=tmp_path, check=True, capture_output=True)
+    # cmd.exe's echo keeps the quotes
+    echoed = (tmp_path / "build" / "echoed.txt").read_text().strip().strip('"')
+    assert echoed == "a b"
