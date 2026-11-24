@@ -134,7 +134,7 @@ def build_foreach_info(
             if value in ("LISTS", "ITEMS") and mode != "ITEMS":
                 mode = value
             elif mode == "LISTS":
-                items.extend(expand_list(ctx.variables.get(value, "")))
+                items.extend(expand_list(ctx.variable_value(value)))
             elif mode == "ITEMS":
                 items.append(value)
     else:

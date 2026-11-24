@@ -367,3 +367,45 @@ count(${A})
     assert ctx.variables["BRACKETS_LENGTH"] == "2"
     assert ctx.variables["ARGC"] == "3"
     assert ctx.variables["ARGV0"] == "semi;colon"
+
+
+def test_list_of_unset_variable() -> None:
+    """A variable that cmake_parse_arguments() or unset(PARENT_SCOPE) left
+    unset is an empty list."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    process_commands(
+        parse(
+            r"""
+function(parsed)
+  cmake_parse_arguments(ARG "" "ONE" "MULTI" ${ARGN})
+  list(LENGTH ARG_MULTI length)
+  foreach(item IN LISTS ARG_MULTI)
+    list(APPEND items "<${item}>")
+  endforeach()
+  list(APPEND ARG_MULTI appended)
+  list(PREPEND ARG_ONE prepended)
+  list(JOIN ARG_OTHER "+" joined)
+  foreach(name length items ARG_MULTI ARG_ONE joined)
+    set(PARSED_${name} "${${name}}" PARENT_SCOPE)
+  endforeach()
+endfunction()
+parsed()
+function(unset_in_parent)
+  unset(OUTER PARENT_SCOPE)
+endfunction()
+set(OUTER a b)
+unset_in_parent()
+list(LENGTH OUTER OUTER_LENGTH)
+list(APPEND OUTER c)
+"""
+        ),
+        ctx,
+    )
+
+    assert ctx.variables["PARSED_length"] == "0"
+    assert ctx.variables["PARSED_items"] == ""
+    assert ctx.variables["PARSED_ARG_MULTI"] == "appended"
+    assert ctx.variables["PARSED_ARG_ONE"] == "prepended"
+    assert ctx.variables["PARSED_joined"] == ""
+    assert ctx.variables["OUTER_LENGTH"] == "0"
+    assert ctx.variables["OUTER"] == "c"

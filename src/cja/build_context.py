@@ -342,6 +342,11 @@ class BuildContext:
             if name not in self.variables.normal_bindings:
                 dict.__setitem__(self.variables, name, value)
 
+    def variable_value(self, name: str) -> str:
+        """The value of a variable, which is empty if it isn't set."""
+        value = self.variables.get(name, "")
+        return "" if value == UNDEFINED_VAR_SENTINEL else value
+
     def get_library(self, name: str) -> Library | None:
         for lib in self.libraries:
             if lib.name == name:

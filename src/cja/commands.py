@@ -2137,7 +2137,7 @@ def handle_list(
         else:
             list_name = args[1]
             out_var = args[2]
-            list_val = ctx.variables.get(list_name, "")
+            list_val = ctx.variable_value(list_name)
             if list_val:
                 items = expand_list(list_val)
                 ctx.variables[out_var] = str(len(items))
@@ -2157,7 +2157,7 @@ def handle_list(
             list_name = args[1]
             indices = args[2:-1]
             out_var = args[-1]
-            list_val = ctx.variables.get(list_name, "")
+            list_val = ctx.variable_value(list_name)
             items = expand_list(list_val)
             result = []
             for idx_str in indices:
@@ -2173,7 +2173,7 @@ def handle_list(
         # list(APPEND <list> [<element> ...])
         list_name = args[1]
         elements = args[2:]
-        list_val = ctx.variables.get(list_name, "")
+        list_val = ctx.variable_value(list_name)
         if list_val:
             items = list_val.split(";")
             items.extend(elements)
@@ -2185,7 +2185,7 @@ def handle_list(
         # list(PREPEND <list> [<element> ...])
         list_name = args[1]
         elements = args[2:]
-        list_val = ctx.variables.get(list_name, "")
+        list_val = ctx.variable_value(list_name)
         if list_val:
             items = list_val.split(";")
             items = elements + items
@@ -2207,7 +2207,7 @@ def handle_list(
             try:
                 index = int(args[2])
                 elements = args[3:]
-                list_val = ctx.variables.get(list_name, "")
+                list_val = ctx.variable_value(list_name)
                 items = expand_list(list_val)
                 # Insert elements at index
                 for i_offset, elem in enumerate(elements):
@@ -2222,7 +2222,7 @@ def handle_list(
         # list(REMOVE_ITEM <list> <value> [<value> ...])
         list_name = args[1]
         values_to_remove = args[2:]
-        list_val = ctx.variables.get(list_name, "")
+        list_val = ctx.variable_value(list_name)
         if list_val:
             items = expand_list(list_val)
             items = [item for item in items if item not in values_to_remove]
@@ -2240,7 +2240,7 @@ def handle_list(
         else:
             list_name = args[1]
             indices = args[2:]
-            list_val = ctx.variables.get(list_name, "")
+            list_val = ctx.variable_value(list_name)
             if list_val:
                 items = expand_list(list_val)
                 # Convert indices and sort in reverse to remove from end
@@ -2261,7 +2261,7 @@ def handle_list(
     elif subcommand == "REMOVE_DUPLICATES":
         # list(REMOVE_DUPLICATES <list>)
         list_name = args[1]
-        list_val = ctx.variables.get(list_name, "")
+        list_val = ctx.variable_value(list_name)
         if list_val:
             items = expand_list(list_val)
             seen = set()
@@ -2275,7 +2275,7 @@ def handle_list(
     elif subcommand == "REVERSE":
         # list(REVERSE <list>)
         list_name = args[1]
-        list_val = ctx.variables.get(list_name, "")
+        list_val = ctx.variable_value(list_name)
         if list_val:
             items = expand_list(list_val)
             items.reverse()
@@ -2294,7 +2294,7 @@ def handle_list(
             ],
             strict,
         )
-        list_val = ctx.variables.get(list_name, "")
+        list_val = ctx.variable_value(list_name)
         if list_val:
             items = expand_list(list_val)
             items.sort()
@@ -2313,7 +2313,7 @@ def handle_list(
             list_name = args[1]
             value = args[2]
             out_var = args[3]
-            list_val = ctx.variables.get(list_name, "")
+            list_val = ctx.variable_value(list_name)
             if list_val:
                 items = expand_list(list_val)
                 try:
@@ -2337,7 +2337,7 @@ def handle_list(
             list_name = args[1]
             glue = args[2]
             out_var = args[3]
-            list_val = ctx.variables.get(list_name, "")
+            list_val = ctx.variable_value(list_name)
             if list_val:
                 items = expand_list(list_val)
                 ctx.variables[out_var] = glue.join(items)
@@ -2359,7 +2359,7 @@ def handle_list(
                 begin = int(args[2])
                 length = int(args[3])
                 out_var = args[4]
-                list_val = ctx.variables.get(list_name, "")
+                list_val = ctx.variable_value(list_name)
                 if list_val:
                     items = expand_list(list_val)
                     # Handle negative length (means all remaining)
@@ -2409,7 +2409,7 @@ def handle_list(
             else:
                 ctx.check_unsupported_args(cmd, [action], strict)
 
-            list_val = ctx.variables.get(list_name, "")
+            list_val = ctx.variable_value(list_name)
             if list_val:
                 items = expand_list(list_val)
                 if action == "TOUPPER":
@@ -2453,7 +2453,7 @@ def handle_list(
                 ctx.check_unsupported_args(cmd, [f"{args[2]} {args[3]}"], strict)
             if args[3].upper() == "REGEX" and len(args) >= 5:
                 pattern = args[4]
-                list_val = ctx.variables.get(list_name, "")
+                list_val = ctx.variable_value(list_name)
                 if list_val:
                     items = expand_list(list_val)
                     import re as regex_module
@@ -2481,7 +2481,7 @@ def handle_list(
         else:
             list_name = args[1]
             out_vars = args[2:]
-            list_val = ctx.variables.get(list_name, "")
+            list_val = ctx.variable_value(list_name)
             items = expand_list(list_val)
             pop_index = 0 if subcommand == "POP_FRONT" else -1
             if not out_vars and items:
