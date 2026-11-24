@@ -329,11 +329,10 @@ def handle_include_directories(
             continue
         if arg in ("BEFORE", "AFTER"):
             continue
-        raw = ctx.expand_variables(arg, strict, cmd.line)
-        expanded = _requirement_of_any_target(ctx, raw)
+        expanded = _requirement_of_any_target(ctx, arg)
         if expanded is None:
             # It's about each target of the directory.
-            dirs.append(_unevaluated_directory(ctx, raw))
+            dirs.append(_unevaluated_directory(ctx, arg))
             if system:
                 system_dirs.append(dirs[-1])
             continue
@@ -461,9 +460,8 @@ def handle_target_link_directories(
             elif arg in ("BEFORE", "AFTER"):
                 pass
             else:
-                # Expand variables and resolve relative paths
-                raw = ctx.expand_variables(arg, strict, cmd.line)
-                expanded, interface = _usage_requirement(ctx, raw, target_name)
+                # Evaluate generator expressions and resolve relative paths
+                expanded, interface = _usage_requirement(ctx, arg, target_name)
                 if "$<" in expanded:
                     ctx.print_warning(
                         f"generator expressions in target_link_directories are not yet supported: {arg}",
@@ -478,7 +476,7 @@ def handle_target_link_directories(
                     target_dirs.extend(directories)
                 if visibility != "PRIVATE":
                     public_dirs.extend(
-                        [_unevaluated_directory(ctx, raw)]
+                        [_unevaluated_directory(ctx, arg)]
                         if interface is None
                         else directories
                     )
@@ -623,9 +621,8 @@ def handle_target_include_directories(
             elif arg == "PRIVATE":
                 visibility = "PRIVATE"
             else:
-                # Expand variables and resolve relative paths
-                raw = ctx.expand_variables(arg, strict, cmd.line)
-                expanded, interface = _usage_requirement(ctx, raw, target_name)
+                # Evaluate generator expressions and resolve relative paths
+                expanded, interface = _usage_requirement(ctx, arg, target_name)
                 if "$<" in expanded and not _is_supported_include_dir_genex(
                     expanded
                 ):
@@ -646,7 +643,7 @@ def handle_target_include_directories(
                     target_dirs.extend(pieces)
                 if visibility != "PRIVATE":
                     public_dirs.extend(
-                        [_unevaluated_directory(ctx, raw)]
+                        [_unevaluated_directory(ctx, arg)]
                         if interface is None
                         else pieces
                     )
@@ -690,9 +687,8 @@ def handle_target_compile_definitions(
             elif arg == "PRIVATE":
                 visibility = "PRIVATE"
             else:
-                # Expand variables and resolve relative paths
-                raw = ctx.expand_variables(arg, strict, cmd.line)
-                expanded, interface = _usage_requirement(ctx, raw, target_name)
+                # Evaluate generator expressions and resolve relative paths
+                expanded, interface = _usage_requirement(ctx, arg, target_name)
                 if "$<" in expanded:
                     ctx.print_warning(
                         f"generator expressions in target_compile_definitions are not yet supported: {arg}",
@@ -710,7 +706,7 @@ def handle_target_compile_definitions(
                 if visibility != "INTERFACE":
                     target_defs.extend(definitions)
                 if visibility != "PRIVATE":
-                    public_defs.extend([raw] if interface is None else definitions)
+                    public_defs.extend([arg] if interface is None else definitions)
         # Add definitions to library or executable
         lib = ctx.get_library(target_name)
         if lib:
@@ -746,19 +742,18 @@ def handle_target_compile_options(
             elif arg == "BEFORE":
                 ctx.check_unsupported_args(cmd, [arg], strict)
             else:
-                expanded = ctx.expand_variables(arg, strict, cmd.line)
                 # Keep generator expressions intact: $<COMPILE_LANGUAGE:...>
                 # and similar predicates are evaluated per-source at ninja
                 # generation time.
-                if not expanded:
+                if not arg:
                     continue
                 if visibility == "PUBLIC":
-                    public_opts.append(expanded)
-                    target_opts.append(expanded)
+                    public_opts.append(arg)
+                    target_opts.append(arg)
                 elif visibility == "INTERFACE":
-                    public_opts.append(expanded)
+                    public_opts.append(arg)
                 else:
-                    target_opts.append(expanded)
+                    target_opts.append(arg)
         # Add options to library or executable
         lib = ctx.get_library(target_name)
         if lib:
@@ -795,14 +790,13 @@ def handle_target_link_options(
         else:
             # Generator expressions, SHELL: and LINKER: are handled when the
             # link command is generated.
-            expanded = ctx.expand_variables(arg, strict, cmd.line)
-            if not expanded:
+            if not arg:
                 continue
-            all_opts.append(expanded)
+            all_opts.append(arg)
             if visibility != "PRIVATE":
-                public_opts.append(expanded)
+                public_opts.append(arg)
             if visibility != "INTERFACE":
-                target_opts.append(expanded)
+                target_opts.append(arg)
 
     def add(options: list[str], new: list[str]) -> None:
         if before:
@@ -845,8 +839,7 @@ def handle_target_precompile_headers(
         if arg in ("PUBLIC", "INTERFACE", "PRIVATE"):
             visibility = arg
             continue
-        expanded = ctx.expand_variables(arg, strict, cmd.line)
-        for header in expanded.split(";"):
+        for header in arg.split(";"):
             header = header.strip()
             if not header:
                 continue

@@ -2554,8 +2554,7 @@ int main() {{
             case "add_compile_options":
                 # Directory-scoped compile options (inherit to subdirs, not parents).
                 for arg in args:
-                    expanded = ctx.expand_variables(arg, strict, cmd.line)
-                    ctx.compile_options.append(expanded)
+                    ctx.compile_options.append(arg)
                     try:
                         abs_dir = str(ctx.current_source_dir.resolve())
                     except FileNotFoundError:
@@ -2565,16 +2564,15 @@ int main() {{
                     existing = ctx.directory_properties[abs_dir].get("COMPILE_OPTIONS")
                     if existing:
                         ctx.directory_properties[abs_dir]["COMPILE_OPTIONS"] = (
-                            existing + ";" + expanded
+                            existing + ";" + arg
                         )
                     else:
-                        ctx.directory_properties[abs_dir]["COMPILE_OPTIONS"] = expanded
+                        ctx.directory_properties[abs_dir]["COMPILE_OPTIONS"] = arg
 
             case "add_compile_definitions":
                 # Directory-scoped compile definitions (inherit to subdirs, not parents).
                 for arg in args:
-                    expanded = ctx.expand_variables(arg, strict, cmd.line)
-                    ctx.compile_definitions.append(expanded)
+                    ctx.compile_definitions.append(arg)
                     try:
                         abs_dir = str(ctx.current_source_dir.resolve())
                     except FileNotFoundError:
@@ -2586,11 +2584,11 @@ int main() {{
                     )
                     if existing:
                         ctx.directory_properties[abs_dir]["COMPILE_DEFINITIONS"] = (
-                            existing + ";" + expanded
+                            existing + ";" + arg
                         )
                     else:
                         ctx.directory_properties[abs_dir]["COMPILE_DEFINITIONS"] = (
-                            expanded
+                            arg
                         )
 
             case "add_definitions":
@@ -2598,11 +2596,10 @@ int main() {{
                 # look like -DFOO or -DFOO=1; strip the -D prefix so the
                 # generator can re-add it uniformly.
                 for arg in args:
-                    expanded = ctx.expand_variables(arg, strict, cmd.line)
-                    if not expanded:
+                    if not arg:
                         continue
                     definition = (
-                        expanded.removeprefix("-D")
+                        arg.removeprefix("-D")
                     )
                     ctx.compile_definitions.append(definition)
                     try:
