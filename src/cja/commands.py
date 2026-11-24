@@ -2749,6 +2749,13 @@ def handle_cmake_parse_arguments(
     ctx.variables[f"{prefix}_UNPARSED_ARGUMENTS"] = ""
     ctx.variables[f"{prefix}_KEYWORDS_MISSING_VALUES"] = ""
 
+    def join(elements: list[str]) -> str:
+        """The list of several arguments. With PARSE_ARGV, each of them is one
+        element: like CMake, escape its semicolons."""
+        if parse_argv:
+            elements = [element.replace(";", "\\;") for element in elements]
+        return ";".join(elements)
+
     unparsed: list[str] = []
     missing: list[str] = []
     i = 0
@@ -2774,13 +2781,13 @@ def handle_cmake_parse_arguments(
                 i += 1
             if not collected:
                 missing.append(token)
-            ctx.variables[f"{prefix}_{token}"] = ";".join(collected)
+            ctx.variables[f"{prefix}_{token}"] = join(collected)
             continue
         unparsed.append(token)
         i += 1
 
     if unparsed:
-        ctx.variables[f"{prefix}_UNPARSED_ARGUMENTS"] = ";".join(unparsed)
+        ctx.variables[f"{prefix}_UNPARSED_ARGUMENTS"] = join(unparsed)
     if missing:
         ctx.variables[f"{prefix}_KEYWORDS_MISSING_VALUES"] = ";".join(missing)
 

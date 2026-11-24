@@ -225,6 +225,43 @@ def test_cmake_parse_arguments_unparsed_and_missing() -> None:
     assert ctx.variables["ARG_SOURCES"] == "a.cpp;EXTRA2"
 
 
+def test_cmake_parse_arguments_parse_argv_escapes_semicolons() -> None:
+    r"""With PARSE_ARGV, each argument is one element: like CMake, its
+    semicolons are escaped in a list of several, as "\;"."""
+    from cja.parser import parse
+
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    process_commands(
+        parse(
+            r"""
+function(parse_argv)
+  cmake_parse_arguments(PARSE_ARGV 0 ARG "" "ONE" "MULTI")
+  list(LENGTH ARG_MULTI length)
+  foreach(name ONE MULTI UNPARSED_ARGUMENTS)
+    set(ARG_${name} "${ARG_${name}}" PARENT_SCOPE)
+  endforeach()
+  set(MULTI_LENGTH ${length} PARENT_SCOPE)
+endfunction()
+parse_argv(first "p;q" ONE "a;b" MULTI "c;d" e "f\;g")
+function(classic)
+  cmake_parse_arguments(CLASSIC "" "" "MULTI" ${ARGN})
+  set(CLASSIC_MULTI "${CLASSIC_MULTI}" PARENT_SCOPE)
+endfunction()
+classic(MULTI "c;d" e)
+"""
+        ),
+        ctx,
+        strict=True,
+    )
+
+    assert ctx.variables["ARG_ONE"] == "a;b"
+    assert ctx.variables["ARG_MULTI"] == r"c\;d;e;f\\;g"
+    assert ctx.variables["MULTI_LENGTH"] == "3"
+    assert ctx.variables["ARG_UNPARSED_ARGUMENTS"] == r"first;p\;q"
+    # Without PARSE_ARGV, the arguments are split into their elements.
+    assert ctx.variables["CLASSIC_MULTI"] == "c;d;e"
+
+
 def test_cmake_parse_arguments_missing_options_list() -> None:
     """Test cmake_parse_arguments with omitted options list (CPM.cmake style)."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
