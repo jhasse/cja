@@ -287,6 +287,32 @@ def test_add_test_quotes_arguments(tmp_path: Path) -> None:
     assert _in_dir("$builddir", f"./myapp{EXE_EXT} {args}") in ninja_content
 
 
+def test_add_test_arguments_are_expanded_once(tmp_path: Path) -> None:
+    """Like in CMake, the "${...}" of a bracket argument reaches the test as it
+    is, instead of being expanded again."""
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    ctx.variables["VAR"] = "value"
+
+    commands = [
+        Command(name="add_executable", args=["myapp", "main.cpp"], line=1),
+        # Only the first "${VAR}" is a bracket argument.
+        Command(
+            name="add_test",
+            args=["NAME", "mytest", "COMMAND", "myapp", "${VAR}", "${VAR}"],
+            is_bracket=[False, False, False, False, True, False],
+            line=2,
+        ),
+    ]
+    process_commands(commands, ctx)
+
+    ninja_path = tmp_path / "build.ninja"
+    generate_ninja(ctx, ninja_path, "build")
+    ninja_content = _unwrap(ninja_path.read_text())
+
+    literal = "$${VAR}" if platform.system() == "Windows" else "'$${VAR}'"
+    assert _in_dir("$builddir", f"./myapp{EXE_EXT} {literal} value") in ninja_content
+
+
 def test_test_include_files(tmp_path: Path) -> None:
     """TEST_INCLUDE_FILES, as written by gtest/doctest_discover_tests(), are
     run after building everything, since that's when the tests are known."""

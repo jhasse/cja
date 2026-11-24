@@ -2867,7 +2867,7 @@ int main() {{
                     test_working_directory: str | None = None
                     if args[0] == "NAME":
                         # NAME ... COMMAND ... [WORKING_DIRECTORY ...]
-                        test_name = ctx.expand_variables(args[1], strict, cmd.line)
+                        test_name = args[1]
                         if "COMMAND" in args:
                             cmd_idx = args.index("COMMAND")
                             # Collect command args until next keyword
@@ -2880,10 +2880,7 @@ int main() {{
                                 ):
                                     break
                                 cmd_args.append(a)
-                            test_command = [
-                                ctx.expand_variables(a, strict, cmd.line)
-                                for a in cmd_args
-                            ]
+                            test_command = cmd_args
                         test_unsupported: list[str] = []
                         if "CONFIGURATIONS" in args:
                             cfg_idx = args.index("CONFIGURATIONS")
@@ -2903,15 +2900,11 @@ int main() {{
                         if "WORKING_DIRECTORY" in args:
                             wd_idx = args.index("WORKING_DIRECTORY")
                             if wd_idx + 1 < len(args):
-                                test_working_directory = ctx.expand_variables(
-                                    args[wd_idx + 1], strict, cmd.line
-                                )
+                                test_working_directory = args[wd_idx + 1]
                     else:
                         # <name> <command> ...
-                        test_name = ctx.expand_variables(args[0], strict, cmd.line)
-                        test_command = [
-                            ctx.expand_variables(a, strict, cmd.line) for a in args[1:]
-                        ]
+                        test_name = args[0]
+                        test_command = args[1:]
 
                     if test_name and test_command:
                         ctx.tests.append(
@@ -3831,9 +3824,7 @@ int main() {{
                     elif arg == "WORKING_DIRECTORY":
                         arg_idx += 1
                         if arg_idx < len(args):
-                            working_directory = ctx.expand_variables(
-                                args[arg_idx], strict, cmd.line
-                            )
+                            working_directory = args[arg_idx]
                     elif arg == "RESULT_VARIABLE":
                         arg_idx += 1
                         if arg_idx < len(args):
@@ -3877,9 +3868,7 @@ int main() {{
                             command_error_is_fatal = args[arg_idx]
                     else:
                         # Part of current command
-                        current_command.append(
-                            ctx.expand_variables(arg, strict, cmd.line)
-                        )
+                        current_command.append(arg)
                     arg_idx += 1
 
                 if current_command:

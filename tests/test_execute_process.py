@@ -367,3 +367,30 @@ def test_execute_process_pipeline_output() -> None:
     ]
     process_commands(commands, ctx)
     assert ctx.variables["OUT"] == "ab"
+
+
+def test_execute_process_arguments_are_expanded_once(tmp_path: Path) -> None:
+    """Like in CMake, the "${...}" of a bracket argument reaches the command
+    and the working directory as it is, instead of being expanded again."""
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    ctx.variables["VAR"] = "value"
+    (tmp_path / "${VAR}").mkdir()
+    script = "import os, sys; print(sys.argv[1], os.path.basename(os.getcwd()))"
+    args = [
+        "COMMAND",
+        sys.executable,
+        "-c",
+        script,
+        "${VAR}",
+        "WORKING_DIRECTORY",
+        f"{tmp_path.as_posix()}/${{VAR}}",
+        "OUTPUT_VARIABLE",
+        "OUT",
+        "OUTPUT_STRIP_TRAILING_WHITESPACE",
+    ]
+    bracket = [arg == script or "${VAR}" in arg for arg in args]
+    commands = [Command(name="execute_process", args=args, is_bracket=bracket, line=1)]
+
+    process_commands(commands, ctx, strict=True)
+
+    assert ctx.variables["OUT"] == "${VAR} ${VAR}"
