@@ -487,6 +487,65 @@ def test_fetchcontent_git_shallow_changed_git_tag(
     assert _is_shallow(src_dir) == shallow
 
 
+def test_fetchcontent_git_output(
+    tmp_path: Path, remote_with_history: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Git's own output is replaced by a progress bar like the one of downloads."""
+    remote = remote_with_history.as_uri()
+    commit = git(remote_with_history, "rev-parse", "v1")
+    capfd.readouterr()
+
+    _fetch_git(tmp_path, remote, ["GIT_TAG", "v2", "GIT_SHALLOW", "TRUE"])
+    out, err = capfd.readouterr()
+    assert out.startswith(f"Cloning mylib from {remote}\n")
+    assert len(out.splitlines()) == 2  # The progress bar
+    assert "objects" not in out
+    assert err == ""
+
+    # Nothing to do
+    _fetch_git(tmp_path, remote, ["GIT_TAG", "v2", "GIT_SHALLOW", "TRUE"])
+    assert capfd.readouterr() == ("", "")
+
+    _fetch_git(tmp_path, remote, ["GIT_TAG", commit, "GIT_SHALLOW", "TRUE"])
+    out, err = capfd.readouterr()
+    assert out.startswith(f"Fetching mylib from {remote}\n")
+    assert err == ""
+
+
+def test_fetchcontent_git_submodules_output(
+    tmp_path: Path, remote_with_submodules: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    capfd.readouterr()
+
+    _fetch_git(tmp_path, remote_with_submodules, ["GIT_TAG", "v1"])
+
+    out, err = capfd.readouterr()
+    assert out.splitlines() == [
+        f"Cloning mylib from {remote_with_submodules}",
+        "Cloning submodule other",
+        "Cloning submodule sub",
+        "Cloning submodule sub/nested",
+    ]
+    assert err == ""
+
+
+def test_fetchcontent_git_clone_failure_output(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """What git said is only shown when it fails."""
+    remote = (tmp_path / "missing").as_uri()
+    capfd.readouterr()
+
+    with pytest.raises(SystemExit):
+        _fetch_git(tmp_path, remote, ["GIT_TAG", "v1", "GIT_SHALLOW", "TRUE"])
+
+    out, err = capfd.readouterr()
+    assert out == f"Cloning mylib from {remote}\n"
+    assert "fatal: " in err
+    assert "Cloning into" not in err
+    assert err.splitlines()[-1].endswith(f"error: git clone failed for {remote}")
+
+
 def test_fetchcontent_git_tag_created_after_cloning(
     tmp_path: Path, remote_with_history: Path
 ) -> None:

@@ -843,7 +843,9 @@ def process_commands(
                             sys.exit(1)
                 elif git_tag:
                     try:
-                        git.checkout(src_dir, git_tag)
+                        git.checkout(
+                            src_dir, git_tag, f"Fetching {name} from {git_repo}"
+                        )
                         git.update_submodules(
                             src_dir, git_submodules, git_submodules_recurse
                         )
