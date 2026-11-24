@@ -123,6 +123,30 @@ parse_argv(ONE [[${VAR}]])
     assert ctx.variables["ARGV_ONE"] == "${VAR}"
 
 
+def test_package_config_install_destination_is_expanded_once(tmp_path: Path) -> None:
+    """The INSTALL_DESTINATION of configure_package_config_file()."""
+    (tmp_path / "Config.cmake.in").write_text("@PACKAGE_INIT@\n")
+    build_dir = tmp_path / "build"
+    build_dir.mkdir()
+    ctx = BuildContext(source_dir=tmp_path, build_dir=build_dir)
+    ctx.variables["CMAKE_CURRENT_BINARY_DIR"] = build_dir.as_posix()
+    process_commands(
+        parse(
+            r"""
+set(VAR two/directories)
+configure_package_config_file(Config.cmake.in Config.cmake
+    INSTALL_DESTINATION [[lib/${VAR}]])
+"""
+        ),
+        ctx,
+        strict=True,
+    )
+
+    # "lib/${VAR}" is two directories below the prefix, not three.
+    content = (build_dir / "Config.cmake").read_text()
+    assert '"${CMAKE_CURRENT_LIST_DIR}/../.."' in content
+
+
 def test_file_names_are_expanded_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

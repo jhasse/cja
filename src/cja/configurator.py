@@ -2484,9 +2484,7 @@ int main() {{
                 while idx < len(args):
                     token = args[idx]
                     if token == "INSTALL_DESTINATION" and idx + 1 < len(args):
-                        install_destination = ctx.expand_variables(
-                            args[idx + 1], strict, cmd.line
-                        )
+                        install_destination = args[idx + 1]
                         idx += 2
                         continue
                     if token == "PATH_VARS":
