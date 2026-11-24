@@ -784,9 +784,9 @@ def process_commands(
                 if listed:
                     git_submodules = [path for path in listed if path]
 
-            def resolve_fetch_path(path: str, cmd_line: int) -> Path:
-                expanded = ctx.expand_variables(path, strict, cmd_line)
-                resolved = Path(expanded)
+            def resolve_fetch_path(path: str) -> Path:
+                # FetchContent_Declare() got it with its variables expanded.
+                resolved = Path(path)
                 if not resolved.is_absolute():
                     base = Path(
                         ctx.variables.get(
@@ -797,7 +797,7 @@ def process_commands(
                 return resolved.resolve()
 
             binary_dir = (
-                resolve_fetch_path(declared_binary_dir, fetch_cmd_line)
+                resolve_fetch_path(declared_binary_dir)
                 if declared_binary_dir
                 else ctx.build_dir / "_deps" / f"{name.lower()}-build"
             )
@@ -814,7 +814,7 @@ def process_commands(
 
             if url:
                 if declared_source_dir:
-                    src_dir = resolve_fetch_path(declared_source_dir, fetch_cmd_line)
+                    src_dir = resolve_fetch_path(declared_source_dir)
                     deps_dir = src_dir.parent
                 else:
                     deps_dir = ctx.build_dir / "_deps"
@@ -879,7 +879,7 @@ def process_commands(
                         )
             elif git_repo:
                 if declared_source_dir:
-                    src_dir = resolve_fetch_path(declared_source_dir, fetch_cmd_line)
+                    src_dir = resolve_fetch_path(declared_source_dir)
                     deps_dir = src_dir.parent
                 else:
                     deps_dir = ctx.build_dir / "_deps"
@@ -922,7 +922,19 @@ def process_commands(
                             )
                             sys.exit(1)
             elif declared_source_dir:
-                src_dir = resolve_fetch_path(declared_source_dir, fetch_cmd_line)
+                src_dir = resolve_fetch_path(declared_source_dir)
+                if not src_dir.is_dir() or not any(src_dir.iterdir()):
+                    # CMake doesn't go on without the sources either.
+                    message = (
+                        f"No download info given for '{name}' and its source "
+                        f"directory: {to_posix_path(src_dir)} is not an existing "
+                        "non-empty directory."
+                    )
+                    if strict:
+                        ctx.print_error(message, fetch_cmd_line)
+                        sys.exit(1)
+                    ctx.print_warning(message, fetch_cmd_line)
+                    src_dir = None
 
             if src_dir is not None and (url or git_repo or declared_source_dir):
                 actual_src_dir = src_dir

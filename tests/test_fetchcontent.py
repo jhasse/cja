@@ -591,3 +591,56 @@ def test_fetchcontent_system(tmp_path: Path) -> None:
     assert include_flags(content, "app_main.o") == [
         f"-isystem {(dep_dir / 'include').as_posix()}"
     ]
+
+
+def _make_available_from(source_dir: str, *, strict: bool = False) -> BuildContext:
+    """Process FetchContent for a dependency with only SOURCE_DIR, given as a
+    bracket argument."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    ctx.variables["VAR"] = "value"
+    commands = [
+        Command(
+            name="fetchcontent_declare",
+            args=["dep", "SOURCE_DIR", source_dir],
+            is_bracket=[False, False, True],
+            line=1,
+        ),
+        Command(name="fetchcontent_makeavailable", args=["dep"], line=2),
+    ]
+    process_commands(commands, ctx, strict=strict)
+    return ctx
+
+
+def test_fetchcontent_source_dir_is_expanded_once(tmp_path: Path) -> None:
+    """Like in CMake, a "${...}" that is left in SOURCE_DIR is part of its name."""
+    dep_dir = tmp_path / "${VAR}"
+    dep_dir.mkdir()
+    (dep_dir / "CMakeLists.txt").write_text("set(FETCHED TRUE PARENT_SCOPE)\n")
+
+    ctx = _make_available_from(dep_dir.as_posix(), strict=True)
+
+    assert ctx.variables["dep_SOURCE_DIR"] == dep_dir.resolve().as_posix()
+    assert ctx.variables["FETCHED"] == "TRUE"
+
+
+@pytest.mark.parametrize("empty", [False, True])
+def test_fetchcontent_source_dir_without_sources(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], empty: bool
+) -> None:
+    """Like in CMake, a SOURCE_DIR without a way to download it has to be a
+    directory with the sources."""
+    dep_dir = tmp_path / "dep"
+    if empty:
+        dep_dir.mkdir()
+
+    ctx = _make_available_from(dep_dir.as_posix())
+
+    assert "dep_POPULATED" not in ctx.variables
+    assert (
+        f"warning: No download info given for 'dep' and its source directory: "
+        f"{dep_dir.resolve().as_posix()} is not an existing non-empty directory."
+    ) in capsys.readouterr().err
+
+    with pytest.raises(SystemExit):
+        _make_available_from(dep_dir.as_posix(), strict=True)
+    assert "error: No download info given for 'dep'" in capsys.readouterr().err
