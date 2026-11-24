@@ -3935,7 +3935,7 @@ def handle_file(
     if subcommand in ("WRITE", "APPEND"):
         # file(WRITE <filename> <content>...)
         if len(args) >= 2:
-            filename = ctx.expand_variables(args[1], strict, cmd.line)
+            filename = args[1]
             if not Path(filename).is_absolute():
                 filename = str(ctx.current_source_dir / filename)
             content = "".join(args[2:])
@@ -3958,7 +3958,7 @@ def handle_file(
     elif subcommand == "READ":
         # file(READ <filename> <variable> [OFFSET <offset>] [LIMIT <limit>] [HEX])
         if len(args) >= 3:
-            filename = ctx.expand_variables(args[1], strict, cmd.line)
+            filename = args[1]
             if not Path(filename).is_absolute():
                 filename = str(ctx.current_source_dir / filename)
             var_name = args[2]
@@ -3978,7 +3978,7 @@ def handle_file(
         #      [NEWLINE_CONSUME] [REGEX <regex>] [NO_HEX_CONVERSION]
         #      [ENCODING <type>])
         if len(args) >= 3:
-            filename = ctx.expand_variables(args[1], strict, cmd.line)
+            filename = args[1]
             if not Path(filename).is_absolute():
                 filename = str(ctx.current_source_dir / filename)
             var_name = args[2]
@@ -4053,7 +4053,7 @@ def handle_file(
                 token = args[i]
                 token_upper = token.upper()
                 if token_upper == "RELATIVE" and i + 1 < len(args):
-                    rel_value = ctx.expand_variables(args[i + 1], strict, cmd.line)
+                    rel_value = args[i + 1]
                     relative_base = Path(rel_value)
                     if not relative_base.is_absolute():
                         relative_base = ctx.current_source_dir / relative_base
@@ -4068,9 +4068,7 @@ def handle_file(
                     i += 1
                     continue
                 if token_upper == "LIST_DIRECTORIES" and i + 1 < len(args):
-                    list_directories = is_truthy(
-                        ctx.expand_variables(args[i + 1], strict, cmd.line)
-                    )
+                    list_directories = is_truthy(args[i + 1])
                     i += 2
                     continue
                 patterns.append(token)
@@ -4078,7 +4076,7 @@ def handle_file(
 
             matched_files: list[str] = []
             for pattern in patterns:
-                expanded_pattern = ctx.expand_variables(pattern, strict, cmd.line)
+                expanded_pattern = pattern
                 matched = evaluate_glob(
                     expanded_pattern,
                     ctx.current_source_dir,
@@ -4125,7 +4123,7 @@ def handle_file(
         # file(REMOVE [<files>...])
         # file(REMOVE_RECURSE [<files>...])
         for arg in args[1:]:
-            filename = ctx.expand_variables(arg, strict, cmd.line)
+            filename = arg
             if not filename:
                 # Would otherwise name the current source directory itself.
                 ctx.print_warning(f"Ignoring empty file name in {subcommand}.", cmd.line)
@@ -4176,7 +4174,7 @@ def handle_file(
     elif subcommand == "MAKE_DIRECTORY":
         # file(MAKE_DIRECTORY [<directories>...])
         for arg in args[1:]:
-            dirname = ctx.expand_variables(arg, strict, cmd.line)
+            dirname = arg
             if not Path(dirname).is_absolute():
                 dirname = str(ctx.current_source_dir / dirname)
             Path(dirname).mkdir(parents=True, exist_ok=True)
@@ -4203,7 +4201,7 @@ def handle_file(
             strict,
         )
         source_args = args[1:dst_idx]
-        destination = ctx.expand_variables(args[dst_idx + 1], strict, cmd.line)
+        destination = args[dst_idx + 1]
         if not Path(destination).is_absolute():
             current_binary_dir = Path(
                 ctx.variables.get("CMAKE_CURRENT_BINARY_DIR", to_posix_path(ctx.build_dir))
@@ -4213,7 +4211,7 @@ def handle_file(
         destination_path.mkdir(parents=True, exist_ok=True)
 
         for source_arg in source_args:
-            source = ctx.expand_variables(source_arg, strict, cmd.line)
+            source = source_arg
             if not source:
                 continue
             source_path = Path(source)
@@ -4234,7 +4232,7 @@ def handle_file(
     elif subcommand == "TOUCH":
         # file(TOUCH [<files>...])
         for arg in args[1:]:
-            filename = ctx.expand_variables(arg, strict, cmd.line)
+            filename = arg
             if not Path(filename).is_absolute():
                 filename = str(ctx.current_source_dir / filename)
             p = Path(filename)
@@ -4684,8 +4682,8 @@ def handle_configure_file(
             sys.exit(1)
         return
 
-    input_path = ctx.expand_variables(args[0], strict, cmd.line)
-    output_path = ctx.expand_variables(args[1], strict, cmd.line)
+    input_path = args[0]
+    output_path = args[1]
 
     copyonly = "COPYONLY" in args[2:]
     at_only = "@ONLY" in args[2:]

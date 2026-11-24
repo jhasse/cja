@@ -6,6 +6,8 @@ a bracket argument or from "\\${...}", is literal text.
 
 from pathlib import Path
 
+import pytest
+
 from cja.generator import BuildContext, process_commands
 from cja.parser import parse
 
@@ -100,3 +102,49 @@ set(AFTER_UNSET "${value}")
     # Neither is about the variable that VAR names.
     assert ctx.variables["AFTER_SET"] == "before"
     assert ctx.variables["AFTER_UNSET"] == "before"
+
+
+def test_file_names_are_expanded_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The paths that file() and configure_file() get."""
+    tmp_path = tmp_path.resolve()
+    # file(WRITE) wants the build directory to be below the current one.
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "template.in").write_text("@VAR@")
+    (tmp_path / "source.txt").write_text("source")
+    out = tmp_path / "build" / "out"
+    ctx = _process(
+        tmp_path,
+        r"""
+set(DIR "@OUT@")
+set(LITERAL [[${VAR}]])
+file(MAKE_DIRECTORY "${DIR}/${LITERAL}.dir")
+file(WRITE "${DIR}/${LITERAL}.txt" "written")
+file(APPEND "${DIR}/${LITERAL}.txt" " twice")
+file(READ "${DIR}/${LITERAL}.txt" READ)
+file(STRINGS "${DIR}/${LITERAL}.txt" STRINGS)
+file(TOUCH "${DIR}/${LITERAL}.touched")
+file(TOUCH "${DIR}/${LITERAL}.removed")
+file(REMOVE "${DIR}/${LITERAL}.removed")
+file(COPY "@SOURCE@/source.txt" DESTINATION "${DIR}/${LITERAL}.copy")
+configure_file("@SOURCE@/template.in" "${DIR}/${LITERAL}.configured")
+file(GLOB GLOBBED RELATIVE "${DIR}" "${DIR}/${LITERAL}.t*")
+""".replace("@OUT@", out.as_posix()).replace("@SOURCE@", tmp_path.as_posix()),
+    )
+
+    assert sorted(path.name for path in out.iterdir()) == [
+        "${VAR}.configured",
+        "${VAR}.copy",
+        "${VAR}.dir",
+        "${VAR}.touched",
+        "${VAR}.txt",
+    ]
+    assert ctx.variables["READ"] == "written twice"
+    assert ctx.variables["STRINGS"] == "written twice"
+    assert (out / "${VAR}.configured").read_text() == "value\n"
+    assert (out / "${VAR}.copy" / "source.txt").read_text() == "source"
+    assert sorted(ctx.variables["GLOBBED"].split(";")) == [
+        "${VAR}.touched",
+        "${VAR}.txt",
+    ]
