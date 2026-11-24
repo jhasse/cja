@@ -1229,9 +1229,7 @@ def handle_set_property(
     elif scope_type == "SOURCE":
         files, scopes = source_file_scopes(ctx, cmd, scope_args, strict)
         for scope, source_file in ((scope, f) for scope in scopes for f in files):
-            expanded_filename = source_file_key(
-                ctx, ctx.expand_variables(source_file, strict, cmd.line)
-            )
+            expanded_filename = source_file_key(ctx, source_file)
             file_props = scope.setdefault(expanded_filename, SourceFileProperties())
 
             if prop_name == "COMPILE_DEFINITIONS":
@@ -1241,8 +1239,7 @@ def handle_set_property(
                     file_props.compile_definitions = list(prop_values)
             elif prop_name == "INCLUDE_DIRECTORIES":
                 for value in prop_values:
-                    expanded = ctx.expand_variables(value, strict, cmd.line)
-                    expanded = resolve_cmake_path(expanded, ctx.current_source_dir)
+                    expanded = resolve_cmake_path(value, ctx.current_source_dir)
                     if append_mode:
                         file_props.include_directories.append(expanded)
                     else:
@@ -1543,7 +1540,7 @@ def handle_get_property(
         files, scopes = source_file_scopes(ctx, cmd, scope_args, strict)
         if not files or not scopes:
             return
-        source_name = ctx.expand_variables(files[0], strict, cmd.line)
+        source_name = files[0]
         if prop_name == "LOCATION":
             value = _source_file_location(ctx, source_name)
         elif prop_name == "GENERATED":

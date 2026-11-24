@@ -2950,9 +2950,7 @@ int main() {{
                         # Like set_property(SOURCE), so that e.g. the
                         # forward slashes of file(GLOB) results on Windows
                         # match the paths the generator looks up
-                        expanded_filename = source_file_key(
-                            ctx, ctx.expand_variables(filename, strict, cmd.line)
-                        )
+                        expanded_filename = source_file_key(ctx, filename)
                         file_props = scope.setdefault(
                             expanded_filename, SourceFileProperties()
                         )
@@ -2966,11 +2964,7 @@ int main() {{
                                 prop_value = props[i]
                                 i += 1
                                 # Handle semicolon-separated lists in CMake
-                                values = prop_value.split(";")
-                                expanded_values = [
-                                    ctx.expand_variables(v, strict, cmd.line)
-                                    for v in values
-                                ]
+                                expanded_values = prop_value.split(";")
 
                                 if prop_name == "OBJECT_DEPENDS":
                                     for v in expanded_values:
