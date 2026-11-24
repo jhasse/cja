@@ -104,6 +104,25 @@ set(AFTER_UNSET "${value}")
     assert ctx.variables["AFTER_UNSET"] == "before"
 
 
+def test_cmake_parse_arguments_keeps_bracket_arguments(tmp_path: Path) -> None:
+    """cmake_parse_arguments() expands its arguments itself, but not bracket ones."""
+    ctx = _process(
+        tmp_path,
+        r"""
+cmake_parse_arguments(ARG "" "ONE" "MULTI" ONE [[${VAR}]] MULTI [[m${VAR}]] ${VAR})
+function(parse_argv)
+  cmake_parse_arguments(PARSE_ARGV 0 ARGV "" [[ONE]] "")
+  set(ARGV_ONE "${ARGV_ONE}" PARENT_SCOPE)
+endfunction()
+parse_argv(ONE [[${VAR}]])
+""",
+    )
+
+    assert ctx.variables["ARG_ONE"] == "${VAR}"
+    assert ctx.variables["ARG_MULTI"] == "m${VAR};value"
+    assert ctx.variables["ARGV_ONE"] == "${VAR}"
+
+
 def test_file_names_are_expanded_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

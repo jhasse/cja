@@ -2671,18 +2671,25 @@ def handle_cmake_parse_arguments(
     """Handle cmake_parse_arguments() command."""
     parse_argv = bool(cmd.args) and cmd.args[0] == "PARSE_ARGV"
     expanded_args: list[str] = []
+
+    def expand(idx: int) -> str:
+        """An argument with its variables expanded, unless it's a bracket one."""
+        if idx < len(cmd.is_bracket) and cmd.is_bracket[idx]:
+            return cmd.args[idx]
+        return ctx.expand_variables(cmd.args[idx], strict, cmd.line)
+
     if parse_argv:
         # cmake_parse_arguments(PARSE_ARGV <N> <prefix> <options> <one> <multi>)
         # parses the function's arguments ARGV<N>... one by one.
-        header = [ctx.expand_variables(arg, strict, cmd.line) for arg in cmd.args[1:6]]
+        header = [expand(idx) for idx in range(1, min(6, len(cmd.args)))]
         if len(header) == 5 and header[0].isdigit():
             expanded_args = header[1:]
             argc = int(ctx.variables.get("ARGC", "0") or "0")
             for idx in range(int(header[0]), argc):
                 expanded_args.append(ctx.variables.get(f"ARGV{idx}", ""))
     else:
-        for idx, arg in enumerate(cmd.args):
-            expanded = ctx.expand_variables(arg, strict, cmd.line)
+        for idx in range(len(cmd.args)):
+            expanded = expand(idx)
             quoted = cmd.is_quoted[idx] if idx < len(cmd.is_quoted) else False
             if idx < 4:
                 expanded_args.append(expanded)
