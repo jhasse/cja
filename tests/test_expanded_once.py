@@ -81,3 +81,22 @@ get_source_file_property(DEFINITIONS a.c COMPILE_DEFINITIONS)
     assert ctx.variables["INCLUDES"] == "/inc/${VAR}"
     assert ctx.variables["OTHER"] == "other${VAR}"
     assert ctx.variables["DEFINITIONS"] == "DEFINITION=${VAR}"
+
+
+def test_variable_names_are_expanded_once(tmp_path: Path) -> None:
+    """The names that set() and unset() get."""
+    ctx = _process(
+        tmp_path,
+        r"""
+set(NAME [[${VAR}]])
+set(value before)
+set(${NAME} 1)
+set(AFTER_SET "${value}")
+unset(${NAME})
+set(AFTER_UNSET "${value}")
+""",
+    )
+
+    # Neither is about the variable that VAR names.
+    assert ctx.variables["AFTER_SET"] == "before"
+    assert ctx.variables["AFTER_UNSET"] == "before"

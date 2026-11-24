@@ -2509,7 +2509,7 @@ def handle_set(
 ) -> None:
     """Handle set() command."""
     if args:
-        var_name = ctx.expand_variables(args[0], strict, cmd.line)
+        var_name = args[0]
         values = args[1:]
 
         if env_match := re.fullmatch(r"ENV\{(.+)\}", var_name):
@@ -2593,7 +2593,7 @@ def handle_unset(
     """Handle unset() command."""
     if not args:
         return
-    var_name = ctx.expand_variables(args[0], strict, cmd.line)
+    var_name = args[0]
     scope = args[1].upper() if len(args) > 1 else ""
     if env_match := re.fullmatch(r"ENV\{(.+)\}", var_name):
         os.environ.pop(env_match.group(1), None)
