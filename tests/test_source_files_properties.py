@@ -278,9 +278,14 @@ set(SUB_OF_TOP "${SUB_OF_TOP}" PARENT_SCOPE)
     assert ctx.variables["SUB_OF_TOP"] == "top"
 
     ninja_content = (tmp_path / "build.ninja").read_text()
-    flags = dict(
-        re.findall(r"^build \S*/(\w+)\.o: .*\n(?:  cflags = (.*))?", ninja_content, re.MULTILINE)
+    edges = re.findall(
+        r"^build \S*/(\w+)\.o: .*\n(?:  cflags = (.*))?", ninja_content, re.MULTILINE
     )
+    # Only the definitions, without what the toolchain adds on Windows
+    flags = {
+        obj: " ".join(flag for flag in cflags.split() if flag.startswith("-D"))
+        for obj, cflags in edges
+    }
     assert flags == {
         "toplib_shared": "-DTOP_DEF",
         "toplib_s": "-DTOP_DEF",

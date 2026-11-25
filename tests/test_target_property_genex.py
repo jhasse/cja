@@ -1,14 +1,21 @@
 """Tests for $<TARGET_PROPERTY:prop>, which is about the target being built."""
 
+import platform
 import re
 from pathlib import Path
 
 from cja.generator import configure
 from cja.utils import to_posix_path
 
+EXE_EXT = ".exe" if platform.system() == "Windows" else ""
+
 
 def _cflags(ninja_content: str, obj_suffix: str) -> list[str]:
-    """The cflags of the build edge whose output ends with obj_suffix."""
+    """The definitions and include directories among the cflags of the build
+    edge whose output ends with obj_suffix.
+
+    That leaves out what the toolchain adds, like -fms-runtime-lib on Windows.
+    """
     unwrapped = re.sub(r"\$\n *", "", ninja_content)
     match = re.search(
         rf"^build \S*{re.escape(obj_suffix)}: .*\n(?:  cflags = (.*))?",
@@ -16,7 +23,8 @@ def _cflags(ninja_content: str, obj_suffix: str) -> list[str]:
         re.MULTILINE,
     )
     assert match, f"no build edge for {obj_suffix}"
-    return to_posix_path(match.group(1) or "").split()
+    flags = to_posix_path(match.group(1) or "").split()
+    return [flag for flag in flags if flag.startswith(("-D", "-I"))]
 
 
 def _configure(tmp_path: Path, cmake: str) -> str:
@@ -117,16 +125,21 @@ def test_target_property_in_post_build_command(tmp_path: Path) -> None:
     assert "tool --kind=app" in ninja_content
 
 
-def _libs(ninja_content: str, output_suffix: str) -> list[str]:
-    """The libs of the build edge whose output ends with output_suffix."""
+def _libs(ninja_content: str, executable: str) -> list[str]:
+    """The libraries and link directories among the libs of the build edge of
+    an executable.
+
+    That leaves out what the toolchain adds, like the subsystem on Windows.
+    """
     unwrapped = re.sub(r"\$\n *", "", ninja_content)
     match = re.search(
-        rf"^build \S*{re.escape(output_suffix)}: .*\n(?:  libs = (.*))?",
+        rf"^build \S*{re.escape(executable + EXE_EXT)}: .*\n(?:  libs = (.*))?",
         unwrapped,
         re.MULTILINE,
     )
-    assert match, f"no build edge for {output_suffix}"
-    return to_posix_path(match.group(1) or "").split()
+    assert match, f"no build edge for {executable}"
+    flags = to_posix_path(match.group(1) or "").split()
+    return [flag for flag in flags if flag.startswith(("-l", "-L"))]
 
 
 def test_target_property_in_link_libraries(tmp_path: Path) -> None:

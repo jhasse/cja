@@ -139,7 +139,12 @@ def test_target_compile_options_lists(tmp_path: Path) -> None:
     configure(tmp_path, "build")
 
     ninja_content = (tmp_path / "build.ninja").read_text()
-    assert "cflags = -DQUOTED1 -DQUOTED2 -DJOINED1 -DJOINED2\n" in ninja_content
+    cflags = next(
+        line for line in ninja_content.splitlines() if line.startswith("  cflags = ")
+    )
+    # Without what the toolchain adds on Windows
+    definitions = [flag for flag in cflags.split()[2:] if flag.startswith("-D")]
+    assert definitions == ["-DQUOTED1", "-DQUOTED2", "-DJOINED1", "-DJOINED2"]
 
 
 def test_target_compile_options_multiline_genex(tmp_path: Path) -> None:

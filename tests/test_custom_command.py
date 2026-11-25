@@ -102,8 +102,9 @@ add_custom_command(
         ninja_file = tmppath / "build.ninja"
         assert ninja_file.exists()
 
-        # Check that custom command is in the ninja file
-        ninja_content = ninja_file.read_text()
+        # Check that custom command is in the ninja file, with the lines that
+        # ninja_syntax continues with a trailing "$" unwrapped
+        ninja_content = re.sub(r"\$\n *", "", ninja_file.read_text())
         assert "rule custom_command" in ninja_content
         assert "$builddir/generated.txt" in ninja_content
         # Like in CMake, the spaces are escaped also without VERBATIM
@@ -287,7 +288,8 @@ add_custom_command(
     configure(source_dir, "build")
 
     ninja_file = source_dir / "build.ninja"
-    ninja_content = ninja_file.read_text()
+    # Unwrap the lines that ninja_syntax continues with a trailing "$"
+    ninja_content = re.sub(r"\$\n *", "", ninja_file.read_text())
 
     expected = join_command_lines(
         cd_command("build"), "echo first > out.txt", "echo second >> out.txt"

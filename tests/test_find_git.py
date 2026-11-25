@@ -1,5 +1,6 @@
 """Tests for find_package(Git) using the bundled FindGit.cmake."""
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -45,7 +46,8 @@ def test_git_target_in_command(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
 
     ctx = configure(tmp_path, "build", strict=True, quiet=True)
 
-    ninja = (tmp_path / "build.ninja").read_text()
+    # Unwrap the lines that ninja_syntax continues with a trailing "$"
+    ninja = re.sub(r"\$\n *", "", (tmp_path / "build.ninja").read_text())
     assert "Git::Git" not in ninja
     command = next(line for line in ninja.splitlines() if " --version && " in line)
     assert Path(ctx.variables["GIT_EXECUTABLE"]).name in command
