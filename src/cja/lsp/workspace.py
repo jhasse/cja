@@ -10,6 +10,7 @@ from typing import Any
 
 from ..format import UNQUOTED
 from ..format_specs import CmdSpec
+from ..project import MAX_FILES, cmake_files
 from .document import (
     BUILTIN_COMMANDS,
     KNOWN_COMMANDS,
@@ -22,10 +23,6 @@ from .document import (
 
 # Find modules and helpers that ship with cja
 BUNDLED_MODULES = Path(__file__).resolve().parent.parent / "cmake" / "Modules"
-
-# Directories that are never searched for CMake files
-_SKIPPED_DIRS = frozenset({"node_modules", "__pycache__", "CMakeFiles", "_deps"})
-MAX_FILES = 10000
 
 # LSP CompletionItemKind values
 _COMPLETION_FUNCTION = 3
@@ -57,11 +54,6 @@ def normalize(path: Path) -> Path:
     return Path(os.path.normcase(os.path.abspath(path)))
 
 
-def is_cmake_file(path: Path) -> bool:
-    name = path.name.lower()
-    return name == "cmakelists.txt" or name.endswith(".cmake")
-
-
 @dataclass
 class Location:
     path: Path
@@ -88,21 +80,12 @@ class Workspace:
         root = normalize(root)
         if root not in self.roots:
             self.roots.append(root)
-        for dirpath, dirnames, filenames in os.walk(root):
-            # Build directories (configured by CMake or cja) and hidden ones
-            dirnames[:] = [
-                d
-                for d in dirnames
-                if not d.startswith((".", "build"))
-                and d not in _SKIPPED_DIRS
-                and not (Path(dirpath) / d / "CMakeCache.txt").exists()
-            ]
-            for filename in filenames:
-                path = normalize(Path(dirpath) / filename)
-                if is_cmake_file(path) and path not in self.files:
-                    if len(self.files) >= MAX_FILES:
-                        return
-                    self.load(path)
+        for file in cmake_files(root):
+            path = normalize(file)
+            if path not in self.files:
+                if len(self.files) >= MAX_FILES:
+                    return
+                self.load(path)
 
     def load(self, path: Path) -> ParsedFile | None:
         """Parse a file from disk."""

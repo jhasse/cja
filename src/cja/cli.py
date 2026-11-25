@@ -14,6 +14,7 @@ from . import __version__
 from .format import decode, find_style, format_source, source_command_specs
 from .format_specs import CmdSpec
 from .generator import configure, run_script, run_test_include, verify_globs
+from .project import project_command_specs, project_root
 
 
 def _get_version() -> str:
@@ -257,14 +258,16 @@ def cmd_format(args: argparse.Namespace) -> int:
         return 1
 
     # Calls may use functions defined in any of the given files.
-    commands: dict[str, CmdSpec] = {}
+    given_commands: dict[str, CmdSpec] = {}
     for name in files:
         if name != "-":
             try:
                 source, _ = decode(Path(name).read_bytes())
-                commands.update(source_command_specs(source, name))
+                given_commands.update(source_command_specs(source, name))
             except (OSError, SyntaxError):
                 pass  # Reported below
+    # Like the language server, they also use the ones of the project's files.
+    project_commands: dict[Path, dict[str, CmdSpec]] = {}
 
     status = 0
     for name in files:
@@ -281,6 +284,12 @@ def cmd_format(args: argparse.Namespace) -> int:
                 status = 1
                 continue
 
+        commands = dict(given_commands)
+        root = project_root(path.parent)
+        if root is not None:
+            if root not in project_commands:
+                project_commands[root] = project_command_specs(root)
+            commands.update(project_commands[root])
         try:
             formatted = format_source(
                 source, find_style(path.parent), name, args.lines, commands

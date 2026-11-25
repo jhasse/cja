@@ -20,6 +20,7 @@ from typing import IO, Any
 from urllib.parse import unquote, urlparse
 
 from ..format import find_style, format_source
+from ..project import is_cmake_file
 from .document import (
     TOKEN_MODIFIERS,
     TOKEN_TYPES,
@@ -37,7 +38,7 @@ from .protocol import (
     Connection,
     read_message,
 )
-from .workspace import Location, Workspace, is_cmake_file, normalize
+from .workspace import Location, Workspace, normalize
 
 CONFIGURE_COMMAND = "cja.configure"
 

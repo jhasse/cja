@@ -110,7 +110,7 @@ If there's a `.cmake-format.json`, the nearest one overrides them. These options
 * `line_ending`, `command_case` and `disable`
 * `separate_ctrl_name_with_space` and `separate_fn_name_with_space`
 
-The `parse` section isn't needed: the keywords of custom commands are inferred from their arguments.
+The `parse` section isn't needed: the keywords of custom commands are taken from their definitions (see below).
 
 Everything else follows cmake-format's defaults, with a few differences:
 
@@ -118,8 +118,12 @@ Everything else follows cmake-format's defaults, with a few differences:
   more than two argument groups or six arguments). Setting `max_subgroups_hwrap` or `max_pargs_hwrap` in
   `.cmake-format.json` switches to cmake-format's behavior.
 * Comments are never reflowed.
-* The names of user-defined commands keep their spelling (builtin commands are still lowercased) and UPPERCASE words
-  in their arguments are treated as keywords.
+* The names of user-defined commands keep their spelling (builtin commands are still lowercased).
+* The keywords of user-defined commands are those of the `cmake_parse_arguments()` call in their definition. Like in
+  the language server, it can be in any `CMakeLists.txt` or `*.cmake` file of the project (build directories, hidden
+  directories and `_deps` are skipped). That's the Git repository of the formatted file, or without one the directory
+  of the outermost `CMakeLists.txt` above it that calls `project()`. Only for other commands UPPERCASE words in their
+  arguments are treated as keywords.
 * Line endings and a UTF-8 BOM are preserved.
 
 Use `# cmake-format: off` / `# cmake-format: on` (or `# clang-format off` / `on`) to exclude a region.

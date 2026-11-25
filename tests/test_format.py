@@ -310,15 +310,61 @@ my_func(
     )
 
 
-def test_cmake_parse_arguments_in_other_file(tmp_path: Path) -> None:
-    """Functions defined in another file passed to cja format are used, too."""
-    (tmp_path / "helpers.cmake").write_text(
-        "function(my_func)\n"
-        '  cmake_parse_arguments(ARG "" "FOO" "SOURCES" ${ARGN})\n'
-        "endfunction()\n"
+_MY_FUNC = (
+    "function(my_func)\n"
+    '  cmake_parse_arguments(ARG "" "FOO" "SOURCES" ${ARGN})\n'
+    "endfunction()\n"
+)
+
+
+@pytest.mark.parametrize("root_marker", [".git/HEAD", "CMakeLists.txt"])
+def test_cmake_parse_arguments_in_project(tmp_path: Path, root_marker: str) -> None:
+    """Like the language server, cja format knows the functions of the project:
+    the Git repository, or else the directory of the top-level CMakeLists.txt."""
+    (tmp_path / root_marker).parent.mkdir(exist_ok=True)
+    (tmp_path / root_marker).write_text("project(demo)\n")
+    (tmp_path / "cmake").mkdir()
+    (tmp_path / "cmake" / "helpers.cmake").write_text(_MY_FUNC)
+    app = tmp_path / "src" / "app"
+    app.mkdir(parents=True)
+    (app / "CMakeLists.txt").write_text(_LONG_CALL)
+
+    result = run_cja("format", "CMakeLists.txt", cwd=app)
+    assert result.returncode == 0
+    assert result.stdout == _LONG_CALL_FORMATTED
+
+    result = run_cja(
+        "format", "--assume-filename", "src/app/x.cmake", cwd=tmp_path, stdin=_LONG_CALL
     )
-    (tmp_path / "CMakeLists.txt").write_text(_LONG_CALL)
-    result = run_cja("format", "CMakeLists.txt", "helpers.cmake", cwd=tmp_path)
+    assert result.returncode == 0
+    assert result.stdout == _LONG_CALL_FORMATTED
+
+
+def test_cmake_parse_arguments_in_file_override_the_project(tmp_path: Path) -> None:
+    (tmp_path / "helpers.cmake").write_text(_MY_FUNC.replace('"FOO"', '""'))
+    (tmp_path / "CMakeLists.txt").write_text(_MY_FUNC + _LONG_CALL)
+
+    result = run_cja("format", "CMakeLists.txt", cwd=tmp_path)
+
+    assert result.returncode == 0
+    assert result.stdout == _MY_FUNC + _LONG_CALL_FORMATTED
+
+
+def test_cmake_parse_arguments_in_other_file(tmp_path: Path) -> None:
+    """Functions defined in another file passed to cja format are used, too,
+    which is needed if it isn't in the same project."""
+    (tmp_path / "other").mkdir()
+    (tmp_path / "other" / "helpers.cmake").write_text(_MY_FUNC)
+    (tmp_path / "project").mkdir()
+    (tmp_path / "project" / "CMakeLists.txt").write_text(_LONG_CALL)
+
+    result = run_cja("format", "project/CMakeLists.txt", cwd=tmp_path)
+    assert result.returncode == 0
+    assert result.stdout != _LONG_CALL_FORMATTED
+
+    result = run_cja(
+        "format", "project/CMakeLists.txt", "other/helpers.cmake", cwd=tmp_path
+    )
     assert result.returncode == 0
     assert result.stdout.startswith(_LONG_CALL_FORMATTED)
 

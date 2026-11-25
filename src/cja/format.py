@@ -183,7 +183,7 @@ def _apply_cmake_format(style: Style, config: dict[str, Any]) -> None:
     """Apply the options of a .cmake-format.json.
 
     The "parse" section is ignored: the keywords of commands we don't know are
-    guessed from their arguments instead.
+    taken from their definitions or guessed from their arguments instead.
     """
     # cmake-format 0.6 moved the options into sections, older versions don't
     # have them.
