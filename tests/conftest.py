@@ -31,8 +31,12 @@ def _no_color(monkeypatch: pytest.MonkeyPatch) -> None:
 
     Unlike NO_COLOR, ANSI_COLORS_DISABLED only affects termcolor, not e.g. the
     compilers. termcolor caches whether to colorize, so make it check again.
+
+    FORCE_COLOR also makes rich animate its progress bars as if the captured
+    output was a terminal, which TTY_COMPATIBLE=0 overrides.
     """
     monkeypatch.setenv("ANSI_COLORS_DISABLED", "1")
+    monkeypatch.setenv("TTY_COMPATIBLE", "0")
     termcolor.can_colorize.cache_clear()
 
 
