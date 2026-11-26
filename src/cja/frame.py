@@ -11,9 +11,10 @@ class Frame:
     pc: int = 0
     on_exit: Callable[[], None] | None = None
     kind: str = "commands"
-    foreach_items: list[str] = field(default_factory=list)
+    # What each iteration sets the loop variables to; None leaves one unset
+    foreach_items: list[tuple[str | None, ...]] = field(default_factory=list)
     foreach_index: int = 0
-    foreach_loop_var: str = ""
+    foreach_loop_vars: list[str] = field(default_factory=list)
     foreach_body: list[Command] | None = None
     while_command: Command | None = None
     while_body: list[Command] = field(default_factory=list)

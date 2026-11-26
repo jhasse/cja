@@ -1,3 +1,4 @@
+import itertools
 import re
 
 from .build_context import (
@@ -91,20 +92,30 @@ def build_foreach_info(
     commands: list[Command],
     pc: int,
     args: list[str],
-    strict: bool = False,
-) -> tuple[int, str, list[str], list[Command]]:
-    """Build foreach() iteration info."""
+) -> tuple[int, list[str], list[tuple[str | None, ...]], list[Command]]:
+    """Build foreach() iteration info.
+
+    Returns the index of the matching endforeach(), the loop variables, what
+    each iteration sets them to (None leaves one unset) and the loop's body.
+    """
     cmd = commands[pc]
     if not args:
         ctx.raise_syntax_error("foreach() requires at least a loop variable", cmd.line)
-    # foreach(<var>... IN ZIP_LISTS <lists>)
-    for idx in range(1, len(args) - 1):
-        if args[idx] == "IN" and args[idx + 1] == "ZIP_LISTS":
-            ctx.check_unsupported_args(cmd, ["ZIP_LISTS"], strict)
 
     # Find matching endforeach
     endforeach_idx = find_matching_endforeach(commands, pc, ctx)
     body = commands[pc + 1 : endforeach_idx]
+
+    # Like in CMake, the variables of foreach(<var>... IN ...) end at the IN
+    in_idx = args.index("IN") if "IN" in args else 0
+    mode = args[in_idx + 1 : in_idx + 2]
+    if in_idx >= 1 and mode == ["ZIP_LISTS"]:
+        loop_vars, zipped = _zip_lists(ctx, cmd, args[:in_idx], args[in_idx + 2 :])
+        return endforeach_idx, loop_vars, zipped, body
+    if in_idx > 1 and mode in (["LISTS"], ["ITEMS"]):
+        ctx.raise_syntax_error(
+            "ITEMS or LISTS require exactly one iteration variable", cmd.line
+        )
 
     loop_var = cmd.args[0]  # Use unexpanded for variable name
     remaining = args[1:]  # Use expanded args for values
@@ -141,7 +152,31 @@ def build_foreach_info(
         # foreach(var item1 item2 ...)
         items = remaining
 
-    return endforeach_idx, loop_var, items, body
+    return endforeach_idx, [loop_var], [(item,) for item in items], body
+
+
+def _zip_lists(
+    ctx: BuildContext, cmd: Command, loop_vars: list[str], list_names: list[str]
+) -> tuple[list[str], list[tuple[str | None, ...]]]:
+    """The loop variables of foreach(<var>... IN ZIP_LISTS <lists>) and what
+    each iteration sets them to: the elements of the lists at that position.
+
+    Like in CMake, a single variable stands for <var>_0, <var>_1, ..., one for
+    each list, and a variable is left unset (None) once its list has ended.
+    """
+    if "LISTS" in list_names or "ITEMS" in list_names:
+        ctx.raise_syntax_error(
+            "ZIP_LISTS can not be used with LISTS or ITEMS", cmd.line
+        )
+    if len(loop_vars) == 1:
+        loop_vars = [f"{loop_vars[0]}_{index}" for index in range(len(list_names))]
+    elif len(loop_vars) != len(list_names):
+        ctx.raise_syntax_error(
+            f"Expected {len(loop_vars)} list variables, but given {len(list_names)}",
+            cmd.line,
+        )
+    lists = [expand_list(ctx.variable_value(name)) for name in list_names]
+    return loop_vars, list(itertools.zip_longest(*lists))
 
 
 _VERSION_RE = re.compile(r"^(\d+)(?:\.(\d+))?(?:\.(\d+))?")

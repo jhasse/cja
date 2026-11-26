@@ -694,9 +694,14 @@ def process_commands(
                     frame.on_exit()
                 stack.pop()
                 continue
-            ctx.variables[frame.foreach_loop_var] = frame.foreach_items[
-                frame.foreach_index
-            ]
+            values = frame.foreach_items[frame.foreach_index]
+            for loop_var, value in zip(frame.foreach_loop_vars, values, strict=True):
+                if value is None:
+                    # Like in CMake, a variable of ZIP_LISTS whose list has
+                    # no more elements isn't defined.
+                    ctx.unset_variable(loop_var)
+                else:
+                    ctx.variables[loop_var] = value
             frame.foreach_index += 1
             stack.append(Frame(commands=frame.foreach_body, pc=0, kind="commands"))
             continue
@@ -1087,8 +1092,8 @@ def process_commands(
                 ctx.raise_syntax_error(f"Unexpected {cmd.name}()", cmd.line)
 
             case "foreach":
-                endforeach_idx, loop_var, items, body = build_foreach_info(
-                    ctx, current_commands, frame.pc, args, strict
+                endforeach_idx, loop_vars, items, body = build_foreach_info(
+                    ctx, current_commands, frame.pc, args
                 )
                 frame.pc = endforeach_idx + 1
                 stack.append(
@@ -1096,7 +1101,7 @@ def process_commands(
                         commands=None,
                         kind="foreach",
                         foreach_items=items,
-                        foreach_loop_var=loop_var,
+                        foreach_loop_vars=loop_vars,
                         foreach_body=body,
                     )
                 )

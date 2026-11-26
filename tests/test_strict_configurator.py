@@ -67,10 +67,6 @@ def configure(tmp_path: Path, source: str, strict: bool = False) -> BuildContext
         ),
         ("return(PROPAGATE x)", "return(): PROPAGATE"),
         (
-            "set(A 1)\nset(B 2)\nforeach(a b IN ZIP_LISTS A B)\nendforeach()",
-            "foreach(): ZIP_LISTS",
-        ),
-        (
             (
                 "configure_package_config_file(in out INSTALL_DESTINATION lib"
                 " INSTALL_PREFIX /opt)"

@@ -342,6 +342,12 @@ class BuildContext:
             if name not in self.variables.normal_bindings:
                 dict.__setitem__(self.variables, name, value)
 
+    def unset_variable(self, name: str) -> None:
+        """Remove a normal binding, making a cache entry of the same name visible."""
+        self.variables.pop(name, None)
+        if name in self.cache_values:
+            self.set_cache(name, self.cache_values[name])
+
     def variable_value(self, name: str) -> str:
         """The value of a variable, which is empty if it isn't set."""
         value = self.variables.get(name, "")

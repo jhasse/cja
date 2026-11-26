@@ -1578,7 +1578,7 @@ def handle_get_property(
         ctx.variables[var_name] = "0" if value is None else "1"
     elif value is None:
         # Like CMake, an unset property unsets the variable.
-        _unset_normal_variable(ctx, var_name)
+        ctx.unset_variable(var_name)
     else:
         ctx.variables[var_name] = value
 
@@ -2492,7 +2492,7 @@ def handle_list(
                     ctx.variables[out_var] = items.pop(pop_index)
                 else:
                     # An exhausted list unsets the remaining output variables.
-                    _unset_normal_variable(ctx, out_var)
+                    ctx.unset_variable(out_var)
             if list_name in ctx.variables or items:
                 ctx.variables[list_name] = ";".join(items)
     else:
@@ -2574,14 +2574,7 @@ def handle_set(
             ctx.variables[var_name] = ";".join(filtered_values)
         else:
             # set(VAR) with no value unsets the variable
-            _unset_normal_variable(ctx, var_name)
-
-
-def _unset_normal_variable(ctx: BuildContext, var_name: str) -> None:
-    """Remove a normal binding, making a cache entry of the same name visible."""
-    ctx.variables.pop(var_name, None)
-    if var_name in ctx.cache_values:
-        ctx.set_cache(var_name, ctx.cache_values[var_name])
+            ctx.unset_variable(var_name)
 
 
 def handle_unset(
@@ -2606,7 +2599,7 @@ def handle_unset(
         ):
             dict.pop(ctx.variables, var_name, None)
     else:
-        _unset_normal_variable(ctx, var_name)
+        ctx.unset_variable(var_name)
 
 
 def handle_option(

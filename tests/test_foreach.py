@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from cja.generator import BuildContext, process_commands
-from cja.parser import Command
+from cja.parser import Command, parse
 
 
 def test_foreach_basic(capsys: pytest.CaptureFixture[str]) -> None:
@@ -228,3 +228,104 @@ def test_foreach_unquoted_list_drops_empty_elements() -> None:
     process_commands(commands, ctx)
 
     assert ctx.variables["RESULT"] == "[a][b]"
+
+
+def _run(code: str) -> BuildContext:
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    process_commands(parse(code), ctx, strict=True)
+    return ctx
+
+
+def test_foreach_zip_lists_several_variables() -> None:
+    """Each variable gets the element of its list. Like in CMake, it isn't
+    defined once its list has ended."""
+    ctx = _run(
+        r"""
+set(A a1 a2 a3)
+set(B b1 b2)
+set(names x y)
+foreach(${names} IN ZIP_LISTS A B)
+  if(DEFINED y)
+    list(APPEND RESULT "${x}=${y}")
+  else()
+    list(APPEND RESULT "${x} alone")
+  endif()
+endforeach()
+foreach(u v IN ZIP_LISTS B A)
+  if(NOT DEFINED u)
+    list(APPEND FIRST_SHORTER "${v}")
+  endif()
+endforeach()
+"""
+    )
+
+    assert ctx.variables["RESULT"] == "a1=b1;a2=b2;a3 alone"
+    assert ctx.variables["FIRST_SHORTER"] == "a3"
+
+
+def test_foreach_zip_lists_one_variable() -> None:
+    """One variable stands for <var>_0, <var>_1, ..., one for each list."""
+    ctx = _run(
+        r"""
+set(A a1 a2)
+set(B b1 b2)
+set(EMPTY_ELEMENT "c1;")
+foreach(item IN ZIP_LISTS A B EMPTY_ELEMENT NOT_SET)
+  list(APPEND RESULT "${item_0}${item_1}[${item_2}][${item_3}]")
+  if(DEFINED item OR DEFINED item_3 OR NOT DEFINED item_2)
+    set(UNEXPECTED TRUE)
+  endif()
+endforeach()
+foreach(single IN ZIP_LISTS A)
+  list(APPEND SINGLE "${single_0}")
+endforeach()
+foreach(none IN ZIP_LISTS)
+  set(UNEXPECTED TRUE)
+endforeach()
+"""
+    )
+
+    assert ctx.variables["RESULT"] == "a1b1[c1][];a2b2[][]"
+    assert ctx.variables["SINGLE"] == "a1;a2"
+    assert "UNEXPECTED" not in ctx.variables
+
+
+def test_foreach_zip_lists_elements_and_loop_control() -> None:
+    r"""The lists are split like for IN LISTS, with "\;" in an element, and
+    break() and continue() work like in other loops."""
+    ctx = _run(
+        r"""
+set(A "s\;t" u v w)
+set(B 1 2 3 4)
+foreach(element number IN ZIP_LISTS A B)
+  if(number EQUAL 2)
+    continue()
+  endif()
+  list(APPEND RESULT "${number}:<${element}>")
+  if(number EQUAL 3)
+    break()
+  endif()
+endforeach()
+"""
+    )
+
+    assert ctx.variables["RESULT"] == "1:<s;t>;3:<v>"
+
+
+@pytest.mark.parametrize(
+    ("loop", "message"),
+    [
+        ("x y z IN ZIP_LISTS A B", "Expected 3 list variables, but given 2"),
+        ("x y IN ZIP_LISTS", "Expected 2 list variables, but given 0"),
+        ("x y IN ZIP_LISTS A ITEMS", "ZIP_LISTS can not be used with LISTS or ITEMS"),
+        ("x y IN LISTS A", "ITEMS or LISTS require exactly one iteration variable"),
+        ("x y IN ITEMS a b", "ITEMS or LISTS require exactly one iteration variable"),
+    ],
+)
+def test_foreach_wrong_number_of_variables(loop: str, message: str) -> None:
+    """Like in CMake, several variables are only for as many ZIP_LISTS."""
+    code = f"set(A 1 2)\nset(B 3 4)\nforeach({loop})\nendforeach()\n"
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+
+    with pytest.raises(SyntaxError, match=message):
+        process_commands(parse(code), ctx)
