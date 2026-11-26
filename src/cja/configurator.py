@@ -1096,15 +1096,32 @@ def process_commands(
                     ctx, current_commands, frame.pc, args
                 )
                 frame.pc = endforeach_idx + 1
-                stack.append(
-                    Frame(
-                        commands=None,
-                        kind="foreach",
-                        foreach_items=items,
-                        foreach_loop_vars=loop_vars,
-                        foreach_body=body,
-                    )
+                loop_frame = Frame(
+                    commands=None,
+                    kind="foreach",
+                    foreach_items=items,
+                    foreach_loop_vars=loop_vars,
+                    foreach_body=body,
                 )
+                previous = {name: ctx.normal_variable(name) for name in loop_vars}
+
+                def on_exit_foreach(
+                    loop_frame: Frame = loop_frame,
+                    previous: dict[str, str | None] = previous,
+                ) -> None:
+                    # Like in CMake (CMP0124), the loop variables are only for
+                    # the loop: they get the values that they had before, or
+                    # none. A loop without iterations leaves them alone.
+                    if loop_frame.foreach_index == 0:
+                        return
+                    for name, value in previous.items():
+                        if value is None:
+                            ctx.unset_variable(name)
+                        else:
+                            ctx.variables[name] = value
+
+                loop_frame.on_exit = on_exit_foreach
+                stack.append(loop_frame)
                 continue
 
             case "endforeach":

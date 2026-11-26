@@ -348,6 +348,15 @@ class BuildContext:
         if name in self.cache_values:
             self.set_cache(name, self.cache_values[name])
 
+    def normal_variable(self, name: str) -> str | None:
+        """The value of a normal variable, or None if there's none of that
+        name, also if a cache entry is called like that."""
+        if name not in self.variables.normal_bindings:
+            return None
+        # Not a use of the variable: without TrackedDict's tracking
+        value = dict.get(self.variables, name)
+        return None if value == UNDEFINED_VAR_SENTINEL else value
+
     def variable_value(self, name: str) -> str:
         """The value of a variable, which is empty if it isn't set."""
         value = self.variables.get(name, "")

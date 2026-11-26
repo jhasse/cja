@@ -329,3 +329,107 @@ def test_foreach_wrong_number_of_variables(loop: str, message: str) -> None:
 
     with pytest.raises(SyntaxError, match=message):
         process_commands(parse(code), ctx)
+
+
+def test_foreach_restores_loop_variables() -> None:
+    """Like in CMake (CMP0124), a loop variable is only for the loop: afterwards
+    it has the value that it had before, or none."""
+    ctx = _run(
+        r"""
+set(A a1 a2 a3)
+set(B b1 b2)
+set(was_set before)
+foreach(was_set IN LISTS A)
+endforeach()
+foreach(was_not_set IN LISTS A)
+endforeach()
+set(cached from_cache CACHE STRING "")
+foreach(cached IN LISTS A)
+endforeach()
+set(broken before)
+foreach(broken IN LISTS A)
+  break()
+endforeach()
+set(in_range before)
+foreach(in_range RANGE 2)
+endforeach()
+set(x before)
+foreach(x y IN ZIP_LISTS A B)
+endforeach()
+set(p_1 before)
+foreach(p IN ZIP_LISTS A B)
+endforeach()
+foreach(outer 1 2)
+  foreach(outer x y)
+  endforeach()
+  list(APPEND NESTED "${outer}")
+endforeach()
+foreach(set_in_body 1 2)
+  set(set_in_body changed)
+endforeach()
+set(unset_in_body before)
+foreach(unset_in_body 1 2)
+  unset(unset_in_body)
+endforeach()
+"""
+    )
+
+    for name in ("was_set", "broken", "in_range", "x", "p_1", "unset_in_body"):
+        assert ctx.variables[name] == "before", name
+    for name in ("was_not_set", "y", "p_0", "outer", "set_in_body"):
+        assert name not in ctx.variables, name
+    # The cache entry that the loop variable hid shows again.
+    assert ctx.variables["cached"] == "from_cache"
+    assert ctx.variables["NESTED"] == "1;2"
+
+
+def test_foreach_without_iterations_keeps_variables() -> None:
+    ctx = _run(
+        r"""
+set(EMPTY "")
+set(was_set before)
+foreach(was_set IN LISTS EMPTY)
+endforeach()
+foreach(was_not_set IN LISTS EMPTY)
+endforeach()
+"""
+    )
+
+    assert ctx.variables["was_set"] == "before"
+    assert "was_not_set" not in ctx.variables
+
+
+def test_foreach_restores_loop_variables_on_return(tmp_path: Path) -> None:
+    """Also when return() leaves the loop, in a function or an included file."""
+    included = tmp_path / "included.cmake"
+    included.write_text(
+        "set(in_file before)\n"
+        "foreach(in_file 1 2 3)\n"
+        "  return()\n"
+        "endforeach()\n"
+    )
+    ctx = _run(
+        r"""
+function(in_function)
+  foreach(inherited 1 2)
+  endforeach()
+  set(INHERITED "${inherited}" PARENT_SCOPE)
+  foreach(local 1 2)
+  endforeach()
+  if(NOT DEFINED local)
+    set(LOCAL_NOT_DEFINED TRUE PARENT_SCOPE)
+  endif()
+  foreach(inherited 1 2)
+    return()
+  endforeach()
+endfunction()
+set(inherited before)
+in_function()
+include("@INCLUDED@")
+""".replace("@INCLUDED@", included.as_posix())
+    )
+
+    assert ctx.variables["INHERITED"] == "before"
+    assert ctx.variables["LOCAL_NOT_DEFINED"] == "TRUE"
+    assert ctx.variables["inherited"] == "before"
+    assert ctx.variables["in_file"] == "before"
