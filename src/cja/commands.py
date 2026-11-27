@@ -334,6 +334,23 @@ def check_target_command(
     return True
 
 
+def check_lone_dash_d(
+    ctx: BuildContext, cmd: Command, definitions: list[str], strict: bool
+) -> None:
+    """Report a compile definition that's only -D, without a name.
+
+    CMake ignores it or passes it to the compiler like that. Here it's an
+    error in strict mode, and otherwise a warning about what's ignored.
+    """
+    if "-D" not in definitions:
+        return
+    message = f'{cmd.name} given "-D" without a definition'
+    if strict:
+        ctx.print_error(message, cmd.line)
+        sys.exit(1)
+    ctx.print_warning(message, cmd.line)
+
+
 def handle_include_directories(
     ctx: BuildContext,
     cmd: Command,
@@ -729,10 +746,24 @@ def handle_target_compile_definitions(
                     for d in part.split()
                     if d
                 ]
+                check_lone_dash_d(ctx, cmd, definitions, strict)
+                # Like in CMake, a leading -D is removed, and what's empty
+                # then is ignored.
+                if any(d.startswith("-D") for d in definitions):
+                    if strict:
+                        ctx.print_warning(
+                            f'{cmd.name}: "{arg}" has a leading -D, which is removed',
+                            cmd.line,
+                        )
+                    definitions = [
+                        d for d in (d.removeprefix("-D") for d in definitions) if d
+                    ]
                 if visibility != "INTERFACE":
                     target_defs.extend(definitions)
                 if visibility != "PRIVATE":
-                    public_defs.extend([arg] if interface is None else definitions)
+                    public_defs.extend(
+                        [arg.removeprefix("-D")] if interface is None else definitions
+                    )
         # Add definitions to library or executable
         lib = ctx.get_library(target_name)
         if lib:

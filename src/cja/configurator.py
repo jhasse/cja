@@ -36,6 +36,7 @@ from .build_context import (
 )
 from .commands import (
     alias_rejected,
+    check_lone_dash_d,
     check_target_command,
     handle_add_executable,
     handle_add_library,
@@ -2592,6 +2593,9 @@ int main() {{
 
             case "add_compile_definitions":
                 # Directory-scoped compile definitions (inherit to subdirs, not parents).
+                check_lone_dash_d(
+                    ctx, cmd, [d for arg in args for d in arg.split(";")], strict
+                )
                 for arg in args:
                     ctx.compile_definitions.append(arg)
                     try:

@@ -834,10 +834,15 @@ def _compile_option_flags(ctx: BuildContext, option: str, target_name: str) -> l
 def _compile_definition_flags(
     ctx: BuildContext, definition: str, target_name: str
 ) -> list[str]:
-    """The -D flags for a compile definition that a target is built with."""
+    """The -D flags for a compile definition that a target is built with.
+
+    Like in CMake, a leading -D of the definition is removed. What's empty
+    then is ignored.
+    """
     return [
-        _format_compile_definition_flag(d)
+        _format_compile_definition_flag(name)
         for d in _evaluate_list_for_target(ctx, definition, target_name)
+        if (name := d.removeprefix("-D"))
     ]
 
 
