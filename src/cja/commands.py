@@ -295,10 +295,11 @@ def _default_target_properties(ctx: BuildContext) -> dict[str, str]:
 def alias_rejected(
     ctx: BuildContext, cmd: Command, name: str, strict: bool, message: str = ""
 ) -> bool:
-    """Whether a command that modifies a target was given an alias instead.
+    """Whether a command that modifies or installs a target was given an
+    alias instead.
 
     Like in CMake, that's an error. Without strict mode it's a warning, and
-    the target that the alias stands for is left as it is.
+    the command leaves out the target that the alias stands for.
     """
     if ctx.aliased_target(name) is None:
         return False

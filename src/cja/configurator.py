@@ -3090,7 +3090,16 @@ int main() {{
                         token = args[i]
                         if token in install_target_keywords:
                             break
-                        targets.append(token)
+                        # Like in CMake, only the target itself is installed.
+                        if not alias_rejected(
+                            ctx,
+                            cmd,
+                            token,
+                            strict,
+                            f'install TARGETS given target "{token}" which is an'
+                            " alias.",
+                        ):
+                            targets.append(token)
                         i += 1
 
                     # Collect per-section destinations; skip INCLUDES DESTINATION

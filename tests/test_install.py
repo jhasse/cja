@@ -3,6 +3,8 @@
 import platform
 from pathlib import Path
 
+import pytest
+
 from cja.generator import BuildContext, configure, generate_ninja, process_commands
 from cja.parser import Command
 
@@ -135,3 +137,33 @@ def test_install_targets_ignores_file_set_names(tmp_path: Path) -> None:
     # Only one install edge should be emitted for libfmt (FILE_SET "fmt" must not be treated as a target).
     # ARCHIVE DESTINATION takes precedence over FILE_SET DESTINATION for static libraries.
     assert ninja_content.count(f"build lib/libfmt{LIB_EXT}: install_file") == 1
+
+
+@pytest.mark.parametrize("alias", ["Demo::lib", "Demo::tool", "Demo::imported"])
+def test_install_targets_rejects_alias(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], alias: str
+) -> None:
+    """Like CMake, installing an alias is an error.
+
+    Without strict mode, the other targets are still installed.
+    """
+    commands = [
+        Command("add_library", ["lib", "STATIC", "a.c"], line=1),
+        Command("add_library", ["Demo::lib", "ALIAS", "lib"], line=1),
+        Command("add_executable", ["tool", "a.c"], line=1),
+        Command("add_executable", ["Demo::tool", "ALIAS", "tool"], line=1),
+        Command("add_executable", ["imported", "IMPORTED"], line=1),
+        Command("add_executable", ["Demo::imported", "ALIAS", "imported"], line=1),
+        Command("install", ["TARGETS", "tool", alias, "lib", "DESTINATION", "x"], line=2),
+    ]
+    message = f'install TARGETS given target "{alias}" which is an alias.'
+
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    process_commands(commands, ctx)
+    assert f"CMakeLists.txt:2: warning: {message}\n" in capsys.readouterr().err
+    assert [install.targets for install in ctx.install_targets] == [["tool", "lib"]]
+
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    with pytest.raises(SystemExit):
+        process_commands(commands, ctx, strict=True)
+    assert f"CMakeLists.txt:2: error: {message}\n" in capsys.readouterr().err
