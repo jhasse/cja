@@ -1,5 +1,6 @@
 """Tests for CMAKE_C_FLAGS and CMAKE_CXX_FLAGS."""
 
+import platform
 from pathlib import Path
 
 from cja.generator import configure
@@ -106,6 +107,32 @@ def test_cmake_exe_linker_flags(tmp_path: Path) -> None:
     content = ninja_file.read_text()
 
     assert "-fuse-ld=lld" in content
+
+
+def test_dollar_sign_in_linker_flags(tmp_path: Path) -> None:
+    """Like in CMake, a "$" of the linker flags isn't one of Ninja's, so that
+    the linker gets e.g. $ORIGIN. The flags of LINK_FLAGS are also escaped for
+    the shell, as they're divided like by one."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    (source_dir / "CMakeLists.txt").write_text(
+        "project(test_linker_flags_dollar C)\n"
+        "set(CMAKE_EXE_LINKER_FLAGS \"-Wl,-rpath,'\\$ORIGIN/exe'\")\n"
+        "add_executable(main main.c)\n"
+        "set_target_properties(main PROPERTIES\n"
+        "  LINK_FLAGS \"-Wl,-rpath,'\\$ORIGIN/prop' '-Wl,-rpath,/with space'\")\n"
+    )
+    (source_dir / "main.c").write_text("int main() { return 0; }")
+
+    configure(source_dir, "build")
+
+    content = (source_dir / "build.ninja").read_text()
+    assert "ldflags = -Wl,-rpath,'$$ORIGIN/exe'\n" in content
+    if platform.system() == "Windows":
+        expected = '-Wl,-rpath,$$ORIGIN/prop "-Wl,-rpath,/with space"'
+    else:
+        expected = r"-Wl,-rpath,\$$ORIGIN/prop -Wl,-rpath,/with\ space"
+    assert f" {expected}" in content
 
 
 def test_cmake_linker_flags_append(tmp_path: Path) -> None:

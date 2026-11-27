@@ -1416,7 +1416,9 @@ def generate_ninja(
             ipo_link_flags,
         ]
         linker_flags = " ".join(p for p in linker_flags_parts if p).strip()
-        n.variable("ldflags", linker_flags)
+        # Like in CMake, a "$" of the linker flags isn't one of Ninja's, e.g.
+        # the one of $ORIGIN.
+        n.variable("ldflags", linker_flags.replace("$", "$$"))
 
         n.rule(
             "cc",
@@ -2089,7 +2091,11 @@ def generate_ninja(
                     ctx, target.name, target.link_options, expanded_link_libraries
                 )
             )
-            link_flags.extend(split_flags(target.properties.get("LINK_FLAGS", "")))
+            # Divided like by a shell, so each one is escaped for it again.
+            link_flags.extend(
+                _escape_flag(flag)
+                for flag in split_flags(target.properties.get("LINK_FLAGS", ""))
+            )
             for lib_name in expanded_link_libraries:
                 linked_lib = ctx.get_library(lib_name)
                 if linked_lib and linked_lib.lib_type == "INTERFACE":
