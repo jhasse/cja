@@ -4061,6 +4061,14 @@ int main() {{
                     continue
                 elif name in ctx.macros:
                     macro_def = ctx.macros[name]
+                    if len(args) < len(macro_def.params):
+                        # Like in CMake
+                        ctx.print_error(
+                            "Macro invoked with incorrect arguments for macro"
+                            f" named: {macro_def.name}",
+                            cmd.line,
+                        )
+                        sys.exit(1)
                     # Macros don't create a new scope - they operate in the caller's scope
                     saved_current_source_dir = ctx.current_source_dir
                     saved_current_list_file = ctx.current_list_file

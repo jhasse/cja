@@ -10,7 +10,7 @@ from typing import Any
 
 from termcolor import colored
 
-from .parser import LITERAL_BACKSLASH_MARKER, Command
+from .parser import INVALID_ESCAPE_MARKER, LITERAL_BACKSLASH_MARKER, Command
 from .syntax import FetchContentInfo, FunctionDef, MacroDef, SourceFileProperties, Test
 from .targets import (
     TARGET_PROPERTY_FIELDS,
@@ -657,6 +657,12 @@ class BuildContext:
 
         With escape_quotes, quotes in the substituted values are escaped.
         """
+        if INVALID_ESCAPE_MARKER in value:
+            # In the value of a macro's argument, see macro_commands(). Like
+            # in CMake, that's an error.
+            escaped = value.partition(INVALID_ESCAPE_MARKER)[2][:1]
+            self.print_error(f"Invalid character escape '\\{escaped}'.", line)
+            sys.exit(1)
         escaped_var_marker = "__CJA_ESC_VAR_OPEN__"
         escaped_env_marker = "__CJA_ESC_ENV_OPEN__"
         escaped_cache_marker = "__CJA_ESC_CACHE_OPEN__"

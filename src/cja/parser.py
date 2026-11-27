@@ -7,6 +7,10 @@ from pathlib import Path
 # quoted argument, so that expand_variables() doesn't take it for "\${", which
 # keeps "${" literal. expand_variables() turns it back into a backslash.
 LITERAL_BACKSLASH_MARKER = "__CJA_LITERAL_BACKSLASH__"
+# Stands in for the backslash of an invalid escape sequence like "\d" in the
+# value of a macro's argument. Like in CMake, that's only an error once the
+# value is evaluated, which expand_variables() does.
+INVALID_ESCAPE_MARKER = "__CJA_INVALID_ESCAPE__"
 
 
 @dataclass
@@ -20,8 +24,13 @@ class Command:
     is_bracket: list[bool] = field(default_factory=list)
 
 
-def unescape_quoted_argument(text: str) -> str:
-    """Evaluate the escape sequences of a quoted argument's text."""
+def unescape_quoted_argument(text: str, mark_invalid: bool = False) -> str:
+    """Evaluate the escape sequences of a quoted argument's text.
+
+    A backslash before a letter or digit is no escape sequence, apart from
+    "\\n", "\\t" and "\\r". It's left out, or with mark_invalid replaced by
+    INVALID_ESCAPE_MARKER.
+    """
     val = ""
     j = 0
     while j < len(text):
@@ -46,6 +55,8 @@ def unescape_quoted_argument(text: str) -> str:
                 # "\\${VAR}" is a backslash followed by VAR's value
                 val += LITERAL_BACKSLASH_MARKER
             else:
+                if mark_invalid and text[j + 1].isascii() and text[j + 1].isalnum():
+                    val += INVALID_ESCAPE_MARKER
                 val += text[j + 1]
             j += 2
         else:

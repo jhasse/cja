@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from cja.generator import BuildContext, process_commands
 from cja.parser import Command, parse
 
@@ -204,21 +206,6 @@ def test_macro_multiple_parameters() -> None:
     assert ctx.variables["RESULT"] == "6"
 
 
-def test_macro_empty_parameters() -> None:
-    """Test macro called with fewer arguments than parameters."""
-    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
-    commands = [
-        Command(name="macro", args=["my_macro", "arg1", "arg2"], line=1),
-        Command(name="set", args=["ARG1_VAL", "${arg1}"], line=2),
-        Command(name="set", args=["ARG2_VAL", "${arg2}"], line=3),
-        Command(name="endmacro", args=[], line=4),
-        Command(name="my_macro", args=["only_one"], line=5),
-    ]
-    process_commands(commands, ctx)
-    assert ctx.variables["ARG1_VAL"] == "only_one"
-    assert "ARG2_VAL" not in ctx.variables
-
-
 def test_macro_leaves_special_vars() -> None:
     """Test that the special variables of the caller are as before after a macro call."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
@@ -383,3 +370,49 @@ my_macro("")
     )
     assert ctx.variables["UNQUOTED"] == "a;b"
     assert ctx.variables["QUOTED"] == "a;;b"
+
+
+def test_macro_too_few_arguments(capsys: pytest.CaptureFixture[str]) -> None:
+    """Like in CMake, the macro isn't called then, which is an error."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    code = """
+macro(MyMacro a b)
+  set(RESULT "[${a}] [${b}]")
+endmacro()
+mymacro(only)
+"""
+    with pytest.raises(SystemExit) as exc_info:
+        process_commands(parse(code), ctx)
+    assert exc_info.value.code == 1
+    assert capsys.readouterr().err == (
+        "CMakeLists.txt:5: error: Macro invoked with incorrect arguments for macro"
+        " named: mymacro\n"
+    )
+    assert "RESULT" not in ctx.variables
+
+
+def test_macro_invalid_escape_in_argument(capsys: pytest.CaptureFixture[str]) -> None:
+    """Like in CMake, a backslash in the value of an argument that starts no
+    escape sequence is an error, once a command with it is evaluated."""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    code = r"""
+macro(not_evaluated arg)
+  if(FALSE)
+    set(NEVER "${arg}")
+  endif()
+endmacro()
+macro(evaluated arg)
+  set(RESULT "${arg}")
+endmacro()
+not_evaluated("C:\\dir")
+set(REACHED TRUE)
+evaluated("C:\\dir")
+"""
+    with pytest.raises(SystemExit) as exc_info:
+        process_commands(parse(code), ctx)
+    assert exc_info.value.code == 1
+    assert capsys.readouterr().err == (
+        "CMakeLists.txt:8: error: Invalid character escape '\\d'.\n"
+    )
+    assert ctx.variables["REACHED"] == "TRUE"
+    assert "RESULT" not in ctx.variables
