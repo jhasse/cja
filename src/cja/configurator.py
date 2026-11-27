@@ -77,6 +77,7 @@ from .commands import (
     handle_unset,
     init_compiler_flag_cache_vars,
     init_project_cache_vars,
+    macro_commands,
     source_file_key,
     source_file_scopes,
 )
@@ -4061,91 +4062,19 @@ int main() {{
                 elif name in ctx.macros:
                     macro_def = ctx.macros[name]
                     # Macros don't create a new scope - they operate in the caller's scope
-                    # Save the special variables so we can restore them after
                     saved_current_source_dir = ctx.current_source_dir
                     saved_current_list_file = ctx.current_list_file
                     saved_parent_directory = ctx.parent_directory
                     saved_binary_dir = ctx.variables.get(
                         "CMAKE_CURRENT_BINARY_DIR", to_posix_path(ctx.build_dir)
                     )
-                    saved_argc = ctx.variables.get("ARGC", "")
-                    saved_argv = ctx.variables.get("ARGV", "")
-                    saved_argn = ctx.variables.get("ARGN", "")
-                    saved_argv_vars = {}
-                    saved_params = {}
-
-                    # Save existing ARGVn variables
-                    for idx in range(100):  # Reasonable upper limit
-                        key = f"ARGV{idx}"
-                        if key in ctx.variables:
-                            saved_argv_vars[key] = ctx.variables[key]
-                        else:
-                            break
-
-                    # Save existing parameter values
-                    for param in macro_def.params:
-                        if param in ctx.variables:
-                            saved_params[param] = ctx.variables[param]
-
-                    # Set up macro arguments
-                    # ARGC = number of arguments
-                    ctx.variables["ARGC"] = str(len(args))
-                    # ARGV = all arguments as semicolon-separated list
-                    ctx.variables["ARGV"] = ";".join(args)
-                    # ARGVn = individual arguments
-                    for idx, arg in enumerate(args):
-                        ctx.variables[f"ARGV{idx}"] = arg
-                    # Named parameters
-                    for idx, param in enumerate(macro_def.params):
-                        if idx < len(args):
-                            ctx.variables[param] = args[idx]
-                        else:
-                            ctx.variables[param] = ""
-                    # ARGN = arguments after named parameters
-                    extra_args = args[len(macro_def.params) :]
-                    ctx.variables["ARGN"] = ";".join(extra_args)
 
                     def on_exit(
                         saved_current_source_dir: Path = saved_current_source_dir,
                         saved_current_list_file: Path = saved_current_list_file,
                         saved_parent_directory: str = saved_parent_directory,
                         saved_binary_dir: str = saved_binary_dir,
-                        saved_argc: str = saved_argc,
-                        saved_argv: str = saved_argv,
-                        saved_argn: str = saved_argn,
-                        saved_argv_vars: dict[str, str] = saved_argv_vars,
-                        saved_params: dict[str, str] = saved_params,
-                        n_args: int = len(args),
-                        macro_params: tuple[str, ...] = tuple(macro_def.params),
                     ) -> None:
-                        if saved_argc:
-                            ctx.variables["ARGC"] = saved_argc
-                        else:
-                            ctx.variables.pop("ARGC", None)
-
-                        if saved_argv:
-                            ctx.variables["ARGV"] = saved_argv
-                        else:
-                            ctx.variables.pop("ARGV", None)
-
-                        if saved_argn:
-                            ctx.variables["ARGN"] = saved_argn
-                        else:
-                            ctx.variables.pop("ARGN", None)
-
-                        for idx in range(n_args):
-                            key = f"ARGV{idx}"
-                            if key in saved_argv_vars:
-                                ctx.variables[key] = saved_argv_vars[key]
-                            else:
-                                ctx.variables.pop(key, None)
-
-                        for param in macro_params:
-                            if param in saved_params:
-                                ctx.variables[param] = saved_params[param]
-                            else:
-                                ctx.variables.pop(param, None)
-
                         ctx.current_source_dir = saved_current_source_dir
                         ctx.current_list_file = saved_current_list_file
                         ctx.parent_directory = saved_parent_directory
@@ -4158,7 +4087,9 @@ int main() {{
                     # but diagnostics point into the file defining the macro.
                     ctx.current_list_file = macro_def.defining_file
                     frame.pc += 1
-                    stack.append(Frame(commands=macro_def.body, on_exit=on_exit))
+                    stack.append(
+                        Frame(commands=macro_commands(macro_def, args), on_exit=on_exit)
+                    )
                     continue
                 elif strict:
                     ctx.print_error(f"unsupported command: {cmd.name}()", cmd.line)

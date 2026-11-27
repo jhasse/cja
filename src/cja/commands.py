@@ -25,7 +25,7 @@ from .build_context import (
     find_matching_endfunction,
     find_matching_endmacro,
 )
-from .parser import LITERAL_BACKSLASH_MARKER, Command
+from .parser import LITERAL_BACKSLASH_MARKER, Command, unescape_quoted_argument
 from .syntax import (
     FunctionDef,
     MacroDef,
@@ -3005,6 +3005,56 @@ def handle_macro(
 
     # Skip to after endmacro
     return endmacro_idx + 1
+
+
+def macro_commands(macro: MacroDef, args: list[str]) -> list[Command]:
+    """The commands of a macro's body for a call with these arguments.
+
+    Like in CMake, the parameters of a macro aren't variables: the references
+    to them and to ARGC, ARGN, ARGV and ARGV<n> are replaced as text in the
+    arguments of the commands, in that order. Those are evaluated like any
+    others afterwards, so the escape sequences and variable references that
+    the value of an argument has are evaluated (again).
+    """
+    # The escape sequences of text in the body were evaluated when parsing
+    # it, so the ones of the values are when replacing.
+    values = [unescape_quoted_argument(arg) for arg in args]
+    # A missing argument is empty, whereas CMake doesn't call the macro then.
+    values += [""] * (len(macro.params) - len(values))
+    replacements = [
+        *((f"${{{param}}}", value) for param, value in zip(macro.params, values)),
+        ("${ARGC}", str(len(args))),
+        ("${ARGN}", unescape_quoted_argument(";".join(args[len(macro.params) :]))),
+        ("${ARGV}", unescape_quoted_argument(";".join(args))),
+    ]
+    argv = [(f"${{ARGV{index}}}", values[index]) for index in range(len(args))]
+
+    def substitute(text: str) -> str:
+        for reference, value in replacements:
+            text = text.replace(reference, value)
+        if "${ARGV" in text:
+            for reference, value in argv:
+                text = text.replace(reference, value)
+        return text
+
+    commands: list[Command] = []
+    for cmd in macro.body:
+        if not any("${" in arg for arg in cmd.args):
+            commands.append(cmd)
+            continue
+        substituted = Command(cmd.name, [], line=cmd.line)
+        for index, arg in enumerate(cmd.args):
+            quoted = index < len(cmd.is_quoted) and cmd.is_quoted[index]
+            bracket = index < len(cmd.is_bracket) and cmd.is_bracket[index]
+            text = arg if bracket else substitute(arg)
+            if arg and not text and not quoted:
+                # An unquoted argument that there's nothing left of is dropped.
+                continue
+            substituted.args.append(text)
+            substituted.is_quoted.append(quoted)
+            substituted.is_bracket.append(bracket)
+        commands.append(substituted)
+    return commands
 
 
 # Commands that cmake_language(DEFER CALL) can't call

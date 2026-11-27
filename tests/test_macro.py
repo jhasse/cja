@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from cja.generator import BuildContext, process_commands
-from cja.parser import Command
+from cja.parser import Command, parse
 
 
 def test_macro_basic() -> None:
@@ -219,8 +219,8 @@ def test_macro_empty_parameters() -> None:
     assert "ARG2_VAL" not in ctx.variables
 
 
-def test_macro_restores_special_vars() -> None:
-    """Test that special variables are restored after macro call."""
+def test_macro_leaves_special_vars() -> None:
+    """Test that the special variables of the caller are as before after a macro call."""
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
     # Set up initial ARGC/ARGV
     ctx.variables["ARGC"] = "99"
@@ -238,5 +238,148 @@ def test_macro_restores_special_vars() -> None:
 
     # Inside macro, ARGC should be 2
     assert ctx.variables["INSIDE_ARGC"] == "2"
-    # After macro, ARGC should be restored to original
+    # After macro, ARGC should still be the original
     assert ctx.variables["OUTSIDE_ARGC"] == "99"
+
+
+def _run(code: str) -> BuildContext:
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    process_commands(parse(code), ctx)
+    return ctx
+
+
+def test_macro_parameters_are_not_variables() -> None:
+    """Like in CMake, the parameters are replaced as text and aren't defined."""
+    ctx = _run(
+        """
+function(callee)
+  set(CALLEE_SEES "[${arg}]" PARENT_SCOPE)
+endfunction()
+macro(my_macro arg)
+  if(DEFINED arg OR DEFINED ARGN OR DEFINED ARGV OR DEFINED ARGC OR DEFINED ARGV0)
+    set(IS_DEFINED TRUE)
+  endif()
+  if(arg)
+    set(NAME_IS_TRUE TRUE)
+  endif()
+  if(${arg})
+    set(REFERENCE_IS_TRUE TRUE)
+  endif()
+  list(LENGTH ARGN ARGN_LENGTH)
+  callee()
+endmacro()
+my_macro(ON more)
+"""
+    )
+    assert "IS_DEFINED" not in ctx.variables
+    assert "NAME_IS_TRUE" not in ctx.variables
+    assert ctx.variables["REFERENCE_IS_TRUE"] == "TRUE"
+    assert ctx.variables["ARGN_LENGTH"] == "0"
+    assert ctx.variables["CALLEE_SEES"] == "[]"
+
+
+def test_macro_sets_variable_named_like_parameter() -> None:
+    """Such a variable is neither what a reference to the parameter stands
+    for, nor is it gone after the call."""
+    ctx = _run(
+        """
+set(other outer)
+macro(my_macro arg other)
+  set(arg changed)
+  set(INSIDE "${arg} ${other}")
+endmacro()
+my_macro(original inner)
+"""
+    )
+    assert ctx.variables["INSIDE"] == "original inner"
+    assert ctx.variables["arg"] == "changed"
+    assert ctx.variables["other"] == "outer"
+
+
+def test_macro_evaluates_argument_values() -> None:
+    """The variable references and escape sequences that the value of an
+    argument has are evaluated in the body, unlike in a function."""
+    ctx = _run(
+        r"""
+set(y value)
+function(my_function arg)
+  set(IN_FUNCTION "${arg}" PARENT_SCOPE)
+endfunction()
+macro(my_macro arg)
+  set(QUOTED "${arg}")
+  set(UNQUOTED ${arg})
+  set(BRACKET [[${arg}]])
+endmacro()
+my_function("\${y} a\\\\b \\\${y}")
+my_macro("\${y} a\\\\b \\\${y}")
+"""
+    )
+    assert ctx.variables["IN_FUNCTION"] == r"${y} a\\b \${y}"
+    assert ctx.variables["QUOTED"] == r"value a\b ${y}"
+    assert ctx.variables["UNQUOTED"] == ctx.variables["QUOTED"]
+    assert ctx.variables["BRACKET"] == "${arg}"
+
+
+def test_macro_in_function_keeps_function_arguments() -> None:
+    """ARGN and so on are the variables of the function, while references to
+    them are replaced with the arguments of the macro where it has some."""
+    ctx = _run(
+        """
+macro(my_macro)
+  set(items)
+  foreach(item IN LISTS ARGN)
+    list(APPEND items "${item}")
+  endforeach()
+  set(RESULT "${ARGC}|${ARGN}|${ARGV0}|${ARGV2}|${items}" PARENT_SCOPE)
+endmacro()
+function(my_function)
+  my_macro(x y)
+endfunction()
+my_function(a b c)
+"""
+    )
+    assert ctx.variables["RESULT"] == "2|x;y|x|c|a;b;c"
+
+
+def test_macro_replaces_references_in_nested_definition() -> None:
+    """A function defined in a macro has the arguments of that call in its body."""
+    ctx = _run(
+        """
+macro(define arg)
+  function(defined)
+    set(RESULT "${arg}|${ARGN}" PARENT_SCOPE)
+  endfunction()
+endmacro()
+define(captured more)
+defined(called)
+"""
+    )
+    assert ctx.variables["RESULT"] == "captured|more"
+
+
+def test_macro_replaces_in_order() -> None:
+    """Like in CMake, what a parameter is replaced with can have a reference
+    to ARGN and so on, which are replaced afterwards."""
+    ctx = _run(
+        r"""
+macro(my_macro arg)
+  set(RESULT "${arg}")
+endmacro()
+my_macro("\${ARGN}|\${ARGC}" tail)
+"""
+    )
+    assert ctx.variables["RESULT"] == "tail|2"
+
+
+def test_macro_drops_empty_unquoted_argument() -> None:
+    ctx = _run(
+        """
+macro(my_macro arg)
+  set(UNQUOTED a ${arg} b)
+  set(QUOTED a "${arg}" b)
+endmacro()
+my_macro("")
+"""
+    )
+    assert ctx.variables["UNQUOTED"] == "a;b"
+    assert ctx.variables["QUOTED"] == "a;;b"
