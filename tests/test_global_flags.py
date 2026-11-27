@@ -109,6 +109,46 @@ def test_cmake_exe_linker_flags(tmp_path: Path) -> None:
     assert "-fuse-ld=lld" in content
 
 
+def test_linker_flags_of_shared_libraries_and_modules(tmp_path: Path) -> None:
+    """Like in CMake, executables are linked with CMAKE_EXE_LINKER_FLAGS,
+    shared libraries with CMAKE_SHARED_LINKER_FLAGS and modules with
+    CMAKE_MODULE_LINKER_FLAGS."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    (source_dir / "CMakeLists.txt").write_text(
+        "project(test_linker_flags C)\n"
+        'set(CMAKE_EXE_LINKER_FLAGS "-Wl,--exe")\n'
+        'set(CMAKE_SHARED_LINKER_FLAGS "-Wl,--shared")\n'
+        'set(CMAKE_MODULE_LINKER_FLAGS "-Wl,--module")\n'
+        "add_executable(main main.c)\n"
+        "add_library(shared SHARED lib.c)\n"
+        "add_library(module MODULE lib.c)\n"
+    )
+    (source_dir / "main.c").write_text("int main() { return 0; }")
+    (source_dir / "lib.c").write_text("int lib() { return 0; }")
+
+    configure(source_dir, "build")
+
+    lines = (source_dir / "build.ninja").read_text().splitlines()
+    assert "ldflags = -Wl,--exe" in lines
+    assert "shared_ldflags = -Wl,--shared" in lines
+    assert "module_ldflags = -Wl,--module" in lines
+
+    def following(start: str) -> str:
+        """The line after the one that starts like that."""
+        return lines[next(i for i, line in enumerate(lines) if line.startswith(start)) + 1]
+
+    assert following("rule link").endswith(" $ldflags $libs")
+    assert following("rule solink").endswith(" $shared_ldflags $libs")
+    shared = next(line for line in lines if line.startswith("build ") and ": solink " in line)
+    assert "module" not in shared
+    assert not following(shared).startswith("  shared_ldflags")
+    module = next(
+        line for line in lines if line.startswith("build ") and "module" in line and ": solink " in line
+    )
+    assert "  shared_ldflags = $module_ldflags" in lines[lines.index(module) + 1 :][:3]
+
+
 def test_dollar_sign_in_linker_flags(tmp_path: Path) -> None:
     """Like in CMake, a "$" of the linker flags isn't one of Ninja's, so that
     the linker gets e.g. $ORIGIN. The flags of LINK_FLAGS are also escaped for

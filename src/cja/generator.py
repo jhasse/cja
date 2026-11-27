@@ -1409,16 +1409,23 @@ def generate_ninja(
         if cxx_flags_config:
             cxx_flags = f"{cxx_flags} {cxx_flags_config}".strip()
         cxx_flags = _normalize_windows_clang_cxx_std(cxx_flags, windows_clangxx)
-        linker_flags_parts = [
-            build_type_link_flags,
-            ctx.variables.get("CMAKE_EXE_LINKER_FLAGS", ""),
-            ctx.variables.get("CMAKE_LINKER_FLAGS", ""),
-            ipo_link_flags,
-        ]
-        linker_flags = " ".join(p for p in linker_flags_parts if p).strip()
-        # Like in CMake, a "$" of the linker flags isn't one of Ninja's, e.g.
-        # the one of $ORIGIN.
-        n.variable("ldflags", linker_flags.replace("$", "$$"))
+        # Like in CMake, executables, shared libraries and modules each have
+        # linker flags of their own.
+        for ninja_variable, cmake_variable in (
+            ("ldflags", "CMAKE_EXE_LINKER_FLAGS"),
+            ("shared_ldflags", "CMAKE_SHARED_LINKER_FLAGS"),
+            ("module_ldflags", "CMAKE_MODULE_LINKER_FLAGS"),
+        ):
+            linker_flags_parts = [
+                build_type_link_flags,
+                ctx.variables.get(cmake_variable, ""),
+                ctx.variables.get("CMAKE_LINKER_FLAGS", ""),
+                ipo_link_flags,
+            ]
+            linker_flags = " ".join(p for p in linker_flags_parts if p).strip()
+            # Like in CMake, a "$" of the linker flags isn't one of Ninja's,
+            # e.g. the one of $ORIGIN.
+            n.variable(ninja_variable, linker_flags.replace("$", "$$"))
 
         n.rule(
             "cc",
@@ -1521,14 +1528,14 @@ def generate_ninja(
         shared_link_flag = "-dynamiclib" if platform.system() == "Darwin" else "-shared"
         n.rule(
             "solink",
-            command=f"$cc -fdiagnostics-color {shared_link_flag} $in -o $out $ldflags $libs",
+            command=f"$cc -fdiagnostics-color {shared_link_flag} $in -o $out $shared_ldflags $libs",
             description="\x1b[32;1mLinking C shared library $out\x1b[0m",
         )
         n.newline()
 
         n.rule(
             "solink_cxx",
-            command=f"$cxx -fdiagnostics-color {shared_link_flag} $in -o $out $ldflags $libs",
+            command=f"$cxx -fdiagnostics-color {shared_link_flag} $in -o $out $shared_ldflags $libs",
             description="\x1b[32;1mLinking C++ shared library $out\x1b[0m",
         )
         n.newline()
@@ -2801,12 +2808,18 @@ def generate_ninja(
                 lib_link_flags.append(f"-Wl,-install_name,@rpath/{file_name}")
             elif platform.system() != "Windows":
                 lib_link_flags.append(f"-Wl,-soname,{file_name}")
+            lib_link_variables: dict[str, str | list[str] | None] = {}
+            if lib_link_flags:
+                lib_link_variables["libs"] = " ".join(lib_link_flags)
+            if lib.lib_type == "MODULE":
+                # The rule is the one of shared libraries.
+                lib_link_variables["shared_ldflags"] = "$module_ldflags"
             n.build(
                 lib_name,
                 link_rule,
                 [*objects, *lib_link_inputs],
                 order_only=order_only or None,
-                variables={"libs": " ".join(lib_link_flags)} if lib_link_flags else None,
+                variables=lib_link_variables or None,
             )
             n.newline()
 
