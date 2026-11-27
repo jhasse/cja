@@ -7,8 +7,8 @@ from pathlib import Path
 # quoted argument, so that expand_variables() doesn't take it for "\${", which
 # keeps "${" literal. expand_variables() turns it back into a backslash.
 LITERAL_BACKSLASH_MARKER = "__CJA_LITERAL_BACKSLASH__"
-# Stands in for the backslash of an invalid escape sequence like "\d" in a
-# quoted argument. Like in CMake, that's only an error once the argument is
+# Stands in for the backslash of an invalid escape sequence like "\d" in an
+# argument. Like in CMake, that's only an error once the argument is
 # evaluated, which expand_variables() does.
 INVALID_ESCAPE_MARKER = "__CJA_INVALID_ESCAPE__"
 
@@ -24,8 +24,8 @@ class Command:
     is_bracket: list[bool] = field(default_factory=list)
 
 
-def unescape_quoted_argument(text: str) -> str:
-    """Evaluate the escape sequences of a quoted argument's text.
+def unescape_argument(text: str) -> str:
+    """Evaluate the escape sequences of a quoted or unquoted argument's text.
 
     A backslash before a letter or digit is no escape sequence, apart from
     "\\n", "\\t" and "\\r": it's replaced by INVALID_ESCAPE_MARKER.
@@ -149,7 +149,7 @@ def tokenize(content: str) -> list[tuple[str, int, bool]]:
                     i += 1
             i += 1  # Skip closing quote
             raw_val = content[start:i]
-            val = unescape_quoted_argument(raw_val[1:-1])
+            val = unescape_argument(raw_val[1:-1])
             tokens.append(('"' + val + '"', line, False))
             continue
 
@@ -182,6 +182,11 @@ def tokenize(content: str) -> list[tuple[str, int, bool]]:
         start = i
         genex_depth = 0
         while i < len(content):
+            if content[i] == "\\" and i + 1 < len(content) and content[i + 1] != "\n":
+                # An escaped character is part of the argument, also one that
+                # ends it otherwise.
+                i += 2
+                continue
             if content.startswith("$<", i):
                 genex_depth += 1
                 i += 2
@@ -247,6 +252,8 @@ def parse(content: str, filename: str = "CMakeLists.txt") -> list[Command]:
             if not token_bracket and arg.startswith('"') and arg.endswith('"'):
                 arg = arg[1:-1]
                 quoted = True
+            elif not token_bracket:
+                arg = unescape_argument(arg)
             args.append(arg)
             is_quoted.append(quoted)
             is_bracket.append(token_bracket)

@@ -25,7 +25,7 @@ from .build_context import (
     find_matching_endfunction,
     find_matching_endmacro,
 )
-from .parser import LITERAL_BACKSLASH_MARKER, Command, unescape_quoted_argument
+from .parser import LITERAL_BACKSLASH_MARKER, Command, unescape_argument
 from .syntax import (
     FunctionDef,
     MacroDef,
@@ -3018,12 +3018,12 @@ def macro_commands(macro: MacroDef, args: list[str]) -> list[Command]:
     """
     # The escape sequences of text in the body were evaluated when parsing
     # it, so the ones of the values are when replacing.
-    values = [unescape_quoted_argument(arg) for arg in args]
+    values = [unescape_argument(arg) for arg in args]
     replacements = [
         *((f"${{{param}}}", value) for param, value in zip(macro.params, values)),
         ("${ARGC}", str(len(args))),
-        ("${ARGN}", unescape_quoted_argument(";".join(args[len(macro.params) :]))),
-        ("${ARGV}", unescape_quoted_argument(";".join(args))),
+        ("${ARGN}", unescape_argument(";".join(args[len(macro.params) :]))),
+        ("${ARGV}", unescape_argument(";".join(args))),
     ]
     argv = [(f"${{ARGV{index}}}", values[index]) for index in range(len(args))]
 

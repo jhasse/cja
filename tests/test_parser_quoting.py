@@ -182,3 +182,56 @@ set(NOT_REACHED TRUE)
     assert ctx.variables["VALID"] == r"a\b a.b"
     assert ctx.variables["BRACKET"] == r"a\bc"
     assert "NOT_REACHED" not in ctx.variables
+
+
+def test_escape_sequences_in_unquoted_arguments() -> None:
+    """Like in CMake, they're evaluated as in quoted arguments, and an escaped
+    character is part of the argument, also one that ends it otherwise."""
+    content = r"""
+set(X x)
+set(BACKSLASH a\\b)
+set(IDENTITY a\.b\@c)
+set(SPACE a\ b c)
+set(PARENS a\(b\))
+set(HASH a\#b) # a comment
+set(QUOTES \"a\")
+set(ENCODED a\tb\nc)
+set(SEMICOLON a\;b c)
+set(REFERENCES a\${X}|a\\${X})
+if(a\ b STREQUAL "a b")
+  set(CONDITION TRUE)
+endif()
+"""
+    commands = parse(content)
+    assert commands[6].args == ["QUOTES", '"a"']
+    assert commands[6].is_quoted == [False, False]
+
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    process_commands(commands, ctx)
+    assert ctx.variables["BACKSLASH"] == r"a\b"
+    assert ctx.variables["IDENTITY"] == "a.b@c"
+    assert ctx.variables["SPACE"] == "a b;c"
+    assert ctx.variables["PARENS"] == "a(b)"
+    assert ctx.variables["HASH"] == "a#b"
+    assert ctx.variables["QUOTES"] == '"a"'
+    assert ctx.variables["ENCODED"] == "a\tb\nc"
+    assert ctx.variables["SEMICOLON"] == "a;b;c"
+    assert ctx.variables["REFERENCES"] == r"a${X}|a\x"
+    assert ctx.variables["CONDITION"] == "TRUE"
+
+
+def test_invalid_escape_in_unquoted_argument(capsys: pytest.CaptureFixture[str]) -> None:
+    """Like in a quoted one, that's an error once the argument is evaluated."""
+    content = r"""
+if(FALSE)
+  set(DEAD C:\Users)
+endif()
+set(INVALID C:\Users)
+"""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    with pytest.raises(SystemExit) as exc_info:
+        process_commands(parse(content), ctx)
+    assert exc_info.value.code == 1
+    assert capsys.readouterr().err == (
+        "CMakeLists.txt:5: error: Invalid character escape '\\U'.\n"
+    )

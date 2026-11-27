@@ -114,7 +114,7 @@ from .find_package import (
     unsupported_find_package_args,
 )
 from .frame import Frame
-from .parser import Command, parse, unescape_quoted_argument
+from .parser import Command, parse, unescape_argument
 from .syntax import (
     FetchContentInfo,
     SourceFileProperties,
@@ -1989,7 +1989,7 @@ def process_commands(
                     # These are macros in CMake, which pass the code on as
                     # "${SOURCE}", so its escapes and variables are evaluated again.
                     code = ctx.expand_variables(
-                        unescape_quoted_argument(code), strict, cmd.line
+                        unescape_argument(code), strict, cmd.line
                     )
                     language = cmd.name.split("_")[1].upper()
                     run = cmd.name.endswith("_runs")

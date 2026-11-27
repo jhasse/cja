@@ -1,9 +1,11 @@
 """Tests for target_compile_options command."""
 
+import platform
+import re
 from pathlib import Path
 
 from cja.generator import BuildContext, generate_ninja, process_commands
-from cja.parser import Command
+from cja.parser import Command, parse
 
 
 def test_target_compile_options_executable() -> None:
@@ -227,3 +229,41 @@ def test_windows_clang_upgrades_cxx11_in_target_compile_options(
     content = ninja_path.read_text()
     assert "-std=c++14" in content
     assert "-std=c++11" not in content
+
+
+def test_compile_options_and_definitions_are_escaped(tmp_path: Path) -> None:
+    """Like in CMake, each one is a single argument of the compiler with
+    whatever characters it has, e.g. the quotes of a string."""
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    commands = parse(
+        r"""
+add_executable(myapp main.c)
+target_compile_options(myapp PRIVATE -DOPTION=\"a\ b\" -Wall)
+target_compile_definitions(myapp PRIVATE UNQUOTED=\"\(a\)\" "QUOTED=\"a\\\\b\"")
+set_source_files_properties(main.c PROPERTIES COMPILE_OPTIONS -DSOURCE=\"c\")
+"""
+    )
+    process_commands(commands, ctx)
+
+    ninja_path = tmp_path / "build.ninja"
+    generate_ninja(ctx, ninja_path, "build")
+    # With unwrapped lines
+    flags = re.sub(r" *\$\n *", " ", ninja_path.read_text())
+    if platform.system() == "Windows":
+        expected = [
+            r'-DUNQUOTED=\"(a)\"',
+            r'-DQUOTED=\"a\\b\"',
+            r'"-DOPTION=\"a b\""',
+            "-Wall",
+            r'-DSOURCE=\"c\"',
+        ]
+    else:
+        expected = [
+            r"-DUNQUOTED=\"\(a\)\"",
+            r"-DQUOTED=\"a\\\\b\"",
+            r"-DOPTION=\"a\ b\"",
+            "-Wall",
+            r"-DSOURCE=\"c\"",
+        ]
+    for flag in expected:
+        assert f" {flag}" in flags

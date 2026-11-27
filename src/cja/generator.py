@@ -779,11 +779,22 @@ def _in_default_build(
     )
 
 
+def _escape_flag(flag: str) -> str:
+    """Escape a compile definition or option for the command line of a rule.
+
+    Like in CMake, it's a single argument with whatever characters it has,
+    e.g. the quotes of a string. Only a "$" stays as it is, for a Ninja
+    variable like $builddir.
+    """
+    if platform.system() == "Windows":
+        # Ninja starts the command without a shell there.
+        return subprocess.list2cmdline([flag])
+    return re.sub(r"[^\w@%+=:,./$-]", r"\\\g<0>", flag)
+
+
 def _format_compile_definition_flag(definition: str) -> str:
     """Format a compile definition as a compiler -D flag."""
-    normalized = strip_generator_expressions(definition)
-    escaped = re.sub(r'(?<!\\)"', r'\\"', normalized)
-    return f"-D{escaped}"
+    return _escape_flag(f"-D{strip_generator_expressions(definition)}")
 
 
 def _evaluate_for_target(
@@ -828,7 +839,9 @@ def _compile_option_flags(ctx: BuildContext, option: str, target_name: str) -> l
     left out here and added by _language_compile_flags().
     """
     evaluated = _evaluate_for_target(ctx, option, target_name)
-    return [flag for part in evaluated.split(";") if (flag := part.strip())]
+    return [
+        _escape_flag(flag) for part in evaluated.split(";") if (flag := part.strip())
+    ]
 
 
 def _compile_definition_flags(
@@ -2301,7 +2314,7 @@ def generate_ninja(
                     ctx, option, target_name, ctx.variables, language
                 )
                 for sub_opt in opt.split(";"):
-                    sub_opt = sub_opt.strip()
+                    sub_opt = _escape_flag(sub_opt.strip())
                     own_options.add(sub_opt)
                     if sub_opt and sub_opt not in flags:
                         flags.append(sub_opt)
@@ -2630,7 +2643,7 @@ def generate_ninja(
                             ctx, option, lib.name, ctx.variables, source_language
                         )
                         if opt:
-                            source_compile_flags.append(opt)
+                            source_compile_flags.append(_escape_flag(opt))
                     source_compile_flags.extend(split_flags(file_props.compile_flags))
                     for d in file_props.object_depends:
                         source_depends.append(_resolve_source(d, lib)[0])
@@ -2971,7 +2984,7 @@ def generate_ninja(
                             ctx, option, exe.name, ctx.variables, source_language
                         )
                         if opt:
-                            source_compile_flags.append(opt)
+                            source_compile_flags.append(_escape_flag(opt))
                     source_compile_flags.extend(split_flags(file_props.compile_flags))
                     for d in file_props.object_depends:
                         source_depends.append(_resolve_source(d, exe)[0])
