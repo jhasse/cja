@@ -263,6 +263,42 @@ def test_compile_flags_and_link_flags(tmp_path: Path) -> None:
     assert any("libs" in line and "--app-link-flag" in line for line in lines)
 
 
+def test_compile_flags_keep_their_quoting(tmp_path: Path) -> None:
+    """COMPILE_FLAGS is a command line. Like in CMake, what's quoted for the
+    shell in it is a single argument for the compiler, with the quotes that
+    are escaped. A "$" is left to Ninja."""
+    (tmp_path / "CMakeLists.txt").write_text(
+        "project(test_props C)\n"
+        "add_executable(app main.c)\n"
+        "set_target_properties(app PROPERTIES COMPILE_FLAGS"
+        " \"'-DTARGET=\\\"two words\\\"' -DESCAPED=\\\\\\\"e\\\\\\\" -DVAR=\\$var\")\n"
+        "set_source_files_properties(main.c PROPERTIES COMPILE_FLAGS"
+        ' "\\"-DSOURCE=1 + 2\\"")\n'
+    )
+    (tmp_path / "main.c").write_text("int main(void) { return 0; }\n")
+
+    configure(tmp_path, "build")
+
+    lines = (tmp_path / "build.ninja").read_text().splitlines()
+    flags = lines[next(i for i, line in enumerate(lines) if "main.c" in line) + 1]
+    if platform.system() == "Windows":
+        expected = [
+            r'"-DTARGET=\"two words\""',
+            r"-DESCAPED=\"e\"",
+            "-DVAR=$var",
+            '"-DSOURCE=1 + 2"',
+        ]
+    else:
+        expected = [
+            r"-DTARGET=\"two\ words\"",
+            r"-DESCAPED=\"e\"",
+            "-DVAR=$var",
+            r"-DSOURCE=1\ +\ 2",
+        ]
+    for flag in expected:
+        assert f" {flag}" in flags
+
+
 def test_output_name_and_directory(tmp_path: Path) -> None:
     """OUTPUT_NAME, PREFIX, SUFFIX, <CONFIG>_POSTFIX and *_OUTPUT_DIRECTORY."""
     exe_ext = ".exe" if platform.system() == "Windows" else ""
