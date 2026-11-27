@@ -267,3 +267,26 @@ set_source_files_properties(main.c PROPERTIES COMPILE_OPTIONS -DSOURCE=\"c\")
         ]
     for flag in expected:
         assert f" {flag}" in flags
+
+
+def test_dollar_sign_in_options_and_definitions(tmp_path: Path) -> None:
+    """Like in CMake, it's escaped for the shell and for Ninja, so that e.g.
+    the linker gets $ORIGIN."""
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    commands = parse(
+        r"""
+add_executable(myapp main.c)
+target_compile_options(myapp PRIVATE "-DOPTION=\$1")
+target_compile_definitions(myapp PRIVATE "DEFINITION=\$2")
+target_link_options(myapp PRIVATE "-Wl,-rpath,\$ORIGIN/lib")
+"""
+    )
+    process_commands(commands, ctx)
+
+    ninja_path = tmp_path / "build.ninja"
+    generate_ninja(ctx, ninja_path, "build")
+    # With unwrapped lines
+    flags = re.sub(r" *\$\n *", " ", ninja_path.read_text())
+    dollar = "$$" if platform.system() == "Windows" else "\\$$"
+    for flag in ("-DOPTION=@1", "-DDEFINITION=@2", "-Wl,-rpath,@ORIGIN/lib"):
+        assert f" {flag.replace('@', dollar)}" in flags

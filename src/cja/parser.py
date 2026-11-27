@@ -41,9 +41,12 @@ def unescape_argument(text: str) -> str:
             elif text[j + 1] == "r":
                 val += "\r"
             elif text[j + 1] == "$":
-                # Preserve escaped variable markers (\${...}) so they
-                # can remain literal during variable expansion.
-                val += "\\$"
+                if text.startswith(("{", "ENV{", "CACHE{"), j + 2):
+                    # Preserve escaped variable markers (\${...}) so they
+                    # can remain literal during variable expansion.
+                    val += "\\$"
+                else:
+                    val += "$"
             elif text[j + 1] == "\n":
                 pass  # Line continuation
             elif text[j + 1] == ";":

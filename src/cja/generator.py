@@ -780,16 +780,19 @@ def _in_default_build(
 
 
 def _escape_flag(flag: str) -> str:
-    """Escape a compile definition or option for the command line of a rule.
+    """Escape a compile definition or a compile or link option for the command
+    line of a rule.
 
     Like in CMake, it's a single argument with whatever characters it has,
-    e.g. the quotes of a string. Only a "$" stays as it is, for a Ninja
-    variable like $builddir.
+    e.g. the quotes of a string or the "$" of $ORIGIN.
     """
     if platform.system() == "Windows":
         # Ninja starts the command without a shell there.
-        return subprocess.list2cmdline([flag])
-    return re.sub(r"[^\w@%+=:,./$-]", r"\\\g<0>", flag)
+        escaped = subprocess.list2cmdline([flag])
+    else:
+        escaped = re.sub(r"[^\w@%+=:,./-]", r"\\\g<0>", flag)
+    # For Ninja
+    return escaped.replace("$", "$$")
 
 
 def _format_compile_definition_flag(definition: str) -> str:
@@ -925,7 +928,7 @@ def _dependency_link_options(
             seen.add(id(lib.public_link_options))
             options.extend(lib.public_link_options)
     return [
-        _quote_if_spaced(part)
+        _escape_flag(part)
         for part in link_option_args(
             options, ctx.variables, ctx.target_property, target_name
         )

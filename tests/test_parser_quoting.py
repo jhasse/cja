@@ -235,3 +235,19 @@ set(INVALID C:\Users)
     assert capsys.readouterr().err == (
         "CMakeLists.txt:5: error: Invalid character escape '\\U'.\n"
     )
+
+
+def test_escaped_dollar_sign() -> None:
+    """Like in CMake, it's a "$" without the backslash, which only stays in
+    front of a variable reference for that to be literal."""
+    content = r"""
+set(X x)
+set(QUOTED "\$5 a\$b 100\$")
+set(UNQUOTED \$5|a\$b)
+set(REFERENCES "\${X} \$ENV{X} \$CACHE{X} \$${X}")
+"""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    process_commands(parse(content), ctx)
+    assert ctx.variables["QUOTED"] == "$5 a$b 100$"
+    assert ctx.variables["UNQUOTED"] == "$5|a$b"
+    assert ctx.variables["REFERENCES"] == "${X} $ENV{X} $CACHE{X} $x"
