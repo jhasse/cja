@@ -1,6 +1,6 @@
 [project]
 name = "cja"
-version = "0.11.2"
+version = "0.11.3"
 description = "CMake-compatible build system that generates Ninja build files"
 readme = "README.md"
 license = "Apache-2.0 AND BSD-3-Clause"
