@@ -192,8 +192,8 @@ def test_add_custom_command_absolute_output(tmp_path: Path) -> None:
 project(AbsOutTest)
 
 add_custom_command(
-    OUTPUT {output_file}
-    COMMAND echo "hello" > {output_file}
+    OUTPUT "{output_file.as_posix()}"
+    COMMAND echo "hello" > "{output_file.as_posix()}"
 )
 """
     (source_dir / "CMakeLists.txt").write_text(cmake_content)
@@ -206,7 +206,7 @@ add_custom_command(
     # It should be prefixed with $builddir/ and the filename
     assert "$builddir/generated.txt" in ninja_content
     # And NOT the absolute path in the build statement
-    assert f"build {output_file}" not in ninja_content
+    assert f"build {output_file.as_posix().replace(':', '$:')}" not in ninja_content
 
 
 def test_add_custom_command_working_dir_verbatim(tmp_path: Path) -> None:
@@ -1100,7 +1100,7 @@ def test_custom_command_outputs_in_fetched_content(tmp_path: Path) -> None:
 cmake_minimum_required(VERSION 3.10)
 project(FetchedOutputsTest C)
 include(FetchContent)
-FetchContent_Declare(dep URL file://{tar_path})
+FetchContent_Declare(dep URL "{tar_path.as_uri()}")
 FetchContent_MakeAvailable(dep)
 """)
 
