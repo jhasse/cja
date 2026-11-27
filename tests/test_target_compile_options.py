@@ -305,3 +305,42 @@ target_link_options(myapp PRIVATE "-Wl,-rpath,\$ORIGIN/lib")
     dollar = "$$" if platform.system() == "Windows" else "\\$$"
     for flag in ("-DOPTION=@1", "-DDEFINITION=@2", "-Wl,-rpath,@ORIGIN/lib"):
         assert f" {flag.replace('@', dollar)}" in flags
+
+
+def test_compile_options_shell_groups(tmp_path: Path) -> None:
+    """Like in CMake, an option with the prefix "SHELL:" is a group of
+    arguments, divided like by a shell. They stay together, also the ones that
+    another option has as well."""
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    commands = parse(
+        r"""
+add_compile_options("SHELL:-include dir.h")
+add_library(mylib lib.c)
+target_compile_options(mylib INTERFACE "SHELL:-include lib.h" -DFROM_LIB)
+add_executable(myapp main.c)
+target_link_libraries(myapp PRIVATE mylib)
+target_compile_options(myapp PRIVATE
+  "SHELL:-include a.h"
+  "SHELL:-include b.h"
+  "$<$<COMPILE_LANGUAGE:C>:SHELL:-include c.h>"
+  "SHELL:-DQUOTED=\"two words\" -DOTHER")
+"""
+    )
+    process_commands(commands, ctx)
+
+    ninja_path = tmp_path / "build.ninja"
+    generate_ninja(ctx, ninja_path, "build")
+    # With unwrapped lines
+    flags = re.sub(r" *\$\n *", " ", ninja_path.read_text())
+    assert "SHELL:" not in flags
+    if platform.system() == "Windows":
+        quoted = '"-DQUOTED=two words" -DOTHER'
+    else:
+        quoted = r"-DQUOTED=two\ words -DOTHER"
+    for group in (
+        "-include dir.h -include a.h -include b.h",
+        quoted,
+        "-include lib.h -DFROM_LIB",
+        "-include c.h",
+    ):
+        assert f" {group}" in flags

@@ -835,15 +835,46 @@ def _evaluate_list_for_target(
     return [item for item in evaluated.split(";") if item]
 
 
-def _compile_option_flags(ctx: BuildContext, option: str, target_name: str) -> list[str]:
-    """The flags of a compile option that a target is built with in any language.
+def _option_flags(option: str) -> list[str]:
+    """The flags of a single compile option, escaped.
+
+    Like in CMake, that's one argument unless it has the prefix "SHELL:": then
+    it's a group of them, divided like by a shell.
+    """
+    option = option.strip()
+    if option.startswith("SHELL:"):
+        return [_escape_flag(arg) for arg in split_flags(option.removeprefix("SHELL:"))]
+    return [_escape_flag(option)] if option else []
+
+
+def _add_option_flags(flags: list[str], option: list[str]) -> None:
+    """Add the flags of a compile option, unless it's among them already.
+
+    A "SHELL:" group is only left out as a whole: its arguments stay together,
+    also the ones that another option has as well.
+    """
+    count = len(option)
+    if not any(flags[i : i + count] == option for i in range(len(flags) - count + 1)):
+        flags.extend(option)
+
+
+def _compile_options(
+    ctx: BuildContext, option: str, target_name: str
+) -> list[list[str]]:
+    """The compile options that a target is built with in any language for
+    one of its COMPILE_OPTIONS, each with its flags as _option_flags() has them.
 
     It may be a list. What depends on the language or the configuration is
     left out here and added by _language_compile_flags().
     """
     evaluated = _evaluate_for_target(ctx, option, target_name)
+    return [flags for part in evaluated.split(";") if (flags := _option_flags(part))]
+
+
+def _compile_option_flags(ctx: BuildContext, option: str, target_name: str) -> list[str]:
+    """The flags of _compile_options()."""
     return [
-        _escape_flag(flag) for part in evaluated.split(";") if (flag := part.strip())
+        flag for flags in _compile_options(ctx, option, target_name) for flag in flags
     ]
 
 
@@ -2317,10 +2348,9 @@ def generate_ninja(
                     ctx, option, target_name, ctx.variables, language
                 )
                 for sub_opt in opt.split(";"):
-                    sub_opt = _escape_flag(sub_opt.strip())
-                    own_options.add(sub_opt)
-                    if sub_opt and sub_opt not in flags:
-                        flags.append(sub_opt)
+                    option_flags = _option_flags(sub_opt)
+                    own_options.update(option_flags)
+                    _add_option_flags(flags, option_flags)
             if language in ("C", "ASM"):
                 flags = [flag for flag in flags if not _CXX_STD_FLAG_RE.match(flag)]
                 flags = _keep_highest_std_flag(flags, "c")
@@ -2541,9 +2571,8 @@ def generate_ninja(
                             lib_compile_flags.append(flag)
                     for option in dep_lib.public_compile_options:
                         lib_compile_options_raw.append(option)
-                        for opt in _compile_option_flags(ctx, option, lib.name):
-                            if opt not in lib_compile_flags:
-                                lib_compile_flags.append(opt)
+                        for option_flags in _compile_options(ctx, option, lib.name):
+                            _add_option_flags(lib_compile_flags, option_flags)
                 if dep_name in ctx.imported_targets:
                     imported = ctx.imported_targets[dep_name]
                     _add_imported_cflags(
@@ -2869,9 +2898,8 @@ def generate_ninja(
                                 compile_flags.append(def_flag)
                     for option in linked_lib.public_compile_options:
                         exe_compile_options_raw.append(option)
-                        for opt in _compile_option_flags(ctx, option, exe.name):
-                            if opt not in compile_flags:
-                                compile_flags.append(opt)
+                        for option_flags in _compile_options(ctx, option, exe.name):
+                            _add_option_flags(compile_flags, option_flags)
                 # Check for cflags from imported targets
                 if lib_name in ctx.imported_targets:
                     imported = ctx.imported_targets[lib_name]
