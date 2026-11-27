@@ -207,6 +207,9 @@ class BuildContext:
     )  # Original -D flag values
     libraries: list[Library] = field(default_factory=list)
     executables: list[Executable] = field(default_factory=list)
+    # The names of add_executable(<name> ALIAS <target>), each with the name
+    # of the executable that it stands for
+    executable_aliases: dict[str, str] = field(default_factory=dict)
     imported_targets: dict[str, ImportedTarget] = field(default_factory=dict)
     compile_options: list[str] = field(default_factory=list)  # Global compile options
     compile_definitions: list[str] = field(
@@ -395,7 +398,9 @@ class BuildContext:
         if imported is not None:
             if prop == "LOCATION" and imported.executable:
                 return imported.location(self.variables.get("CMAKE_BUILD_TYPE", ""))
-            return name if prop == "NAME" else imported.properties.get(prop)
+            if prop == "NAME":
+                return self.executable_aliases.get(name, name)
+            return imported.properties.get(prop)
         return None
 
     def is_imported_executable(self, name: str) -> bool:
@@ -404,6 +409,7 @@ class BuildContext:
         return imported is not None and imported.executable
 
     def get_executable(self, name: str) -> Executable | None:
+        name = self.executable_aliases.get(name, name)
         for exe in self.executables:
             if exe.name == name:
                 return exe

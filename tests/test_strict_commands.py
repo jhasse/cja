@@ -52,7 +52,6 @@ def target(name: str) -> Command:
             Command("target_sources", ["t", "PUBLIC", "FILE_SET", "HEADERS", "FILES", "a.h"]),
             "FILE_SET",
         ),
-        ([], Command("add_executable", ["tool2", "ALIAS", "tool"]), "ALIAS"),
         ([], Command("add_library", ["alias", "ALIAS", "missing"]), "ALIAS"),
         ([], Command("list", ["SORT", "l", "ORDER", "DESCENDING"]), "ORDER DESCENDING"),
         ([], Command("list", ["TRANSFORM", "l", "GENEX_STRIP"]), "GENEX_STRIP"),
@@ -145,7 +144,6 @@ def test_ignored_keywords_are_not_values(tmp_path: Path) -> None:
         ),
         Command("target_link_libraries", ["t", "general", "foo"]),
         Command("add_executable", ["tool", "IMPORTED", "GLOBAL"]),
-        Command("add_executable", ["tool2", "ALIAS", "tool"]),
         Command("set_property", ["SOURCE", "a.c", "DIRECTORY", "sub", "PROPERTY", "OBJECT_DEPENDS", "x"]),
         Command("file", ["LOCK", "lock", "RESULT_VARIABLE", "r"]),
     ]

@@ -2049,6 +2049,44 @@ def handle_add_library(
         )
 
 
+def _add_executable_alias(
+    ctx: BuildContext, cmd: Command, args: list[str], strict: bool
+) -> None:
+    """Handle add_executable(<name> ALIAS <target>).
+
+    The name then stands for the executable wherever one is run or read. Like
+    with the alias of a library, the target can be modified through it as
+    well, which CMake doesn't allow.
+    """
+    name, target = args[0], args[-1]
+    if target in ctx.executable_aliases:
+        reason = "is itself an ALIAS"
+    elif ctx.get_executable(target) or ctx.is_imported_executable(target):
+        reason = ""
+    elif ctx.target_exists(target):
+        reason = "is not an executable"
+    else:
+        reason = "does not already exist"
+    error = ""
+    if len(args) != 3:
+        error = "add_executable ALIAS requires exactly one target argument."
+    elif reason:
+        error = (
+            f'add_executable cannot create ALIAS target "{name}" because '
+            f'target "{target}" {reason}.'
+        )
+    if error:
+        if strict:
+            ctx.print_error(error, cmd.line)
+            sys.exit(1)
+        ctx.print_warning(error, cmd.line)
+        return
+    ctx.executable_aliases[name] = target
+    if target in ctx.imported_targets:
+        # The same target, so that the alias has the properties it gets later.
+        ctx.imported_targets[name] = ctx.imported_targets[target]
+
+
 def handle_add_executable(
     ctx: BuildContext,
     cmd: Command,
@@ -2070,8 +2108,7 @@ def handle_add_executable(
             )
         return
     if len(args) >= 2 and args[1] == "ALIAS":
-        # Alias executables can't be used in commands yet.
-        ctx.check_unsupported_args(cmd, [args[1]], strict)
+        _add_executable_alias(ctx, cmd, args, strict)
         return
     if args:
         # Without sources here, they're usually added with target_sources().

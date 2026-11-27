@@ -1617,6 +1617,16 @@ def generate_ninja(
                 target_files[name] = location
                 target_file_dirs[name] = location.rpartition("/")[0]
 
+        def _add_executable_aliases(*by_target: dict[str, str]) -> None:
+            """Let the aliases of executables stand for them in what's kept by
+            the name of a target."""
+            for alias, name in ctx.executable_aliases.items():
+                for values in by_target:
+                    if name in values:
+                        values[alias] = values[name]
+
+        _add_executable_aliases(target_file_dirs, target_files)
+
         def _resolve_target_dep(name: str) -> str | None:
             """Resolve a target name to a ninja node for use as an order-only dep."""
             if name in target_files:
@@ -3152,6 +3162,8 @@ def generate_ninja(
                     default_targets.remove(exe_name)
                     default_targets.append(stamp)
 
+        _add_executable_aliases(exe_outputs)
+
         # Scripts adding tests that are only known after the build, e.g. from
         # gtest_discover_tests() and doctest_discover_tests()
         test_include_files = [
@@ -3197,6 +3209,7 @@ def generate_ninja(
             for name, location in imported_executables.items():
                 target_file_dirs_resolved[name] = target_file_dirs[name]
                 target_files_resolved[name] = location
+            _add_executable_aliases(target_file_dirs_resolved, target_files_resolved)
 
             def _expand_genex_for_test(arg: str) -> str:
                 return strip_generator_expressions(
