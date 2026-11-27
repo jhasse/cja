@@ -428,6 +428,60 @@ def test_cli_command_mode_without_command(tmp_path: Path) -> None:
     assert result.stderr == "error: -E requires a command\n"
 
 
+def _copy(tmp_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, "-m", "cja", "-E", "copy", *args],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        check=False,
+    )
+
+
+def test_cli_copy_to_directory(tmp_path: Path) -> None:
+    """Like CMake, cja -E copy takes the directory to copy to with -t as well,
+    anywhere among the files."""
+    for name in ("a.txt", "b.txt"):
+        (tmp_path / name).write_text(name)
+    for name in ("first", "last", "other"):
+        (tmp_path / name).mkdir()
+
+    result = _copy(tmp_path, "-t", "first", "a.txt", "b.txt")
+    assert (result.returncode, result.stderr) == (0, "")
+    assert sorted(path.name for path in (tmp_path / "first").iterdir()) == ["a.txt", "b.txt"]
+
+    # The last one counts.
+    result = _copy(tmp_path, "a.txt", "-t", "other", "b.txt", "-t", "last")
+    assert (result.returncode, result.stderr) == (0, "")
+    assert sorted(path.name for path in (tmp_path / "last").iterdir()) == ["a.txt", "b.txt"]
+    assert list((tmp_path / "other").iterdir()) == []
+
+    # Without -t, the last argument is still what to copy to.
+    result = _copy(tmp_path, "a.txt", "other/renamed.txt")
+    assert (result.returncode, result.stderr) == (0, "")
+    assert (tmp_path / "other" / "renamed.txt").read_text() == "a.txt"
+
+
+@pytest.mark.parametrize(
+    ("args", "error"),
+    [
+        (
+            ["-t", "missing", "a.txt"],
+            'Target (for copy command) "missing" is not a directory.',
+        ),
+        (["-t", "a.txt", "a.txt"], 'Target (for copy command) "a.txt" is not a directory.'),
+        (["a.txt", "-t"], "Invalid value used with -t"),
+    ],
+)
+def test_cli_copy_to_directory_errors(tmp_path: Path, args: list[str], error: str) -> None:
+    (tmp_path / "a.txt").write_text("a")
+
+    result = _copy(tmp_path, *args)
+    assert result.returncode == 1
+    assert result.stderr == f"error: {error}\n"
+    assert [path.name for path in tmp_path.iterdir()] == ["a.txt"]
+
+
 def test_unused_d_variable_warning(tmp_path: Path) -> None:
     """Unused -D variables should produce a warning at the end of configure."""
     source_dir = tmp_path / "hello"

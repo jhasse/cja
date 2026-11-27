@@ -339,11 +339,29 @@ def cmd_command_mode(args: list[str]) -> int:
             p.touch()
         return 0
     elif cmd in ("copy", "copy_if_different"):
+        error_label = colored("error:", "red", attrs=["bold"])
         if len(cmd_args) < 2:
-            error_label = colored("error:", "red", attrs=["bold"])
             print(f"{error_label} -E {cmd} requires at least 2 arguments", file=sys.stderr)
             return 1
-        *sources, dest = cmd_args
+        sources = list(cmd_args)
+        dest: str | None = None
+        # Like in CMake, copy also takes the directory to copy to with -t,
+        # anywhere among the files.
+        while cmd == "copy" and "-t" in sources:
+            index = sources.index("-t")
+            if index + 1 == len(sources):
+                print(f"{error_label} Invalid value used with -t", file=sys.stderr)
+                return 1
+            dest = sources[index + 1]
+            del sources[index : index + 2]
+        if dest is None:
+            dest = sources.pop()
+        elif not Path(dest).is_dir():
+            print(
+                f'{error_label} Target (for copy command) "{dest}" is not a directory.',
+                file=sys.stderr,
+            )
+            return 1
         dest_path = Path(dest)
         for src in sources:
             src_path = Path(src)
