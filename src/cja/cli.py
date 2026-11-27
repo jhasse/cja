@@ -316,6 +316,8 @@ def cmd_format(args: argparse.Namespace) -> int:
 def cmd_command_mode(args: list[str]) -> int:
     """Run CMake-like command mode (-E)."""
     if not args:
+        error_label = colored("error:", "red", attrs=["bold"])
+        print(f"{error_label} -E requires a command", file=sys.stderr)
         return 1
 
     cmd = args[0]
@@ -442,16 +444,16 @@ def main() -> int:
         help="Configure in release mode (CMAKE_BUILD_TYPE=Release)",
     )
 
+    # -E and -P are registered only so they appear in --help; the actual values
+    # are extracted from sys.argv before argparse runs, so that the arguments
+    # following them are not interpreted as subcommands or options.
     parser.add_argument(
         "-E",
-        nargs="+",
-        metavar="command",
+        dest="_command_mode",
+        metavar="COMMAND [ARG...]",
         help="CMake-like command mode (e.g., -E make_directory dir...)",
     )
 
-    # Registered only so it appears in --help; the actual value is extracted
-    # from sys.argv before argparse runs so that trailing script arguments are
-    # not interpreted as subcommands or options.
     parser.add_argument(
         "-P",
         dest="_script",
@@ -581,20 +583,25 @@ def main() -> int:
     # Passed by vscode-languageclient; the server exits when stdin is closed.
     lsp_parser.add_argument("--clientProcessId", help=argparse.SUPPRESS)
 
-    # Extract -P SCRIPT [ARGS...] before argparse so trailing positional script
-    # arguments are not parsed as subcommands.
+    # Extract -E COMMAND [ARGS...] or -P SCRIPT [ARGS...] before argparse, so
+    # that the arguments after it are neither parsed as subcommands nor as
+    # options: like in CMake, they're all for the command or the script.
     argv = sys.argv[1:]
+    command_mode_args: list[str] | None = None
     script_path: str | None = None
     script_args: list[str] = []
-    if "-P" in argv:
-        p_idx = argv.index("-P")
-        if p_idx + 1 >= len(argv):
+    mode_idx = next((i for i, arg in enumerate(argv) if arg in ("-E", "-P")), None)
+    if mode_idx is not None and argv[mode_idx] == "-E":
+        command_mode_args = argv[mode_idx + 1 :]
+        argv = argv[:mode_idx]
+    elif mode_idx is not None:
+        if mode_idx + 1 >= len(argv):
             error_label = colored("error:", "red", attrs=["bold"])
             print(f"{error_label} -P requires a script path", file=sys.stderr)
             return 1
-        script_path = argv[p_idx + 1]
-        script_args = argv[p_idx + 2 :]
-        argv = argv[:p_idx]
+        script_path = argv[mode_idx + 1]
+        script_args = argv[mode_idx + 2 :]
+        argv = argv[:mode_idx]
 
     args, ninja_args = parser.parse_known_args(argv)
     args.defines += getattr(args, "subcommand_defines", [])
@@ -606,8 +613,8 @@ def main() -> int:
         lsp_parser.error(f"unrecognized arguments: {' '.join(ninja_args)}")
 
     try:
-        if args.E:
-            return cmd_command_mode(args.E)
+        if command_mode_args is not None:
+            return cmd_command_mode(command_mode_args)
 
         if args.verify_globs:
             manifest, stamp = args.verify_globs

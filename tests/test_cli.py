@@ -394,6 +394,12 @@ def test_cli_make_directory(tmp_path: Path) -> None:
         (["echo", "", ""], " \n"),
         (["echo_append", "a", "b"], "a b"),
         (["echo_append"], ""),
+        # Everything after -E is for the command, also what cja has as options
+        # or subcommands itself.
+        (
+            ["echo", "-DNAME=x", "--version", "-P", "-E", "-n", "--", "build"],
+            "-DNAME=x --version -P -E -n -- build\n",
+        ),
     ],
 )
 def test_cli_echo(tmp_path: Path, args: list[str], expected: str) -> None:
@@ -407,6 +413,19 @@ def test_cli_echo(tmp_path: Path, args: list[str], expected: str) -> None:
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout == expected
+
+
+def test_cli_command_mode_without_command(tmp_path: Path) -> None:
+    result = subprocess.run(
+        [sys.executable, "-m", "cja", "-E"],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert result.stderr == "error: -E requires a command\n"
 
 
 def test_unused_d_variable_warning(tmp_path: Path) -> None:
