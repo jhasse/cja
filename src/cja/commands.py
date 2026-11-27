@@ -3017,17 +3017,13 @@ def macro_commands(macro: MacroDef, args: list[str]) -> list[Command]:
     the value of an argument has are evaluated (again).
     """
     # The escape sequences of text in the body were evaluated when parsing
-    # it, so the ones of the values are when replacing. An invalid one is
-    # reported when the command with it is evaluated.
-    def unescape(text: str) -> str:
-        return unescape_quoted_argument(text, mark_invalid=True)
-
-    values = [unescape(arg) for arg in args]
+    # it, so the ones of the values are when replacing.
+    values = [unescape_quoted_argument(arg) for arg in args]
     replacements = [
         *((f"${{{param}}}", value) for param, value in zip(macro.params, values)),
         ("${ARGC}", str(len(args))),
-        ("${ARGN}", unescape(";".join(args[len(macro.params) :]))),
-        ("${ARGV}", unescape(";".join(args))),
+        ("${ARGN}", unescape_quoted_argument(";".join(args[len(macro.params) :]))),
+        ("${ARGV}", unescape_quoted_argument(";".join(args))),
     ]
     argv = [(f"${{ARGV{index}}}", values[index]) for index in range(len(args))]
 

@@ -658,8 +658,8 @@ class BuildContext:
         With escape_quotes, quotes in the substituted values are escaped.
         """
         if INVALID_ESCAPE_MARKER in value:
-            # In the value of a macro's argument, see macro_commands(). Like
-            # in CMake, that's an error.
+            # A backslash that starts no escape sequence. Like in CMake,
+            # that's an error.
             escaped = value.partition(INVALID_ESCAPE_MARKER)[2][:1]
             self.print_error(f"Invalid character escape '\\{escaped}'.", line)
             sys.exit(1)

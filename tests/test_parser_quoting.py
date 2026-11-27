@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from cja.generator import BuildContext, process_commands
 from cja.parser import parse, parse_file
 
@@ -153,3 +155,30 @@ def test_bracket_argument_not_split_or_expanded_when_processed() -> None:
     ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
     process_commands(parse(content), ctx, strict=True)
     assert ctx.variables["RESULT"] == "for (; i < n; i++, j++) { a; b; ${NOPE} }"
+
+
+def test_invalid_escape_in_quoted_argument(capsys: pytest.CaptureFixture[str]) -> None:
+    """Like in CMake, a backslash before a letter or digit that starts no
+    escape sequence is an error, once the argument is evaluated."""
+    content = r"""
+if(FALSE)
+  set(DEAD "C:\Users")
+endif()
+function(never_called)
+  set(DEAD "a\bc")
+endfunction()
+set(VALID "a\\b a\.b")
+set(BRACKET [[a\bc]])
+set(INVALID "C:\Users")
+set(NOT_REACHED TRUE)
+"""
+    ctx = BuildContext(source_dir=Path("."), build_dir=Path("build"))
+    with pytest.raises(SystemExit) as exc_info:
+        process_commands(parse(content), ctx)
+    assert exc_info.value.code == 1
+    assert capsys.readouterr().err == (
+        "CMakeLists.txt:10: error: Invalid character escape '\\U'.\n"
+    )
+    assert ctx.variables["VALID"] == r"a\b a.b"
+    assert ctx.variables["BRACKET"] == r"a\bc"
+    assert "NOT_REACHED" not in ctx.variables
