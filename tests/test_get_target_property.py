@@ -1,6 +1,9 @@
 """Tests for get_target_property command."""
 
+import re
 from pathlib import Path
+
+import pytest
 
 from cja.generator import configure
 from cja.utils import to_posix_path
@@ -92,3 +95,45 @@ def test_get_target_property_name_and_directories(tmp_path: Path) -> None:
         assert ctx.variables[f"{target}_BINARY_DIR"] == to_posix_path(
             source_dir / "build" / "sub"
         )
+
+
+def test_get_target_property_aliased_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ALIASED_TARGET is the target that an alias stands for, which only an
+    alias has."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "CMakeLists.txt").write_text(
+        "project(test_alias C)\n"
+        "add_library(mylib STATIC mylib.c)\n"
+        "add_library(my::lib ALIAS mylib)\n"
+        "add_executable(myexe main.c)\n"
+        "add_executable(my::exe ALIAS myexe)\n"
+        "add_executable(imported IMPORTED)\n"
+        "add_executable(my::imported ALIAS imported)\n"
+        "add_custom_target(custom\n"
+        "  COMMAND echo of=$<TARGET_PROPERTY:my::exe,ALIASED_TARGET>\n"
+        "  COMMAND echo none=$<TARGET_PROPERTY:myexe,ALIASED_TARGET>)\n"
+        "foreach(target my::lib my::exe my::imported mylib myexe imported custom)\n"
+        "  get_target_property(value ${target} ALIASED_TARGET)\n"
+        "  get_property(is_set TARGET ${target} PROPERTY ALIASED_TARGET SET)\n"
+        '  list(APPEND RESULT "${target}: ${value} ${is_set}")\n'
+        "endforeach()\n"
+    )
+    (tmp_path / "mylib.c").write_text("int mylib_func() { return 0; }")
+    (tmp_path / "main.c").write_text("int main() { return 0; }")
+
+    ctx = configure(tmp_path, "build")
+
+    assert ctx.variables["RESULT"].split(";") == [
+        "my::lib: mylib 1",
+        "my::exe: myexe 1",
+        "my::imported: imported 1",
+        "mylib: value-NOTFOUND 0",
+        "myexe: value-NOTFOUND 0",
+        "imported: value-NOTFOUND 0",
+        "custom: value-NOTFOUND 0",
+    ]
+    # With unwrapped lines
+    ninja = re.sub(r" *\$\n *", " ", (tmp_path / "build.ninja").read_text())
+    assert "echo of=myexe && echo none= && " in ninja

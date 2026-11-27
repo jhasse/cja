@@ -384,6 +384,8 @@ class BuildContext:
 
     def target_property(self, name: str, prop: str) -> str | None:
         """A target's property, or None if the target or property is unknown."""
+        if prop == "ALIASED_TARGET":
+            return self.aliased_target(name)
         lib = self.get_library(name)
         target = lib or self.get_executable(name) or self.get_custom_target(name)
         if target is not None:
