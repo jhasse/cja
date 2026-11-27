@@ -737,15 +737,9 @@ def handle_target_compile_definitions(
                         f"generator expressions in target_compile_definitions are not yet supported: {arg}",
                         cmd.line,
                     )
-                # CMake treats compile definitions as a list. After genex stripping,
-                # definitions may arrive as semicolon-separated or space-separated
-                # values (e.g. "$<...:A B>"), so split into individual definitions.
-                definitions = [
-                    d
-                    for part in expanded.split(";")
-                    for d in part.split()
-                    if d
-                ]
+                # A generator expression may stand for a list of definitions.
+                # Each one may have spaces, e.g. in the value of a string.
+                definitions = [d for d in expanded.split(";") if d]
                 check_lone_dash_d(ctx, cmd, definitions, strict)
                 # Like in CMake, a leading -D is removed, and what's empty
                 # then is ignored.

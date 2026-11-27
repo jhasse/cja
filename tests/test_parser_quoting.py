@@ -62,7 +62,10 @@ def test_escaped_backslash_before_variable_reference() -> None:
     assert ctx.variables["C"] == r"\.so"
 
 
-def test_genex_with_spaces_is_single_argument() -> None:
+def test_genex_with_spaces_is_a_list() -> None:
+    """In CMake, the spaces in an unquoted generator expression separate
+    arguments, which are the elements of a list for the expression. Here it's
+    a single argument with that list."""
     content = (
         "target_compile_options(foo PRIVATE "
         "$<$<CXX_COMPILER_ID:MSVC>:/W3 /wd4127 /wd4355>)"
@@ -72,8 +75,31 @@ def test_genex_with_spaces_is_single_argument() -> None:
     assert commands[0].args == [
         "foo",
         "PRIVATE",
-        "$<$<CXX_COMPILER_ID:MSVC>:/W3 /wd4127 /wd4355>",
+        "$<$<CXX_COMPILER_ID:MSVC>:/W3;/wd4127;/wd4355>",
     ]
+
+
+def test_genex_over_several_lines_is_a_list() -> None:
+    content = (
+        "target_compile_options(foo PRIVATE\n"
+        "  $<$<C_COMPILER_ID:GNU>:\n"
+        "    -Wextra   -Wshadow\n"
+        "    -Wundef>\n"
+        ")\n"
+        "message(next)\n"
+    )
+    commands = parse(content)
+    assert commands[0].args == [
+        "foo",
+        "PRIVATE",
+        "$<$<C_COMPILER_ID:GNU>:;-Wextra;-Wshadow;-Wundef>",
+    ]
+    assert commands[1].line == 6
+
+
+def test_genex_keeps_quoted_and_escaped_spaces() -> None:
+    commands = parse(r'set(X "$<1:a b>" $<1:c\ d>)')
+    assert commands[0].args == ["X", "$<1:a b>", "$<1:c d>"]
 
 
 def test_parse_file_latin1_fallback(tmp_path: Path) -> None:

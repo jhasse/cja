@@ -184,6 +184,8 @@ def tokenize(content: str) -> list[tuple[str, int, bool]]:
 
         start = i
         genex_depth = 0
+        # What the argument has before content[start:i]
+        text = ""
         while i < len(content):
             if content[i] == "\\" and i + 1 < len(content) and content[i + 1] != "\n":
                 # An escaped character is part of the argument, also one that
@@ -200,13 +202,22 @@ def tokenize(content: str) -> list[tuple[str, int, bool]]:
                 continue
             if genex_depth == 0 and content[i] in " \t\n()#":
                 break
+            if content[i] in " \t\n":
+                # In a generator expression. Like in CMake, the next argument
+                # starts here, and all those of the expression are a list.
+                text += content[start:i] + ";"
+                while i < len(content) and content[i] in " \t\n":
+                    line += content[i] == "\n"
+                    i += 1
+                start = i
+                continue
             if content[i] == "\\" and i + 1 < len(content) and content[i + 1] == "\n":
                 i += 2
                 line += 1
             else:
                 i += 1
-        if i > start:
-            tokens.append((content[start:i], line, False))
+        if text or i > start:
+            tokens.append((text + content[start:i], line, False))
 
     return tokens
 

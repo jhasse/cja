@@ -154,19 +154,12 @@ def test_target_compile_options_multiline_genex(tmp_path: Path) -> None:
     ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
     ctx.variables["CMAKE_CXX_COMPILER_ID"] = "GNU"
     (tmp_path / "main.cpp").write_text("int main() { return 0; }\n")
-    commands = [
-        Command(name="add_library", args=["mylib", "main.cpp"], line=1),
-        Command(
-            name="target_compile_options",
-            args=[
-                "mylib",
-                "PRIVATE",
-                ("$<$<CXX_COMPILER_ID:GNU>:\n"
-                "  -Wall -Wextra -Wno-unused-parameter -Wno-unused-variable>"),
-            ],
-            line=2,
-        ),
-    ]
+    commands = parse(
+        "add_library(mylib main.cpp)\n"
+        "target_compile_options(mylib PRIVATE\n"
+        "  $<$<CXX_COMPILER_ID:GNU>:\n"
+        "    -Wall -Wextra -Wno-unused-parameter -Wno-unused-variable>)\n"
+    )
     process_commands(commands, ctx)
 
     ninja_path = tmp_path / "build.ninja"
@@ -185,17 +178,14 @@ def test_add_library_multiline_genex_source_list(tmp_path: Path) -> None:
 
     ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
     ctx.variables["FEATURE"] = "ON"
-    commands = [
-        Command(
-            name="add_library",
-            args=[
-                "mylib",
-                "src/a.c",
-                "$<$<BOOL:${FEATURE}>:\n  src/b.c\n  src/c.c\n>",
-            ],
-            line=1,
-        ),
-    ]
+    commands = parse(
+        "add_library(mylib\n"
+        "  src/a.c\n"
+        "  $<$<BOOL:${FEATURE}>:\n"
+        "    src/b.c\n"
+        "    src/c.c\n"
+        "  >)\n"
+    )
     process_commands(commands, ctx)
 
     lib = ctx.get_library("mylib")
@@ -267,6 +257,31 @@ set_source_files_properties(main.c PROPERTIES COMPILE_OPTIONS -DSOURCE=\"c\")
         ]
     for flag in expected:
         assert f" {flag}" in flags
+
+
+def test_options_of_genex_with_spaces(tmp_path: Path) -> None:
+    """The space-separated items of an unquoted generator expression are
+    separate options, while a quoted one is a single argument with a space."""
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    commands = parse(
+        """
+add_executable(myapp main.c)
+target_compile_options(myapp PRIVATE $<$<BOOL:ON>:-Wall -Wextra> "$<1:-DQUOTED=a b>")
+target_link_options(myapp PRIVATE $<$<BOOL:ON>:-Wl,--as-needed -Wl,--no-undefined>)
+"""
+    )
+    process_commands(commands, ctx)
+
+    ninja_path = tmp_path / "build.ninja"
+    generate_ninja(ctx, ninja_path, "build")
+    # With unwrapped lines
+    flags = re.sub(r" *\$\n *", " ", ninja_path.read_text())
+    if platform.system() == "Windows":
+        quoted = '"-DQUOTED=a b"'
+    else:
+        quoted = r"-DQUOTED=a\ b"
+    assert f" -Wall -Wextra {quoted}" in flags
+    assert " -Wl,--as-needed -Wl,--no-undefined" in flags
 
 
 def test_dollar_sign_in_options_and_definitions(tmp_path: Path) -> None:

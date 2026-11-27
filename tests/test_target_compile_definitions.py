@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from cja.generator import BuildContext, generate_ninja, process_commands
-from cja.parser import Command
+from cja.parser import Command, parse
 
 
 def test_target_compile_definitions() -> None:
@@ -101,26 +101,46 @@ def test_target_compile_definitions_bool_genex(tmp_path: Path) -> None:
 def test_target_compile_definitions_genex_space_separated_values(tmp_path: Path) -> None:
     """Space-separated genex values should emit separate -D flags."""
     ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
-    commands = [
-        Command(name="add_library", args=["mylib", "lib.c"], line=1),
-        Command(
-            name="target_compile_definitions",
-            args=[
-                "mylib",
-                "PRIVATE",
-                "$<$<BOOL:ON>:LUA_USE_LINUX LUA_COMPAT_5_2>",
-            ],
-            line=2,
-        ),
-    ]
+    commands = parse(
+        "add_library(mylib lib.c)\n"
+        "target_compile_definitions(mylib PRIVATE\n"
+        "  $<$<BOOL:ON>:LUA_USE_LINUX LUA_COMPAT_5_2>)\n"
+    )
     process_commands(commands, ctx)
 
     ninja_path = tmp_path / "build.ninja"
     generate_ninja(ctx, ninja_path, "build")
     ninja_content = ninja_path.read_text()
 
-    assert "-DLUA_USE_LINUX" in ninja_content
-    assert "-DLUA_COMPAT_5_2" in ninja_content
+    assert "-DLUA_USE_LINUX -DLUA_COMPAT_5_2" in ninja_content
+
+
+def test_target_compile_definitions_with_spaces(tmp_path: Path) -> None:
+    """Like in CMake, a definition is a single one with the spaces it has,
+    e.g. in the value of a string, wherever they are from."""
+    ctx = BuildContext(source_dir=tmp_path, build_dir=tmp_path / "build")
+    commands = parse(
+        r"""
+add_library(mylib lib.c)
+set(FROM_VARIABLE "VARIABLE=\"four words\"")
+target_compile_definitions(mylib
+  PRIVATE "QUOTED=\"two words\"" UNQUOTED=\"three\ more\ words\" ${FROM_VARIABLE}
+  PUBLIC "$<1:GENEX=\"in quotes\">")
+set_property(TARGET mylib APPEND PROPERTY COMPILE_DEFINITIONS "PROPERTY=\"as well\"")
+"""
+    )
+    process_commands(commands, ctx)
+
+    lib = ctx.get_library("mylib")
+    assert lib is not None
+    assert lib.compile_definitions == [
+        'QUOTED="two words"',
+        'UNQUOTED="three more words"',
+        'VARIABLE="four words"',
+        'GENEX="in quotes"',
+        'PROPERTY="as well"',
+    ]
+    assert lib.public_compile_definitions == ['GENEX="in quotes"']
 
 
 @pytest.mark.parametrize("strict", [False, True])

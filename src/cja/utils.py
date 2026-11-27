@@ -690,13 +690,7 @@ def strip_generator_expressions(
             i = end + 1
         return "".join(out)
 
-    result = expand_text(value)
-    if "\n" in result:
-        # Multi-line generator-expression output represents a CMake list;
-        # convert internal whitespace to ';' so callers can split it like
-        # any other list value.
-        result = ";".join(result.split())
-    return result
+    return expand_text(value)
 
 
 def link_option_args(

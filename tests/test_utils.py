@@ -162,22 +162,6 @@ def test_strip_generator_expressions_target_file() -> None:
     assert strip_generator_expressions("$<TARGET_FILE:unknown>") == ""
 
 
-def test_strip_generator_expressions_multiline_content() -> None:
-    """Newlines inside genex results should be normalized to spaces."""
-    value = (
-        "$<$<OR:$<C_COMPILER_ID:Clang>,$<C_COMPILER_ID:GNU>>:\n"
-        "    -Wextra -Wshadow\n"
-        "    -Wdisabled-optimization -Waggregate-return>"
-    )
-    variables = {"CMAKE_C_COMPILER_ID": "GNU"}
-    result = strip_generator_expressions(value, variables)
-    assert "\n" not in result
-    assert "-Wextra" in result
-    assert "-Wshadow" in result
-    assert "-Wdisabled-optimization" in result
-    assert "-Waggregate-return" in result
-
-
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
