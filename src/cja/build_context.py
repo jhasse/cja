@@ -373,6 +373,15 @@ class BuildContext:
                 return lib
         return None
 
+    def aliased_target(self, name: str) -> str | None:
+        """The target that a name is an alias of, or None if it isn't one."""
+        if name in self.executable_aliases:
+            return self.executable_aliases[name]
+        for lib in self.libraries:
+            if lib.name == name:
+                return lib.alias_for if lib.is_alias else None
+        return None
+
     def target_property(self, name: str, prop: str) -> str | None:
         """A target's property, or None if the target or property is unknown."""
         lib = self.get_library(name)

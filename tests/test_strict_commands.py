@@ -223,3 +223,57 @@ def test_target_command_on_unknown_target(
     assert f'warning: {command} called on unknown target "missing"' in capsys.readouterr().err
     with pytest.raises(SystemExit):
         process_commands(commands, make_ctx(tmp_path), strict=True)
+
+
+@pytest.mark.parametrize("alias", ["Demo::lib", "Demo::tool", "Demo::imported"])
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["target_link_libraries", "@alias@", "PRIVATE", "m"],
+        ["target_link_directories", "@alias@", "PRIVATE", "dir"],
+        ["target_sources", "@alias@", "PRIVATE", "b.c"],
+        ["target_compile_features", "@alias@", "PRIVATE", "c_std_99"],
+        ["target_include_directories", "@alias@", "PRIVATE", "inc"],
+        ["target_compile_definitions", "@alias@", "PRIVATE", "X"],
+        ["target_compile_options", "@alias@", "PRIVATE", "-Wall"],
+        ["target_link_options", "@alias@", "PRIVATE", "-s"],
+        ["target_precompile_headers", "@alias@", "PRIVATE", "a.h"],
+        ["set_target_properties", "@alias@", "PROPERTIES", "OUTPUT_NAME", "x"],
+        ["set_property", "TARGET", "@alias@", "PROPERTY", "OUTPUT_NAME", "x"],
+        ["add_dependencies", "@alias@", "other"],
+    ],
+)
+def test_modifying_command_on_alias(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], alias: str, args: list[str]
+) -> None:
+    """Like CMake, modifying a target through an alias of it is an error.
+
+    Without strict mode, the target stays as it is.
+    """
+    targets = [
+        Command("add_library", ["lib", "STATIC", "a.c"], line=1),
+        Command("add_library", ["Demo::lib", "ALIAS", "lib"], line=1),
+        Command("add_executable", ["tool", "a.c"], line=1),
+        Command("add_executable", ["Demo::tool", "ALIAS", "tool"], line=1),
+        Command("add_executable", ["imported", "IMPORTED"], line=1),
+        Command("add_executable", ["Demo::imported", "ALIAS", "imported"], line=1),
+        Command("add_custom_target", ["other"], line=1),
+    ]
+    name, *arguments = (alias if arg == "@alias@" else arg for arg in args)
+    command = Command(name, arguments, line=2)
+    message = f"{name} can not be used on an ALIAS target."
+    if name == "add_dependencies":
+        message = f'Cannot add target-level dependencies to alias target "{alias}".'
+
+    unmodified = make_ctx(tmp_path)
+    process_commands(targets, unmodified)
+    ctx = make_ctx(tmp_path)
+    process_commands([*targets, command], ctx)
+    assert f"CMakeLists.txt:2: warning: {message}\n" in capsys.readouterr().err
+    assert ctx.libraries == unmodified.libraries
+    assert ctx.executables == unmodified.executables
+    assert ctx.imported_targets == unmodified.imported_targets
+
+    with pytest.raises(SystemExit):
+        process_commands([*targets, command], make_ctx(tmp_path), strict=True)
+    assert f"CMakeLists.txt:2: error: {message}\n" in capsys.readouterr().err

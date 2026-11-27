@@ -292,20 +292,45 @@ def _default_target_properties(ctx: BuildContext) -> dict[str, str]:
     return properties
 
 
-def check_target_exists(
+def alias_rejected(
+    ctx: BuildContext, cmd: Command, name: str, strict: bool, message: str = ""
+) -> bool:
+    """Whether a command that modifies a target was given an alias instead.
+
+    Like in CMake, that's an error. Without strict mode it's a warning, and
+    the target that the alias stands for is left as it is.
+    """
+    if ctx.aliased_target(name) is None:
+        return False
+    message = message or f"{cmd.name} can not be used on an ALIAS target."
+    if strict:
+        ctx.print_error(message, cmd.line)
+        sys.exit(1)
+    ctx.print_warning(message, cmd.line)
+    return True
+
+
+def check_target_command(
     ctx: BuildContext, cmd: Command, args: list[str], strict: bool
-) -> None:
-    """Report a target_*() call on a target that doesn't exist, like CMake."""
+) -> bool:
+    """Report a target_*() call that CMake doesn't allow: on a target that
+    doesn't exist or on an alias.
+
+    Returns whether to go on with the command, which an alias doesn't get.
+    """
     if not args:
-        return
+        return True
     name = args[0]
+    if alias_rejected(ctx, cmd, name, strict):
+        return False
     if ctx.target_exists(name):
-        return
+        return True
     message = f'{cmd.name} called on unknown target "{name}"'
     if strict:
         ctx.print_error(message, cmd.line)
         sys.exit(1)
     ctx.print_warning(message, cmd.line)
+    return True
 
 
 def handle_include_directories(
@@ -1024,6 +1049,8 @@ def handle_set_target_properties(
         properties = dict(zip(prop_args[::2], prop_args[1::2]))
 
         for target_name in target_names:
+            if alias_rejected(ctx, cmd, target_name, strict):
+                continue
             target = (
                 ctx.get_library(target_name)
                 or ctx.get_executable(target_name)
@@ -1194,6 +1221,8 @@ def handle_set_property(
     elif scope_type == "TARGET":
         # Target property
         for target_name in scope_args:
+            if alias_rejected(ctx, cmd, target_name, strict):
+                continue
             lib = ctx.get_library(target_name)
             exe = ctx.get_executable(target_name)
             imported_target = ctx.imported_targets.get(target_name)
@@ -2054,9 +2083,7 @@ def _add_executable_alias(
 ) -> None:
     """Handle add_executable(<name> ALIAS <target>).
 
-    The name then stands for the executable wherever one is run or read. Like
-    with the alias of a library, the target can be modified through it as
-    well, which CMake doesn't allow.
+    The name then stands for the executable wherever one is run or read.
     """
     name, target = args[0], args[-1]
     if target in ctx.executable_aliases:

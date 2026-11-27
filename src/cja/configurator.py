@@ -35,7 +35,8 @@ from .build_context import (
     find_matching_endwhile,
 )
 from .commands import (
-    check_target_exists,
+    alias_rejected,
+    check_target_command,
     handle_add_executable,
     handle_add_library,
     handle_cmake_dependent_option,
@@ -2371,40 +2372,40 @@ int main() {{
                     )
 
             case "target_link_libraries":
-                check_target_exists(ctx, cmd, args, strict)
-                handle_target_link_libraries(ctx, cmd, args, strict)
+                if check_target_command(ctx, cmd, args, strict):
+                    handle_target_link_libraries(ctx, cmd, args, strict)
 
             case "target_link_directories":
-                check_target_exists(ctx, cmd, args, strict)
-                handle_target_link_directories(ctx, cmd, args, strict)
+                if check_target_command(ctx, cmd, args, strict):
+                    handle_target_link_directories(ctx, cmd, args, strict)
 
             case "target_sources":
-                check_target_exists(ctx, cmd, args, strict)
-                handle_target_sources(ctx, cmd, args, strict)
+                if check_target_command(ctx, cmd, args, strict):
+                    handle_target_sources(ctx, cmd, args, strict)
 
             case "target_compile_features":
-                check_target_exists(ctx, cmd, args, strict)
-                handle_target_compile_features(ctx, args)
+                if check_target_command(ctx, cmd, args, strict):
+                    handle_target_compile_features(ctx, args)
 
             case "target_include_directories":
-                check_target_exists(ctx, cmd, args, strict)
-                handle_target_include_directories(ctx, cmd, args, strict)
+                if check_target_command(ctx, cmd, args, strict):
+                    handle_target_include_directories(ctx, cmd, args, strict)
 
             case "target_compile_definitions":
-                check_target_exists(ctx, cmd, args, strict)
-                handle_target_compile_definitions(ctx, cmd, args, strict)
+                if check_target_command(ctx, cmd, args, strict):
+                    handle_target_compile_definitions(ctx, cmd, args, strict)
 
             case "target_compile_options":
-                check_target_exists(ctx, cmd, args, strict)
-                handle_target_compile_options(ctx, cmd, args, strict)
+                if check_target_command(ctx, cmd, args, strict):
+                    handle_target_compile_options(ctx, cmd, args, strict)
 
             case "target_link_options":
-                check_target_exists(ctx, cmd, args, strict)
-                handle_target_link_options(ctx, cmd, args, strict)
+                if check_target_command(ctx, cmd, args, strict):
+                    handle_target_link_options(ctx, cmd, args, strict)
 
             case "target_precompile_headers":
-                check_target_exists(ctx, cmd, args, strict)
-                handle_target_precompile_headers(ctx, cmd, args, strict)
+                if check_target_command(ctx, cmd, args, strict):
+                    handle_target_precompile_headers(ctx, cmd, args, strict)
 
             case "include_directories":
                 handle_include_directories(ctx, cmd, args, strict)
@@ -2862,7 +2863,16 @@ int main() {{
                         (ct for ct in ctx.custom_targets if ct.name == dep_target_name),
                         None,
                     )
-                    if target_exe is not None:
+                    if alias_rejected(
+                        ctx,
+                        cmd,
+                        dep_target_name,
+                        strict,
+                        "Cannot add target-level dependencies to alias target"
+                        f' "{dep_target_name}".',
+                    ):
+                        pass  # Reported, and not added to what it stands for
+                    elif target_exe is not None:
                         for dep in dep_names:
                             if dep not in target_exe.dependencies:
                                 target_exe.dependencies.append(dep)
