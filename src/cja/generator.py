@@ -1421,7 +1421,7 @@ def generate_ninja(
             cxx_flags = f"{cxx_flags} {cxx_flags_config}".strip()
         cxx_flags = _normalize_windows_clang_cxx_std(cxx_flags, windows_clangxx)
         # Like in CMake, executables, shared libraries and modules each have
-        # linker flags of their own.
+        # linker flags of their own, followed by the ones for the build type.
         for ninja_variable, cmake_variable in (
             ("ldflags", "CMAKE_EXE_LINKER_FLAGS"),
             ("shared_ldflags", "CMAKE_SHARED_LINKER_FLAGS"),
@@ -1430,6 +1430,9 @@ def generate_ninja(
             linker_flags_parts = [
                 build_type_link_flags,
                 ctx.variables.get(cmake_variable, ""),
+                ctx.variables.get(f"{cmake_variable}_{build_type}", "")
+                if build_type
+                else "",
                 ctx.variables.get("CMAKE_LINKER_FLAGS", ""),
                 ipo_link_flags,
             ]

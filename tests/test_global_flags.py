@@ -3,6 +3,8 @@
 import platform
 from pathlib import Path
 
+import pytest
+
 from cja.generator import configure
 
 
@@ -147,6 +149,50 @@ def test_linker_flags_of_shared_libraries_and_modules(tmp_path: Path) -> None:
         line for line in lines if line.startswith("build ") and "module" in line and ": solink " in line
     )
     assert "  shared_ldflags = $module_ldflags" in lines[lines.index(module) + 1 :][:3]
+
+
+@pytest.mark.parametrize(
+    ("build_type", "suffix"),
+    [("Debug", "debug"), ("Release", "release"), ("RelWithDebInfo", "relwithdebinfo")],
+)
+def test_linker_flags_of_the_build_type(
+    tmp_path: Path, build_type: str, suffix: str
+) -> None:
+    """Like in CMake, CMAKE_<kind>_LINKER_FLAGS_<CONFIG> of the build type
+    follow CMAKE_<kind>_LINKER_FLAGS. They're all cache entries."""
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    (source_dir / "CMakeLists.txt").write_text(
+        "project(test_linker_flags C)\n"
+        "foreach(kind EXE SHARED MODULE)\n"
+        "  string(TOLOWER ${kind} name)\n"
+        '  set(CMAKE_${kind}_LINKER_FLAGS "${CMAKE_${kind}_LINKER_FLAGS} -Wl,--${name}")\n'
+        "  foreach(config DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)\n"
+        "    string(TOLOWER ${config} suffix)\n"
+        "    set(CMAKE_${kind}_LINKER_FLAGS_${config}\n"
+        '      "${CMAKE_${kind}_LINKER_FLAGS_${config}} -Wl,--${name}-${suffix}")\n'
+        "  endforeach()\n"
+        "endforeach()\n"
+        "add_executable(main main.c)\n"
+    )
+    (source_dir / "main.c").write_text("int main() { return 0; }")
+
+    ctx = configure(
+        source_dir, "build", variables={"CMAKE_BUILD_TYPE": build_type}, strict=True
+    )
+
+    lines = (source_dir / "build.ninja").read_text().splitlines()
+    for variable, name in (
+        ("ldflags", "exe"),
+        ("shared_ldflags", "shared"),
+        ("module_ldflags", "module"),
+    ):
+        line = next(line for line in lines if line.startswith(f"{variable} = "))
+        flags = [flag for flag in line.split() if flag.startswith("-Wl,--")]
+        assert flags == [f"-Wl,--{name}", f"-Wl,--{name}-{suffix}"]
+    for kind in ("EXE", "SHARED", "MODULE"):
+        for config in ("", "_DEBUG", "_RELEASE", "_RELWITHDEBINFO", "_MINSIZEREL"):
+            assert ctx.cache_values[f"CMAKE_{kind}_LINKER_FLAGS{config}"] == ""
 
 
 def test_dollar_sign_in_linker_flags(tmp_path: Path) -> None:

@@ -169,7 +169,11 @@ def init_compiler_flag_cache_vars(ctx: BuildContext) -> None:
         "CMAKE_CXX_FLAGS_RELEASE",
         "CMAKE_CXX_FLAGS_RELWITHDEBINFO",
         "CMAKE_CXX_FLAGS_MINSIZEREL",
-        "CMAKE_EXE_LINKER_FLAGS",
+        *(
+            f"CMAKE_{kind}_LINKER_FLAGS{config}"
+            for kind in ("EXE", "SHARED", "MODULE")
+            for config in ("", "_DEBUG", "_RELEASE", "_RELWITHDEBINFO", "_MINSIZEREL")
+        ),
         "CMAKE_LINKER_FLAGS",
     ):
         if name not in ctx.cache_values:
