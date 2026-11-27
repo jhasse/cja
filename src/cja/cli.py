@@ -2,6 +2,7 @@
 
 import argparse
 import importlib.metadata
+import io
 import json
 import shutil
 import subprocess
@@ -384,6 +385,11 @@ def _run_ninja(args: argparse.Namespace, target: str | None) -> int:
 
 def main() -> int:
     """Main entry point for cja CLI."""
+    # Without a terminal, stdout is block-buffered while stderr isn't, so
+    # warnings and errors would show up long before the output preceding them.
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(line_buffering=True)
+
     parser = argparse.ArgumentParser(
         prog="cja",
         description="A CMake reimplementation in Python with Ninja generator",

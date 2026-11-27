@@ -520,6 +520,31 @@ def test_script_mode_basic(tmp_path: Path) -> None:
     assert not (tmp_path / "build.ninja").exists()
 
 
+def test_stdout_and_stderr_in_order_without_terminal(tmp_path: Path) -> None:
+    """A warning doesn't overtake the output before it when both go to a pipe."""
+    script = tmp_path / "order.cmake"
+    script.write_text(
+        'message(STATUS "first")\nmessage(WARNING "second")\nmessage(STATUS "third")\n'
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-m", "cja", "-P", str(script)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        cwd=tmp_path,
+        check=False,
+    )
+    assert result.returncode == 0
+    words = [
+        word
+        for line in result.stdout.splitlines()
+        for word in ("first", "second", "third")
+        if word in line
+    ]
+    assert words == ["first", "second", "third"]
+
+
 def test_script_mode_define_variable(tmp_path: Path) -> None:
     """-D variables passed before -P are visible in the script."""
     script = tmp_path / "show.cmake"
