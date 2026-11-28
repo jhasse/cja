@@ -256,7 +256,11 @@ def split_flags(value: str) -> list[str]:
 
     The format is shell-like: tokens are separated by whitespace and may be
     single- or double-quoted.  On Windows a backslash is an ordinary path
-    character, so (unlike ``shlex.split``) it never acts as an escape there.
+    character, so (unlike ``shlex.split``) it only escapes a double quote
+    there, like on the command line of a Windows program: 2n backslashes
+    before a ``"`` are n backslashes and the ``"`` quotes, 2n+1 are n
+    backslashes and a literal ``"``.  Within single quotes it's always
+    ordinary.
     """
     if sys.platform != "win32":
         try:
@@ -267,7 +271,19 @@ def split_flags(value: str) -> list[str]:
     current: list[str] = []
     quote = ""
     has_token = False
+    backslashes = 0
     for ch in value:
+        if quote != "'":
+            if ch == "\\":
+                backslashes += 1
+                continue
+            if backslashes:
+                current.append("\\" * (backslashes // 2 if ch == '"' else backslashes))
+                escaped = ch == '"' and backslashes % 2 == 1
+                backslashes = 0
+                if escaped:
+                    current.append(ch)
+                    continue
         if quote:
             if ch == quote:
                 quote = ""
@@ -283,6 +299,8 @@ def split_flags(value: str) -> list[str]:
                 has_token = False
         else:
             current.append(ch)
+    if backslashes:
+        current.append("\\" * backslashes)
     if current or has_token:
         tokens.append("".join(current))
     return tokens
