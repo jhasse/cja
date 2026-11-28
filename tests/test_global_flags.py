@@ -191,7 +191,9 @@ def test_linker_flags_of_the_build_type(
         source_dir, "build", variables={"CMAKE_BUILD_TYPE": build_type}, strict=True
     )
 
-    lines = (source_dir / "build.ninja").read_text().splitlines()
+    # Unwrap the lines that ninja_syntax continues with a trailing "$"
+    ninja = re.sub(r" \$\n +", " ", (source_dir / "build.ninja").read_text())
+    lines = ninja.splitlines()
     for variable, name in (
         ("ldflags", "exe"),
         ("shared_ldflags", "shared"),
