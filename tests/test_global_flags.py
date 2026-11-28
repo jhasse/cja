@@ -1,6 +1,7 @@
 """Tests for CMAKE_C_FLAGS and CMAKE_CXX_FLAGS."""
 
 import platform
+import re
 from pathlib import Path
 
 from cja.generator import configure
@@ -129,7 +130,9 @@ def test_linker_flags_of_shared_libraries_and_modules(tmp_path: Path) -> None:
 
     configure(source_dir, "build")
 
-    lines = (source_dir / "build.ninja").read_text().splitlines()
+    # Unwrap the lines that ninja_syntax continues with a trailing "$"
+    ninja = re.sub(r" \$\n +", " ", (source_dir / "build.ninja").read_text())
+    lines = ninja.splitlines()
     assert "ldflags = -Wl,--exe" in lines
     assert "shared_ldflags = -Wl,--shared" in lines
     assert "module_ldflags = -Wl,--module" in lines
