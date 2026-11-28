@@ -1,6 +1,7 @@
 """Tests for set_target_properties command."""
 
 import platform
+import re
 from pathlib import Path
 
 from cja.generator import configure
@@ -279,7 +280,9 @@ def test_compile_flags_keep_their_quoting(tmp_path: Path) -> None:
 
     configure(tmp_path, "build")
 
-    lines = (tmp_path / "build.ninja").read_text().splitlines()
+    # Unwrap the lines that ninja_syntax continues with a trailing "$"
+    ninja = re.sub(r" \$\n +", " ", (tmp_path / "build.ninja").read_text())
+    lines = ninja.splitlines()
     flags = lines[next(i for i, line in enumerate(lines) if "main.c" in line) + 1]
     if platform.system() == "Windows":
         expected = [
