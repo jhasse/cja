@@ -133,9 +133,16 @@ def test_linker_flags_of_shared_libraries_and_modules(tmp_path: Path) -> None:
     # Unwrap the lines that ninja_syntax continues with a trailing "$"
     ninja = re.sub(r" \$\n +", " ", (source_dir / "build.ninja").read_text())
     lines = ninja.splitlines()
-    assert "ldflags = -Wl,--exe" in lines
-    assert "shared_ldflags = -Wl,--shared" in lines
-    assert "module_ldflags = -Wl,--module" in lines
+    def variable(name: str) -> str:
+        """The value of the top-level variable."""
+        return next(line for line in lines if line.startswith(f"{name} = ")).removeprefix(f"{name} = ")
+
+    # On Windows the defaults like -Wl,/INCREMENTAL:NO come first
+    assert variable("ldflags").endswith("-Wl,--exe")
+    assert variable("shared_ldflags").endswith("-Wl,--shared")
+    assert variable("module_ldflags").endswith("-Wl,--module")
+    assert "--shared" not in variable("ldflags")
+    assert "--module" not in variable("shared_ldflags")
 
     def following(start: str) -> str:
         """The line after the one that starts like that."""
@@ -170,7 +177,8 @@ def test_dollar_sign_in_linker_flags(tmp_path: Path) -> None:
     configure(source_dir, "build")
 
     content = (source_dir / "build.ninja").read_text()
-    assert "ldflags = -Wl,-rpath,'$$ORIGIN/exe'\n" in content
+    # On Windows the defaults like -Wl,/INCREMENTAL:NO come first
+    assert re.search(r"^ldflags = (.* )?-Wl,-rpath,'\$\$ORIGIN/exe'$", content, re.MULTILINE)
     if platform.system() == "Windows":
         expected = '-Wl,-rpath,$$ORIGIN/prop "-Wl,-rpath,/with space"'
     else:
